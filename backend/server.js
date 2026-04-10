@@ -10,6 +10,9 @@ const { createPool } = require('./db/pool');
 const { initDb, uniqueSlug } = require('./db/initDb');
 const adspowerClient = require('./adspowerClient');
 
+const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
+const hasFrontendDist = fs.existsSync(staticDir);
+
 const JWT_SECRET = process.env.JWT_SECRET || 'kovo-dev-secret-change-in-production';
 const JWT_EXPIRES = '7d';
 const BCRYPT_ROUNDS = 10;
@@ -269,9 +272,11 @@ function simulateMetaVerify(appId, appSecret, accessToken) {
   return { accountName: `Cuenta publicitaria · App ${id.slice(-4)}` };
 }
 
-app.get('/', (req, res) => {
-  res.send('Backend funcionando 🚀 (PostgreSQL / multi-tenant)');
-});
+if (!hasFrontendDist) {
+  app.get('/', (req, res) => {
+    res.send('Backend funcionando 🚀 (PostgreSQL / multi-tenant)');
+  });
+}
 
 app.get('/api/cookies', (req, res) => {
   res.json({
@@ -931,18 +936,18 @@ app.get('/api/adspower/cookies/count', verifyToken, async (req, res) => {
   }
 });
 
-const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
-if (fs.existsSync(staticDir)) {
+if (hasFrontendDist) {
   app.use(express.static(staticDir));
-  app.use((req, res, next) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      return next();
-    }
+  /** React Router (SPA): en Express 5 el path '*' es inválido; el catch-all es una RegExp en app.get/app.head. */
+  const spaIndex = path.join(staticDir, 'index.html');
+  function sendSpaIfNotApi(req, res, next) {
     if (req.path.startsWith('/api')) {
       return next();
     }
-    res.sendFile(path.join(staticDir, 'index.html'), (err) => next(err));
-  });
+    res.sendFile(spaIndex, (err) => next(err));
+  }
+  app.get(/.*/, sendSpaIfNotApi);
+  app.head(/.*/, sendSpaIfNotApi);
 }
 
 const PORT = process.env.PORT || 3000;
