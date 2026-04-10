@@ -1,0 +1,60 @@
+-- PostgreSQL (Supabase). Ejecutar con initDb o psql.
+
+CREATE TABLE IF NOT EXISTS organizations (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  slug TEXT NOT NULL UNIQUE,
+  plan TEXT NOT NULL DEFAULT 'free' CHECK (plan IN ('free', 'pro', 'enterprise')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS users (
+  id SERIAL PRIMARY KEY,
+  name TEXT NOT NULL,
+  email TEXT NOT NULL UNIQUE,
+  password_hash TEXT NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  reset_token TEXT,
+  reset_token_expires TIMESTAMPTZ,
+  organization_id INTEGER REFERENCES organizations (id) ON DELETE SET NULL,
+  role TEXT DEFAULT 'member',
+  is_active BOOLEAN NOT NULL DEFAULT true,
+  adspower_profile_id TEXT
+);
+
+CREATE TABLE IF NOT EXISTS invitations (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  email TEXT NOT NULL,
+  role TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+  token TEXT NOT NULL UNIQUE,
+  expires_at TIMESTAMPTZ NOT NULL,
+  invited_by INTEGER NOT NULL REFERENCES users (id),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  accepted_at TIMESTAMPTZ
+);
+
+CREATE TABLE IF NOT EXISTS meta_connections (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  created_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
+  app_id TEXT NOT NULL,
+  app_secret TEXT NOT NULL,
+  access_token TEXT,
+  status TEXT NOT NULL DEFAULT 'connected' CHECK (status IN ('connected', 'disconnected', 'error')),
+  connected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  account_name TEXT
+);
+
+CREATE TABLE IF NOT EXISTS orders (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  cliente TEXT NOT NULL,
+  total DOUBLE PRECISION NOT NULL,
+  estado TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_users_organization_id ON users (organization_id);
+CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users (lower(email));
+CREATE INDEX IF NOT EXISTS idx_invitations_organization_id ON invitations (organization_id);
+CREATE INDEX IF NOT EXISTS idx_orders_organization_id ON orders (organization_id);

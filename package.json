@@ -1,0 +1,11 @@
+{
+  "name": "kovo",
+  "private": true,
+  "scripts": {
+    "build": "npm run build --prefix frontend",
+    "start": "npm start --prefix backend"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.1"
+  }
+}
