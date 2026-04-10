@@ -2,7 +2,7 @@
   "name": "kovo",
   "private": true,
   "scripts": {
-    "build": "npm install --prefix frontend && npm run build --prefix frontend && npm install --prefix backend",
+    "build": "npm install --include=dev --prefix frontend && npm run build --prefix frontend && npm install --prefix backend",
     "start": "npm start --prefix backend"
   },
   "dependencies": {
