@@ -15,13 +15,22 @@ export type MetaConnectionErrorCode =
   | 'network'
   | 'unknown';
 
-type FlowStep = 'home' | 'guide' | 'form' | 'success' | 'error';
+type FlowStep = 'home' | 'guide' | 'form' | 'accounts' | 'edit_accounts' | 'success' | 'error';
+
+type AdAccountOption = {
+  id: string;
+  name: string;
+  account_status?: number;
+  currency?: string;
+};
 
 type SavedConnection = {
   connectionId: number;
   accountName: string;
   connectedAt: string;
   appIdHint: string;
+  selectedAdAccountIds: string[];
+  insightsReady: boolean;
 };
 
 export function messageForErrorCode(code: MetaConnectionErrorCode): string {
@@ -209,8 +218,8 @@ const GUIDE_STEPS: { title: string; body: string }[] = [
     body: `En Configuración → Básico encontrarás el identificador de la app (App ID) y el secreto (App Secret). Guárdalos en un lugar seguro.`,
   },
   {
-    title: 'Pégalos aquí y conecta',
-    body: `Vuelve a KOVO, completa el formulario con esos datos y pulsa Conectar. Opcionalmente puedes añadir un token de acceso si tu flujo lo requiere.`,
+    title: 'Token y cuentas publicitarias',
+    body: `Genera un token de usuario con permisos ads_read (y de gestión si aplica) en Graph API Explorer o tu flujo OAuth. En KOVO podrás elegir qué cuentas publicitarias (act_) sincronizar para ver campañas, conjuntos y anuncios en tiempo real.`,
   },
 ];
 
@@ -241,6 +250,10 @@ export default function ConexionMetaADS() {
   const [errorCode, setErrorCode] = useState<MetaConnectionErrorCode | null>(null);
   const [planLimitMessage, setPlanLimitMessage] = useState('');
 
+  const [adAccounts, setAdAccounts] = useState<AdAccountOption[]>([]);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
+  const [previewError, setPreviewError] = useState<string | null>(null);
+
   const metaAtLimit =
     limits != null &&
     limits.meta.max != null &&
@@ -260,15 +273,20 @@ export default function ConexionMetaADS() {
             account_name: string;
             connected_at: string;
             app_id_hint: string;
+            selected_ad_account_ids?: string[];
+            insights_ready?: boolean;
           }>;
         };
         const c = data.connections.find((x) => x.status === 'connected');
         if (c) {
+          const sel = Array.isArray(c.selected_ad_account_ids) ? c.selected_ad_account_ids.map(String) : [];
           setSaved({
             connectionId: c.id,
             accountName: c.account_name,
             connectedAt: c.connected_at,
             appIdHint: c.app_id_hint,
+            selectedAdAccountIds: sel,
+            insightsReady: Boolean(c.insights_ready),
           });
           setStep('success');
         }
@@ -296,18 +314,24 @@ export default function ConexionMetaADS() {
     return Object.keys(err).length === 0;
   }, [appId, appSecret]);
 
-  const handleConnect = useCallback(async () => {
+  const toggleAccountId = useCallback((id: string) => {
+    setSelectedAccountIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }, []);
+
+  const handleConnectAppOnly = useCallback(async () => {
     if (!validateForm()) return;
     setLoading(true);
     setErrorCode(null);
     setPlanLimitMessage('');
+    setPreviewError(null);
     try {
       const res = await apiFetch('/api/meta/connections', {
         method: 'POST',
         body: JSON.stringify({
           appId: appId.trim(),
           appSecret: appSecret.trim(),
-          accessToken: accessToken.trim() || undefined,
+          accessToken: undefined,
+          selectedAdAccountIds: [],
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -318,6 +342,8 @@ export default function ConexionMetaADS() {
           account_name: string;
           connected_at: string;
           app_id_hint: string;
+          selected_ad_account_ids?: string[];
+          insights_ready?: boolean;
         };
       };
 
@@ -330,7 +356,12 @@ export default function ConexionMetaADS() {
 
       if (!res.ok) {
         const code = data.code as MetaConnectionErrorCode | undefined;
-        if (code === 'invalid_credentials' || code === 'token_expired') {
+        if (
+          code === 'invalid_credentials' ||
+          code === 'token_expired' ||
+          code === 'network' ||
+          code === 'permissions'
+        ) {
           setErrorCode(code);
         } else {
           setErrorCode('unknown');
@@ -340,15 +371,22 @@ export default function ConexionMetaADS() {
       }
 
       if (data.connection) {
+        const sel = Array.isArray(data.connection.selected_ad_account_ids)
+          ? data.connection.selected_ad_account_ids.map(String)
+          : [];
         setSaved({
           connectionId: data.connection.id,
           accountName: data.connection.account_name,
           connectedAt: data.connection.connected_at,
           appIdHint: data.connection.app_id_hint,
+          selectedAdAccountIds: sel,
+          insightsReady: Boolean(data.connection.insights_ready),
         });
       }
       setAppSecret('');
       setAccessToken('');
+      setAdAccounts([]);
+      setSelectedAccountIds([]);
       setStep('success');
       await refreshUser();
     } catch {
@@ -357,7 +395,197 @@ export default function ConexionMetaADS() {
     } finally {
       setLoading(false);
     }
-  }, [appId, appSecret, accessToken, validateForm, refreshUser]);
+  }, [appId, appSecret, validateForm, refreshUser]);
+
+  const handlePreviewAdAccounts = useCallback(async () => {
+    if (!validateForm()) return;
+    const tok = accessToken.trim();
+    if (!tok) {
+      setPreviewError('Para listar cuentas publicitarias necesitas un access token de usuario.');
+      return;
+    }
+    setLoading(true);
+    setPreviewError(null);
+    setErrorCode(null);
+    try {
+      const res = await apiFetch('/api/meta/preview-ad-accounts', {
+        method: 'POST',
+        body: JSON.stringify({
+          appId: appId.trim(),
+          appSecret: appSecret.trim(),
+          accessToken: tok,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+        accounts?: AdAccountOption[];
+      };
+      if (!res.ok) {
+        setPreviewError(typeof data.error === 'string' ? data.error : 'No se pudieron cargar las cuentas');
+        return;
+      }
+      const list = Array.isArray(data.accounts) ? data.accounts : [];
+      if (list.length === 0) {
+        setPreviewError(
+          'Meta no devolvió cuentas publicitarias. Comprueba que el token incluya el permiso ads_read y que tu usuario tenga acceso a alguna cuenta.',
+        );
+        return;
+      }
+      setAdAccounts(list);
+      setSelectedAccountIds(list.map((a) => a.id));
+      setStep('accounts');
+    } catch {
+      setPreviewError('Error de red al consultar Meta');
+    } finally {
+      setLoading(false);
+    }
+  }, [appId, appSecret, accessToken, validateForm]);
+
+  const handleConfirmAccountsSave = useCallback(async () => {
+    if (selectedAccountIds.length === 0) {
+      setPreviewError('Selecciona al menos una cuenta publicitaria para ver métricas en el dashboard.');
+      return;
+    }
+    setLoading(true);
+    setPreviewError(null);
+    setErrorCode(null);
+    setPlanLimitMessage('');
+    try {
+      if (step === 'edit_accounts' && saved) {
+        const res = await apiFetch(`/api/meta/connections/${saved.connectionId}/ad-accounts`, {
+          method: 'PUT',
+          body: JSON.stringify({ adAccountIds: selectedAccountIds }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          selected_ad_account_ids?: string[];
+          insights_ready?: boolean;
+        };
+        if (!res.ok) {
+          setPreviewError(typeof data.error === 'string' ? data.error : 'No se pudo actualizar');
+          return;
+        }
+        const sel = Array.isArray(data.selected_ad_account_ids) ? data.selected_ad_account_ids.map(String) : [];
+        setSaved((prev) =>
+          prev
+            ? {
+                ...prev,
+                selectedAdAccountIds: sel,
+                insightsReady: Boolean(data.insights_ready),
+              }
+            : prev,
+        );
+        setStep('success');
+        await refreshUser();
+        return;
+      }
+
+      const res = await apiFetch('/api/meta/connections', {
+        method: 'POST',
+        body: JSON.stringify({
+          appId: appId.trim(),
+          appSecret: appSecret.trim(),
+          accessToken: accessToken.trim(),
+          selectedAdAccountIds: selectedAccountIds,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        code?: string;
+        connection?: {
+          id: number;
+          account_name: string;
+          connected_at: string;
+          app_id_hint: string;
+          selected_ad_account_ids?: string[];
+          insights_ready?: boolean;
+        };
+      };
+
+      if (res.status === 403 && data.code === 'plan_limit') {
+        setPlanLimitMessage(typeof data.error === 'string' ? data.error : 'Límite del plan alcanzado');
+        setStep('home');
+        await refreshUser();
+        return;
+      }
+
+      if (!res.ok) {
+        const code = data.code as MetaConnectionErrorCode | undefined;
+        if (
+          code === 'invalid_credentials' ||
+          code === 'token_expired' ||
+          code === 'network' ||
+          code === 'permissions'
+        ) {
+          setErrorCode(code);
+        } else {
+          setErrorCode('unknown');
+        }
+        setStep('error');
+        return;
+      }
+
+      if (data.connection) {
+        const sel = Array.isArray(data.connection.selected_ad_account_ids)
+          ? data.connection.selected_ad_account_ids.map(String)
+          : [];
+        setSaved({
+          connectionId: data.connection.id,
+          accountName: data.connection.account_name,
+          connectedAt: data.connection.connected_at,
+          appIdHint: data.connection.app_id_hint,
+          selectedAdAccountIds: sel,
+          insightsReady: Boolean(data.connection.insights_ready),
+        });
+      }
+      setAppSecret('');
+      setAccessToken('');
+      setAdAccounts([]);
+      setSelectedAccountIds([]);
+      setStep('success');
+      await refreshUser();
+    } catch {
+      setErrorCode('network');
+      setStep('error');
+    } finally {
+      setLoading(false);
+    }
+  }, [
+    selectedAccountIds,
+    step,
+    saved,
+    appId,
+    appSecret,
+    accessToken,
+    refreshUser,
+  ]);
+
+  const handleOpenEditAccounts = useCallback(async () => {
+    if (!saved) return;
+    setLoading(true);
+    setPreviewError(null);
+    try {
+      const res = await apiFetch('/api/meta/ad-accounts');
+      const data = (await res.json().catch(() => ({}))) as { error?: string; accounts?: AdAccountOption[] };
+      if (!res.ok) {
+        window.alert(
+          typeof data.error === 'string' ? data.error : 'No se pudieron cargar las cuentas (¿falta token de usuario?)',
+        );
+        return;
+      }
+      const list = Array.isArray(data.accounts) ? data.accounts : [];
+      setAdAccounts(list);
+      const allowed = new Set(list.map((a) => a.id));
+      const pre = saved.selectedAdAccountIds.filter((id) => allowed.has(id));
+      setSelectedAccountIds(pre.length > 0 ? pre : list.map((a) => a.id));
+      setStep('edit_accounts');
+    } catch {
+      window.alert('Error de red al contactar el servidor');
+    } finally {
+      setLoading(false);
+    }
+  }, [saved]);
 
   const handleDisconnect = useCallback(async () => {
     if (
@@ -381,6 +609,9 @@ export default function ConexionMetaADS() {
     setFieldErrors({});
     setErrorCode(null);
     setPlanLimitMessage('');
+    setAdAccounts([]);
+    setSelectedAccountIds([]);
+    setPreviewError(null);
     await refreshUser();
   }, [saved, refreshUser]);
 
@@ -438,8 +669,16 @@ export default function ConexionMetaADS() {
         </div>
         <h2 style={{ margin: '0 0 8px', fontSize: 22, color: SIDEBAR_TONE }}>¡Conectado exitosamente con Meta ADS!</h2>
         <p style={{ margin: '0 0 20px', color: '#6b7280', fontSize: 15, lineHeight: 1.5 }}>
-          Tu cuenta ya está vinculada. Los informes de campañas podrán usar estos datos cuando actives la sincronización.
+          Tu app de Meta está vinculada. Si elegiste cuentas publicitarias y guardaste un token de usuario, el apartado{' '}
+          <strong>Análisis de creativo</strong> mostrará métricas reales (campañas, conjuntos y anuncios). Si conectaste
+          solo App ID y Secret, el dashboard seguirá en modo demostración hasta que añadas token y cuentas.
         </p>
+        {saved.selectedAdAccountIds.length > 0 && (
+          <p style={{ margin: '0 0 16px', fontSize: 14, color: '#374151', textAlign: 'left' }}>
+            <strong>Cuentas enlazadas:</strong> {saved.selectedAdAccountIds.length} —{' '}
+            {saved.selectedAdAccountIds.join(', ')}
+          </p>
+        )}
         <div
           style={{
             textAlign: 'left',
@@ -459,6 +698,23 @@ export default function ConexionMetaADS() {
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center', alignItems: 'center' }}>
           <StatusBadge status="connected" />
+          <button
+            type="button"
+            onClick={() => void handleOpenEditAccounts()}
+            disabled={loading}
+            style={{
+              padding: '10px 18px',
+              borderRadius: 10,
+              border: `1px solid ${META_BLUE}`,
+              background: '#fff',
+              color: META_BLUE,
+              fontWeight: 600,
+              cursor: loading ? 'wait' : 'pointer',
+              fontSize: 14,
+            }}
+          >
+            Cambiar cuentas publicitarias
+          </button>
           <button
             type="button"
             onClick={() => void handleDisconnect()}
@@ -666,6 +922,125 @@ export default function ConexionMetaADS() {
     );
   }
 
+  if (step === 'accounts' || step === 'edit_accounts') {
+    const editing = step === 'edit_accounts';
+    return shell(
+      <div>
+        <button
+          type="button"
+          onClick={() => {
+            setPreviewError(null);
+            setStep(editing ? 'success' : 'form');
+          }}
+          style={{
+            border: 'none',
+            background: 'none',
+            color: META_BLUE,
+            cursor: 'pointer',
+            fontSize: 14,
+            fontWeight: 600,
+            marginBottom: 16,
+            padding: 0,
+          }}
+        >
+          {editing ? '← Volver al resumen' : '← Volver al formulario'}
+        </button>
+        <div
+          style={{
+            background: CARD_BG,
+            borderRadius: 16,
+            padding: 'clamp(20px, 4vw, 32px)',
+            border: '1px solid #e8eaef',
+          }}
+        >
+          <h2 style={{ margin: '0 0 8px', fontSize: 22, color: SIDEBAR_TONE }}>
+            {editing ? 'Actualizar cuentas publicitarias' : 'Elige tus cuentas publicitarias'}
+          </h2>
+          <p style={{ margin: '0 0 20px', color: '#6b7280', fontSize: 14, lineHeight: 1.5 }}>
+            Marca una o varias cuentas (act_). Las métricas del dashboard se agregarán de todas ellas.
+          </p>
+          {previewError && (
+            <div
+              style={{
+                marginBottom: 16,
+                padding: '12px 14px',
+                borderRadius: 10,
+                background: 'rgba(220,80,80,0.1)',
+                color: '#991b1b',
+                fontSize: 14,
+              }}
+            >
+              {previewError}
+            </div>
+          )}
+          <ul style={{ margin: '0 0 24px', padding: 0, listStyle: 'none' }}>
+            {adAccounts.map((a) => (
+              <li
+                key={a.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: 12,
+                  padding: '12px 14px',
+                  borderRadius: 10,
+                  border: '1px solid #e8eaef',
+                  marginBottom: 10,
+                  background: '#fafbfc',
+                }}
+              >
+                <input
+                  type="checkbox"
+                  id={`acct-${a.id}`}
+                  checked={selectedAccountIds.includes(a.id)}
+                  onChange={() => toggleAccountId(a.id)}
+                  style={{ marginTop: 4, width: 18, height: 18, cursor: 'pointer' }}
+                />
+                <label htmlFor={`acct-${a.id}`} style={{ cursor: 'pointer', flex: 1, margin: 0 }}>
+                  <div style={{ fontWeight: 700, color: SIDEBAR_TONE }}>{a.name}</div>
+                  <div style={{ fontSize: 13, color: '#6b7280' }}>
+                    {a.id}
+                    {a.currency ? ` · ${a.currency}` : ''}
+                    {a.account_status != null ? ` · estado ${a.account_status}` : ''}
+                  </div>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <button
+            type="button"
+            disabled={loading || metaAtLimit}
+            onClick={() => void handleConfirmAccountsSave()}
+            style={{
+              width: '100%',
+              padding: '14px 20px',
+              borderRadius: 10,
+              border: 'none',
+              background: loading || metaAtLimit ? '#93b4e8' : META_BLUE,
+              color: '#fff',
+              fontWeight: 700,
+              cursor: loading ? 'wait' : 'pointer',
+              fontSize: 16,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            {loading ? (
+              <>
+                <Spinner />
+                Guardando…
+              </>
+            ) : editing ? (
+              'Guardar cuentas'
+            ) : (
+              'Guardar conexión y cuentas'
+            )}
+          </button>
+        </div>
+      </div>,
+    );
+  }
+
   if (step === 'form') {
     return shell(
       <div>
@@ -760,10 +1135,10 @@ export default function ConexionMetaADS() {
 
           <label style={{ display: 'block', marginBottom: 24 }}>
             <span style={{ display: 'flex', alignItems: 'center', fontWeight: 600, color: '#374151', marginBottom: 8 }}>
-              Access Token (opcional)
+              Access Token de usuario (para métricas en vivo)
               <FieldTooltip
                 id={`${baseId}-token`}
-                text="Token de acceso de usuario o sistema si ya usas la Graph API. Puedes generarlo desde Graph API Explorer o tu backend. Si no estás seguro, déjalo vacío y completa solo App ID y Secret."
+                text="Token de usuario de Meta con permisos ads_read (y ads_management si gestionas anuncios). Genera uno en Graph API Explorer seleccionando tu app, o con el flujo OAuth. Sin token solo puedes validar App ID y Secret; no habrá cuentas publicitarias ni datos reales en el dashboard."
               />
             </span>
             <input
@@ -771,7 +1146,7 @@ export default function ConexionMetaADS() {
               autoComplete="off"
               value={accessToken}
               onChange={(e) => setAccessToken(e.target.value)}
-              placeholder="Opcional"
+              placeholder="Recomendado para listar cuentas y ver campañas"
               style={{
                 width: '100%',
                 boxSizing: 'border-box',
@@ -783,11 +1158,26 @@ export default function ConexionMetaADS() {
             />
           </label>
 
+          {previewError && (
+            <div
+              style={{
+                marginBottom: 16,
+                padding: '12px 14px',
+                borderRadius: 10,
+                background: 'rgba(220,80,80,0.1)',
+                color: '#991b1b',
+                fontSize: 14,
+              }}
+            >
+              {previewError}
+            </div>
+          )}
+
           <button
             type="button"
             disabled={loading || metaAtLimit}
             title={metaAtLimit ? 'Actualiza tu plan para agregar más conexiones' : undefined}
-            onClick={() => void handleConnect()}
+            onClick={() => void handlePreviewAdAccounts()}
             style={{
               width: '100%',
               padding: '14px 20px',
@@ -801,16 +1191,36 @@ export default function ConexionMetaADS() {
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
+              marginBottom: 12,
             }}
           >
             {loading ? (
               <>
                 <Spinner />
-                Verificando…
+                Consultando Meta…
               </>
             ) : (
-              'Conectar'
+              'Siguiente: elegir cuentas publicitarias'
             )}
+          </button>
+
+          <button
+            type="button"
+            disabled={loading || metaAtLimit}
+            onClick={() => void handleConnectAppOnly()}
+            style={{
+              width: '100%',
+              padding: '12px 20px',
+              borderRadius: 10,
+              border: `1px solid ${META_BLUE}66`,
+              background: '#fff',
+              color: META_BLUE,
+              fontWeight: 600,
+              cursor: loading || metaAtLimit ? 'not-allowed' : 'pointer',
+              fontSize: 14,
+            }}
+          >
+            Solo validar app (sin token ni métricas en vivo)
           </button>
         </div>
       </div>,

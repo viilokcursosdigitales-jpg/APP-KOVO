@@ -2,7 +2,9 @@ import { useMemo, useState, type ReactNode } from 'react';
 import { Link, NavLink } from 'react-router-dom';
 import { useAuth } from './auth/AuthContext';
 import ConexionMetaADS from './ConexionMetaADS';
-import AdsPowerCookiesPanel from './adspower/AdsPowerCookiesPanel';
+import { MetaFunnelPanel } from './meta/MetaFunnelPanel';
+import { MetaInsightsPanel } from './meta/MetaInsightsPanel';
+import { useMetaInsightsReady } from './meta/useMetaInsightsReady';
 
 const SIDEBAR_BG = '#1a1a2e';
 const SHOPIFY_GREEN = '#96bf48';
@@ -410,6 +412,8 @@ function TabCreativo({
   product: ProductKey;
   setProduct: (p: ProductKey) => void;
 }) {
+  const metaLive = useMetaInsightsReady();
+
   const { metrics, ads } = useMemo(
     () => computeCreativeData(period, product),
     [period, product],
@@ -431,6 +435,16 @@ function TabCreativo({
     { label: 'Compras', value: formatNumber(metrics.purchases) },
   ];
 
+  if (metaLive === 'loading') {
+    return (
+      <div style={{ padding: 24, color: '#6b7280', fontSize: 15 }}>Comprobando conexión Meta…</div>
+    );
+  }
+
+  if (metaLive === 'yes') {
+    return <MetaInsightsPanel period={period} setPeriod={setPeriod} />;
+  }
+
   return (
     <div>
       <FiltersBar
@@ -440,6 +454,18 @@ function TabCreativo({
         setProduct={setProduct}
       />
       <PeriodCaption period={period} product={product} />
+      <p
+        style={{
+          margin: '12px 0 0',
+          fontSize: 13,
+          color: '#6b7280',
+          lineHeight: 1.45,
+          maxWidth: 720,
+        }}
+      >
+        Vista de demostración: los números y anuncios listados se generan en la app según período y producto. Conecta Meta
+        con <strong>token de usuario</strong> y elige cuentas publicitarias para ver aquí datos reales.
+      </p>
 
       <div
         style={{
@@ -585,6 +611,8 @@ function TabEmbudo({
   product: ProductKey;
   setProduct: (p: ProductKey) => void;
 }) {
+  const metaLive = useMetaInsightsReady();
+
   const data = useMemo(() => computeFunnelData(period, product), [period, product]);
   const { stages, drops, costPer, roas, cpa, convRate, purchases } = data;
 
@@ -607,6 +635,16 @@ function TabEmbudo({
             : 'Usuarios que completaron datos de pago.',
   }));
 
+  if (metaLive === 'loading') {
+    return (
+      <div style={{ padding: 24, color: '#6b7280', fontSize: 15 }}>Comprobando conexión Meta…</div>
+    );
+  }
+
+  if (metaLive === 'yes') {
+    return <MetaFunnelPanel period={period} setPeriod={setPeriod} />;
+  }
+
   return (
     <div>
       <FiltersBar
@@ -616,6 +654,18 @@ function TabEmbudo({
         setProduct={setProduct}
       />
       <PeriodCaption period={period} product={product} />
+      <p
+        style={{
+          margin: '12px 0 0',
+          fontSize: 13,
+          color: '#6b7280',
+          lineHeight: 1.45,
+          maxWidth: 720,
+        }}
+      >
+        Vista de demostración: el embudo y los costes son <strong>datos de ejemplo</strong>. Con Meta conectado (token +
+        cuentas) verás aquí el embudo según los eventos que reporte la API.
+      </p>
 
       <div
         style={{
@@ -775,7 +825,7 @@ export function DashboardApp() {
     'Cuenta',
   ];
 
-  const [metaTab, setMetaTab] = useState<'creativo' | 'embudo' | 'conexion' | 'adspower'>('creativo');
+  const [metaTab, setMetaTab] = useState<'creativo' | 'embudo' | 'conexion'>('creativo');
   const [p1, setP1] = useState<PeriodKey>('7d');
   const [pr1, setPr1] = useState<ProductKey>('all');
   const [p2, setP2] = useState<PeriodKey>('7d');
@@ -889,14 +939,12 @@ export function DashboardApp() {
               color: '#1a1a2e',
             }}
           >
-            {metaTab === 'adspower' ? 'AdsPower' : 'Meta Ads'}
+            Meta Ads
           </h1>
           <p style={{ margin: '6px 0 0', fontSize: 14, color: '#6b7280' }}>
             {metaTab === 'conexion'
               ? 'Vincula tu app de Facebook Developer y gestiona el acceso a tus anuncios'
-              : metaTab === 'adspower'
-                ? 'Vincula tu perfil y consulta el total de cookies vía Local API (servidor → AdsPower)'
-                : 'Análisis de campañas y embudo de conversión'}
+              : 'Análisis de campañas y embudo de conversión'}
           </p>
         </div>
 
@@ -915,7 +963,6 @@ export function DashboardApp() {
               { id: 'creativo' as const, label: 'Análisis de creativo' },
               { id: 'embudo' as const, label: 'Análisis embudo' },
               { id: 'conexion' as const, label: 'Conexión Meta ADS' },
-              { id: 'adspower' as const, label: 'AdsPower (cookies)' },
             ] as const
           ).map((t) => (
             <button
@@ -943,10 +990,8 @@ export function DashboardApp() {
           <TabCreativo period={p1} setPeriod={setP1} product={pr1} setProduct={setPr1} />
         ) : metaTab === 'embudo' ? (
           <TabEmbudo period={p2} setPeriod={setP2} product={pr2} setProduct={setPr2} />
-        ) : metaTab === 'conexion' ? (
-          <ConexionMetaADS />
         ) : (
-          <AdsPowerCookiesPanel />
+          <ConexionMetaADS />
         )}
       </main>
     </div>

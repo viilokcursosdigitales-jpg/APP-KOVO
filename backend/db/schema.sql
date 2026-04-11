@@ -18,8 +18,7 @@ CREATE TABLE IF NOT EXISTS users (
   reset_token_expires TIMESTAMPTZ,
   organization_id INTEGER REFERENCES organizations (id) ON DELETE SET NULL,
   role TEXT DEFAULT 'member',
-  is_active BOOLEAN NOT NULL DEFAULT true,
-  adspower_profile_id TEXT
+  is_active BOOLEAN NOT NULL DEFAULT true
 );
 
 CREATE TABLE IF NOT EXISTS invitations (
@@ -43,7 +42,8 @@ CREATE TABLE IF NOT EXISTS meta_connections (
   access_token TEXT,
   status TEXT NOT NULL DEFAULT 'connected' CHECK (status IN ('connected', 'disconnected', 'error')),
   connected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  account_name TEXT
+  account_name TEXT,
+  selected_ad_account_ids JSONB NOT NULL DEFAULT '[]'::jsonb
 );
 
 CREATE TABLE IF NOT EXISTS orders (

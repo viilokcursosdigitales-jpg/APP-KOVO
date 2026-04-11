@@ -8,8 +8,14 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { createPool } = require('./db/pool');
 const { initDb, uniqueSlug } = require('./db/initDb');
-const adspowerClient = require('./adspowerClient');
-
+const {
+  normalizeActId,
+  datePresetFromDashboardPeriod,
+  listAdAccounts,
+  fetchInsightsForAdAccount,
+  filterValidAdAccountIds,
+  fetchFunnelForAdAccounts,
+} = require('./metaMarketingApi');
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
 const hasFrontendDist = fs.existsSync(staticDir);
 
@@ -206,13 +212,6 @@ function isValidEmail(email) {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 }
 
-function normalizeAdsPowerProfileId(raw) {
-  const s = String(raw || '').trim();
-  if (!s || s.length > 128) return null;
-  if (!/^[a-zA-Z0-9_-]+$/.test(s)) return null;
-  return s;
-}
-
 function issueToken(userId) {
   return jwt.sign({ userId }, JWT_SECRET, { expiresIn: JWT_EXPIRES });
 }
@@ -249,10 +248,16 @@ async function buildSessionPayload(userId) {
   };
 }
 
-function simulateMetaVerify(appId, appSecret, accessToken) {
+const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v21.0';
+
+/**
+ * Valida App ID + App Secret contra la Graph API (client_credentials).
+ * Si se envía accessToken de usuario, comprueba con debug_token y opcionalmente obtiene el nombre.
+ */
+async function verifyMetaWithGraphApi(appId, appSecret, accessToken) {
   const id = String(appId || '').replace(/\s/g, '');
   const secret = String(appSecret || '').trim();
-  const token = String(accessToken || '').trim();
+  const userToken = accessToken ? String(accessToken).trim() : '';
 
   if (!/^\d+$/.test(id) || id.length < 8 || id.length > 22) {
     const e = new Error('invalid');
@@ -264,12 +269,116 @@ function simulateMetaVerify(appId, appSecret, accessToken) {
     e.code = 'invalid_credentials';
     throw e;
   }
-  if (token.length > 0 && token.length < 30) {
-    const e = new Error('token');
-    e.code = 'token_expired';
+
+  const tokenUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/oauth/access_token`);
+  tokenUrl.searchParams.set('client_id', id);
+  tokenUrl.searchParams.set('client_secret', secret);
+  tokenUrl.searchParams.set('grant_type', 'client_credentials');
+
+  let tokenRes;
+  try {
+    tokenRes = await fetch(tokenUrl);
+  } catch {
+    const e = new Error('network');
+    e.code = 'network';
     throw e;
   }
-  return { accountName: `Cuenta publicitaria · App ${id.slice(-4)}` };
+
+  const tokenBody = await tokenRes.json().catch(() => ({}));
+  if (!tokenRes.ok || !tokenBody.access_token) {
+    const e = new Error('invalid');
+    e.code = 'invalid_credentials';
+    throw e;
+  }
+
+  const appAccessToken = tokenBody.access_token;
+  let accountName = `Cuenta publicitaria · App ${id.slice(-4)}`;
+
+  if (userToken.length > 0) {
+    if (userToken.length < 30) {
+      const e = new Error('token');
+      e.code = 'token_expired';
+      throw e;
+    }
+    const debugUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/debug_token`);
+    debugUrl.searchParams.set('input_token', userToken);
+    debugUrl.searchParams.set('access_token', appAccessToken);
+
+    let debugRes;
+    try {
+      debugRes = await fetch(debugUrl);
+    } catch {
+      const e = new Error('network');
+      e.code = 'network';
+      throw e;
+    }
+
+    const debugBody = await debugRes.json().catch(() => ({}));
+    const d = debugBody.data;
+    if (!debugRes.ok || !d || d.is_valid !== true) {
+      const errCode = d && d.error && d.error.code;
+      const e = new Error('token');
+      e.code = errCode === 190 ? 'token_expired' : 'invalid_credentials';
+      throw e;
+    }
+
+    try {
+      const meUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/me`);
+      meUrl.searchParams.set('fields', 'name');
+      meUrl.searchParams.set('access_token', userToken);
+      const meRes = await fetch(meUrl);
+      const me = await meRes.json().catch(() => ({}));
+      if (meRes.ok && me.name && String(me.name).trim()) {
+        accountName = String(me.name).trim();
+      }
+    } catch {
+      /* mantener nombre por defecto */
+    }
+  }
+
+  return { accountName };
+}
+
+function parseAdAccountIdsFromDb(val) {
+  if (val == null) return [];
+  if (Array.isArray(val)) return val.map((x) => String(x)).filter(Boolean);
+  if (typeof val === 'string') {
+    try {
+      const j = JSON.parse(val);
+      return Array.isArray(j) ? j.map((x) => String(x)).filter(Boolean) : [];
+    } catch {
+      return [];
+    }
+  }
+  return [];
+}
+
+async function getMetaConnectionForOrg(organizationId) {
+  const { rows } = await pool.query(
+    `SELECT * FROM meta_connections
+     WHERE organization_id = $1 AND status = 'connected'
+     ORDER BY id DESC
+     LIMIT 1`,
+    [organizationId],
+  );
+  return rows[0] || null;
+}
+
+/** @param {string | undefined} queryAdAccountId */
+function resolveAdAccountIdsForRequest(queryAdAccountId, storedRawIds) {
+  const all = parseAdAccountIdsFromDb(storedRawIds)
+    .map((id) => normalizeActId(id))
+    .filter(Boolean);
+  const allowed = new Set(all);
+  const q = queryAdAccountId != null ? String(queryAdAccountId).trim() : '';
+  if (!q) {
+    return { ok: true, actIds: all };
+  }
+  const one = normalizeActId(q);
+  if (!one || !allowed.has(one)) {
+    return { ok: false, actIds: [], code: 'invalid_ad_account' };
+  }
+  return { ok: true, actIds: [one] };
 }
 
 if (!hasFrontendDist) {
@@ -281,8 +390,7 @@ if (!hasFrontendDist) {
 app.get('/api/cookies', (req, res) => {
   res.json({
     ok: true,
-    message:
-      'Backend respondiendo. Conteo por perfil AdsPower: GET /api/adspower/cookies/count (requiere JWT y perfil configurado).',
+    message: 'Backend respondiendo. Estado de base de datos: GET /api/health',
   });
 });
 
@@ -755,7 +863,8 @@ app.get('/api/meta/connections', verifyToken, scopeToOrganization, async (req, r
   try {
     const rows = (
       await pool.query(
-        `SELECT id, app_id, status, connected_at, account_name
+        `SELECT id, app_id, status, connected_at, account_name, selected_ad_account_ids,
+                (access_token IS NOT NULL AND length(trim(access_token)) > 0) AS has_access_token
          FROM meta_connections WHERE organization_id = $1 ORDER BY id DESC`,
         [req.organizationId],
       )
@@ -764,12 +873,16 @@ app.get('/api/meta/connections', verifyToken, scopeToOrganization, async (req, r
     const list = rows.map((r) => {
       const digits = String(r.app_id).replace(/\D/g, '');
       const hint = digits.length >= 4 ? `····${digits.slice(-4)}` : '····';
+      const selectedIds = parseAdAccountIdsFromDb(r.selected_ad_account_ids);
+      const insightsReady = Boolean(r.has_access_token && selectedIds.length > 0);
       return {
         id: r.id,
         app_id_hint: hint,
         status: r.status,
         connected_at: r.connected_at,
         account_name: r.account_name,
+        selected_ad_account_ids: selectedIds,
+        insights_ready: insightsReady,
       };
     });
     res.json({ connections: list, limits: await getUsageSnapshot(req.organizationId) });
@@ -779,11 +892,113 @@ app.get('/api/meta/connections', verifyToken, scopeToOrganization, async (req, r
   }
 });
 
+app.post('/api/meta/preview-ad-accounts', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const appId = String(req.body?.appId || '').trim();
+    const appSecret = String(req.body?.appSecret || '').trim();
+    const accessToken = String(req.body?.accessToken || '').trim();
+    if (!accessToken) {
+      return res.status(400).json({
+        error: 'Indica el token de usuario de Meta para listar cuentas publicitarias.',
+        code: 'token_required',
+      });
+    }
+    try {
+      await verifyMetaWithGraphApi(appId, appSecret, accessToken);
+    } catch (err) {
+      const code = err.code || 'unknown';
+      const map = {
+        invalid_credentials: 'El App ID o App Secret son incorrectos',
+        token_expired: 'El Access Token ha expirado, genera uno nuevo',
+        network: 'No se pudo contactar a Meta',
+      };
+      const status = code === 'network' ? 503 : 400;
+      return res.status(status).json({ error: map[code] || 'No se pudo validar', code });
+    }
+    const listed = await listAdAccounts(accessToken);
+    if (!listed.ok) {
+      return res.status(400).json({
+        error: listed.message,
+        code: listed.code || 'api_error',
+      });
+    }
+    const accounts = listed.accounts.map((a) => ({
+      id: a.id,
+      name: a.name || a.id,
+      account_status: a.account_status,
+      currency: a.currency,
+    }));
+    res.json({ accounts });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar cuentas publicitarias' });
+  }
+});
+
+app.get('/api/meta/ad-accounts', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const row = await getMetaConnectionForOrg(req.organizationId);
+    if (!row || !String(row.access_token || '').trim()) {
+      return res.status(400).json({
+        error: 'No hay token de usuario guardado. Vuelve a conectar Meta con un access token.',
+        code: 'no_token',
+      });
+    }
+    const listed = await listAdAccounts(row.access_token);
+    if (!listed.ok) {
+      return res.status(400).json({ error: listed.message, code: listed.code || 'api_error' });
+    }
+    res.json({
+      accounts: listed.accounts.map((a) => ({
+        id: a.id,
+        name: a.name || a.id,
+        account_status: a.account_status,
+        currency: a.currency,
+      })),
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar cuentas publicitarias' });
+  }
+});
+
+app.get('/api/meta/selected-ad-accounts', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const row = await getMetaConnectionForOrg(req.organizationId);
+    if (!row || !String(row.access_token || '').trim()) {
+      return res.status(400).json({ error: 'No hay token de usuario en la conexión Meta.', code: 'no_token' });
+    }
+    const selected = parseAdAccountIdsFromDb(row.selected_ad_account_ids)
+      .map((id) => normalizeActId(id))
+      .filter(Boolean);
+    if (selected.length === 0) {
+      return res.json({ accounts: [] });
+    }
+    const listed = await listAdAccounts(row.access_token);
+    if (!listed.ok) {
+      return res.status(400).json({ error: listed.message, code: listed.code || 'api_error' });
+    }
+    const selSet = new Set(selected);
+    const accounts = listed.accounts
+      .filter((a) => selSet.has(normalizeActId(a.id)))
+      .map((a) => ({
+        id: normalizeActId(a.id),
+        name: a.name || normalizeActId(a.id),
+      }));
+    res.json({ accounts });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al listar cuentas seleccionadas' });
+  }
+});
+
 app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const appId = String(req.body?.appId || '').trim();
     const appSecret = String(req.body?.appSecret || '').trim();
     const accessToken = req.body?.accessToken ? String(req.body.accessToken).trim() : '';
+    const rawSelected = req.body?.selectedAdAccountIds;
+    const selectedInput = Array.isArray(rawSelected) ? rawSelected.map((x) => String(x)) : [];
 
     const limit = await checkPlanLimit(req.organizationId, 'meta_connection');
     if (!limit.ok) {
@@ -792,20 +1007,45 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
 
     let verified;
     try {
-      verified = simulateMetaVerify(appId, appSecret, accessToken || undefined);
+      verified = await verifyMetaWithGraphApi(appId, appSecret, accessToken || undefined);
     } catch (err) {
       const code = err.code || 'unknown';
       const map = {
         invalid_credentials: 'El App ID o App Secret son incorrectos',
         token_expired: 'El Access Token ha expirado, genera uno nuevo',
+        network: 'No se pudo contactar a Meta. Revisa tu conexión e inténtalo de nuevo',
+        permissions: 'Tu app o token no tienen los permisos necesarios en Meta',
       };
-      return res.status(400).json({ error: map[code] || 'No se pudo validar', code });
+      const status = code === 'network' ? 503 : 400;
+      return res.status(status).json({ error: map[code] || 'No se pudo validar', code });
+    }
+
+    let selectedJson = '[]';
+    if (selectedInput.length > 0) {
+      if (!accessToken) {
+        return res.status(400).json({
+          error: 'Para guardar cuentas publicitarias necesitas un access token de usuario.',
+          code: 'token_required',
+        });
+      }
+      const listed = await listAdAccounts(accessToken);
+      if (!listed.ok) {
+        return res.status(400).json({ error: listed.message, code: listed.code || 'api_error' });
+      }
+      const valid = filterValidAdAccountIds(selectedInput, listed.accounts);
+      if (valid.length === 0) {
+        return res.status(400).json({
+          error: 'Las cuentas seleccionadas no coinciden con las disponibles para este token.',
+          code: 'invalid_accounts',
+        });
+      }
+      selectedJson = JSON.stringify(valid);
     }
 
     const ins = await pool.query(
       `INSERT INTO meta_connections
-       (organization_id, created_by, app_id, app_secret, access_token, status, connected_at, account_name)
-       VALUES ($1, $2, $3, $4, $5, 'connected', now(), $6) RETURNING id, connected_at`,
+       (organization_id, created_by, app_id, app_secret, access_token, status, connected_at, account_name, selected_ad_account_ids)
+       VALUES ($1, $2, $3, $4, $5, 'connected', now(), $6, $7::jsonb) RETURNING id, connected_at`,
       [
         req.organizationId,
         req.user.userId,
@@ -813,8 +1053,12 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
         appSecret,
         accessToken || null,
         verified.accountName,
+        selectedJson,
       ],
     );
+
+    const selectedIds = parseAdAccountIdsFromDb(JSON.parse(selectedJson));
+    const insightsReady = Boolean(accessToken && selectedIds.length > 0);
 
     res.status(201).json({
       connection: {
@@ -825,12 +1069,210 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
           appId.replace(/\D/g, '').length >= 4
             ? `····${appId.replace(/\D/g, '').slice(-4)}`
             : '····',
+        selected_ad_account_ids: selectedIds,
+        insights_ready: insightsReady,
       },
       limits: await getUsageSnapshot(req.organizationId),
     });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al guardar la conexión' });
+  }
+});
+
+app.put('/api/meta/connections/:id/ad-accounts', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    const raw = req.body?.adAccountIds;
+    const selectedInput = Array.isArray(raw) ? raw.map((x) => String(x)) : [];
+    const { rows } = await pool.query(
+      'SELECT id, access_token FROM meta_connections WHERE id = $1 AND organization_id = $2',
+      [id, req.organizationId],
+    );
+    const row = rows[0];
+    if (!row) {
+      return res.status(404).json({ error: 'Conexión no encontrada' });
+    }
+    if (!String(row.access_token || '').trim()) {
+      return res.status(400).json({
+        error: 'No hay token de usuario. Conecta de nuevo incluyendo el access token.',
+        code: 'no_token',
+      });
+    }
+    const listed = await listAdAccounts(row.access_token);
+    if (!listed.ok) {
+      return res.status(400).json({ error: listed.message, code: listed.code || 'api_error' });
+    }
+    const valid = filterValidAdAccountIds(selectedInput, listed.accounts);
+    await pool.query(`UPDATE meta_connections SET selected_ad_account_ids = $1::jsonb WHERE id = $2 AND organization_id = $3`, [
+      JSON.stringify(valid),
+      id,
+      req.organizationId,
+    ]);
+    const insightsReady = valid.length > 0;
+    res.json({
+      ok: true,
+      selected_ad_account_ids: valid,
+      insights_ready: insightsReady,
+      limits: await getUsageSnapshot(req.organizationId),
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al actualizar cuentas publicitarias' });
+  }
+});
+
+app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const level = ['campaigns', 'adsets', 'ads'].includes(String(req.query.level))
+      ? String(req.query.level)
+      : 'campaigns';
+    const period = String(req.query.period || '7d');
+    const datePreset = datePresetFromDashboardPeriod(period);
+
+    const row = await getMetaConnectionForOrg(req.organizationId);
+    if (!row || !String(row.access_token || '').trim()) {
+      return res.status(400).json({
+        error: 'Falta token de usuario en la conexión Meta.',
+        code: 'no_token',
+      });
+    }
+    const storedIds = row.selected_ad_account_ids;
+    const resolved = resolveAdAccountIdsForRequest(req.query.adAccountId, storedIds);
+    if (!resolved.ok) {
+      return res.status(400).json({
+        error: 'Esa cuenta no está entre las vinculadas en la conexión Meta.',
+        code: resolved.code || 'invalid_ad_account',
+      });
+    }
+    const actIds = resolved.actIds;
+    if (actIds.length === 0) {
+      return res.status(400).json({
+        error: 'No hay cuentas publicitarias seleccionadas. Configúralas en Conexión Meta ADS.',
+        code: 'no_ad_accounts',
+      });
+    }
+
+    const allRows = [];
+    const partialErrors = [];
+    for (const actId of actIds) {
+      const norm = normalizeActId(actId);
+      const r = await fetchInsightsForAdAccount(norm, row.access_token, level, datePreset);
+      if (!r.ok) {
+        partialErrors.push({ adAccountId: norm, error: r.error || 'Error desconocido' });
+        continue;
+      }
+      allRows.push(...r.rows);
+    }
+
+    const totals = allRows.reduce(
+      (acc, x) => ({
+        impressions: acc.impressions + x.impressions,
+        clicks: acc.clicks + x.clicks,
+        spend: acc.spend + x.spend,
+        purchases: acc.purchases + x.purchases,
+        revenue: acc.revenue + x.revenue,
+      }),
+      { impressions: 0, clicks: 0, spend: 0, purchases: 0, revenue: 0 },
+    );
+    totals.cpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
+    totals.cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
+    totals.ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
+    totals.roas = totals.spend > 0 && totals.revenue > 0 ? totals.revenue / totals.spend : 0;
+    totals.cpa = totals.purchases > 0 ? totals.spend / totals.purchases : 0;
+
+    res.json({
+      live: true,
+      level,
+      datePreset,
+      period,
+      adAccountId: actIds.length === 1 ? actIds[0] : null,
+      fetchedAt: new Date().toISOString(),
+      totals,
+      rows: allRows,
+      partialErrors,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener métricas de Meta' });
+  }
+});
+
+app.get('/api/meta/funnel', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const period = String(req.query.period || '7d');
+    const datePreset = datePresetFromDashboardPeriod(period);
+
+    const row = await getMetaConnectionForOrg(req.organizationId);
+    if (!row || !String(row.access_token || '').trim()) {
+      return res.status(400).json({
+        error: 'Falta token de usuario en la conexión Meta.',
+        code: 'no_token',
+      });
+    }
+    const resolved = resolveAdAccountIdsForRequest(req.query.adAccountId, row.selected_ad_account_ids);
+    if (!resolved.ok) {
+      return res.status(400).json({
+        error: 'Esa cuenta no está entre las vinculadas en la conexión Meta.',
+        code: resolved.code || 'invalid_ad_account',
+      });
+    }
+    const actIds = resolved.actIds;
+    if (actIds.length === 0) {
+      return res.status(400).json({
+        error: 'No hay cuentas publicitarias seleccionadas.',
+        code: 'no_ad_accounts',
+      });
+    }
+
+    const { merged, partialErrors, ok } = await fetchFunnelForAdAccounts(
+      actIds,
+      row.access_token,
+      datePreset,
+    );
+    if (!ok || !merged) {
+      return res.status(502).json({
+        error: 'Meta no devolvió datos de embudo para las cuentas indicadas.',
+        code: 'funnel_empty',
+        partialErrors,
+      });
+    }
+
+    const drops = [];
+    for (let i = 0; i < merged.stages.length - 1; i++) {
+      const from = merged.stages[i].people;
+      const to = merged.stages[i + 1].people;
+      drops.push(from > 0 ? ((from - to) / from) * 100 : 0);
+    }
+    const linkClicks = merged.stages[1] ? merged.stages[1].people : 0;
+    const purchases = merged.stages[merged.stages.length - 1]
+      ? merged.stages[merged.stages.length - 1].people
+      : 0;
+    const convRate = linkClicks > 0 ? (purchases / linkClicks) * 100 : 0;
+    const cpa = purchases > 0 ? merged.spend / purchases : 0;
+    const roas = merged.spend > 0 && merged.revenue > 0 ? merged.revenue / merged.spend : 0;
+
+    res.json({
+      live: true,
+      datePreset,
+      period,
+      adAccountId: actIds.length === 1 ? actIds[0] : null,
+      fetchedAt: new Date().toISOString(),
+      stages: merged.stages,
+      drops,
+      spend: merged.spend,
+      revenue: merged.revenue,
+      impressions: merged.impressions,
+      purchases,
+      linkClicks,
+      convRate,
+      cpa,
+      roas,
+      partialErrors,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener embudo de Meta' });
   }
 });
 
@@ -848,91 +1290,6 @@ app.delete('/api/meta/connections/:id', verifyToken, scopeToOrganization, async 
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al eliminar la conexión' });
-  }
-});
-
-app.get('/api/adspower/status', verifyToken, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT adspower_profile_id FROM users WHERE id = $1 AND organization_id = $2',
-      [req.user.userId, req.user.organizationId],
-    );
-    const row = rows[0];
-    const profileId = row?.adspower_profile_id ? String(row.adspower_profile_id).trim() : '';
-    res.json({
-      configured: Boolean(profileId),
-      profileId: profileId || null,
-      apiBaseHint: adspowerClient.getBaseUrl(),
-    });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'No se pudo leer la configuración de AdsPower' });
-  }
-});
-
-app.put('/api/adspower/profile', verifyToken, async (req, res) => {
-  try {
-    const profileId = normalizeAdsPowerProfileId(req.body?.profileId);
-    if (!profileId) {
-      return res.status(400).json({
-        error:
-          'Profile ID no válido. Usa el identificador del perfil en AdsPower (solo letras, números, guiones y guión bajo; máx. 128).',
-      });
-    }
-    const result = await pool.query(
-      'UPDATE users SET adspower_profile_id = $1 WHERE id = $2 AND organization_id = $3',
-      [profileId, req.user.userId, req.user.organizationId],
-    );
-    if (result.rowCount === 0) {
-      return res.status(404).json({ error: 'Usuario no encontrado' });
-    }
-    res.json({ ok: true, profileId });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'No se pudo guardar el perfil de AdsPower' });
-  }
-});
-
-app.delete('/api/adspower/profile', verifyToken, async (req, res) => {
-  try {
-    await pool.query('UPDATE users SET adspower_profile_id = NULL WHERE id = $1 AND organization_id = $2', [
-      req.user.userId,
-      req.user.organizationId,
-    ]);
-    res.json({ ok: true });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'No se pudo eliminar la vinculación' });
-  }
-});
-
-app.get('/api/adspower/cookies/count', verifyToken, async (req, res) => {
-  try {
-    const { rows } = await pool.query(
-      'SELECT adspower_profile_id FROM users WHERE id = $1 AND organization_id = $2',
-      [req.user.userId, req.user.organizationId],
-    );
-    const profileId = rows[0]?.adspower_profile_id
-      ? String(rows[0].adspower_profile_id).trim()
-      : '';
-    if (!profileId) {
-      return res.status(400).json({
-        error: 'No tienes un perfil de AdsPower configurado. Guarda tu Profile ID primero.',
-        code: 'not_configured',
-      });
-    }
-    const result = await adspowerClient.getProfileCookieCount(profileId);
-    if (!result.ok) {
-      return res.status(502).json({
-        error: result.error,
-        detail: result.detail,
-        status: result.status,
-      });
-    }
-    res.json({ count: result.count, profileId });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Error al consultar cookies en AdsPower' });
   }
 });
 

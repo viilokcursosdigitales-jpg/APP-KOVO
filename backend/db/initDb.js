@@ -51,6 +51,11 @@ async function initDb(pool) {
   const sql = fs.readFileSync(schemaPath, 'utf8');
   await runSchemaStatements(pool, sql);
 
+  await pool.query(`
+    ALTER TABLE meta_connections
+    ADD COLUMN IF NOT EXISTS selected_ad_account_ids JSONB NOT NULL DEFAULT '[]'::jsonb
+  `);
+
   const { rows: orphans } = await pool.query(
     'SELECT * FROM users WHERE organization_id IS NULL',
   );

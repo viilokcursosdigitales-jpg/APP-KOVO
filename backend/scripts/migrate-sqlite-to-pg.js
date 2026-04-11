@@ -66,15 +66,14 @@ async function run() {
     await pool.query(
       `INSERT INTO users (
          id, name, email, password_hash, created_at, reset_token, reset_token_expires,
-         organization_id, role, is_active, adspower_profile_id
+         organization_id, role, is_active
        ) VALUES (
          $1, $2, $3, $4, COALESCE($5::timestamptz, now()), $6, $7::timestamptz,
-         $8, $9, $10, $11
+         $8, $9, $10
        )
        ON CONFLICT (id) DO UPDATE SET
          name = EXCLUDED.name, email = EXCLUDED.email, password_hash = EXCLUDED.password_hash,
-         organization_id = EXCLUDED.organization_id, role = EXCLUDED.role, is_active = EXCLUDED.is_active,
-         adspower_profile_id = EXCLUDED.adspower_profile_id`,
+         organization_id = EXCLUDED.organization_id, role = EXCLUDED.role, is_active = EXCLUDED.is_active`,
       [
         u.id,
         u.name,
@@ -86,7 +85,6 @@ async function run() {
         u.organization_id ?? null,
         u.role || 'member',
         Boolean(u.is_active === 1 || u.is_active === true),
-        u.adspower_profile_id || null,
       ],
     );
   }
@@ -116,8 +114,8 @@ async function run() {
   for (const m of metas) {
     await pool.query(
       `INSERT INTO meta_connections (
-         id, organization_id, created_by, app_id, app_secret, access_token, status, connected_at, account_name
-       ) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::timestamptz, now()), $9)
+         id, organization_id, created_by, app_id, app_secret, access_token, status, connected_at, account_name, selected_ad_account_ids
+       ) VALUES ($1, $2, $3, $4, $5, $6, $7, COALESCE($8::timestamptz, now()), $9, COALESCE($10::jsonb, '[]'::jsonb))
        ON CONFLICT (id) DO NOTHING`,
       [
         m.id,
@@ -129,6 +127,11 @@ async function run() {
         m.status || 'connected',
         toTs(m.connected_at),
         m.account_name || null,
+        m.selected_ad_account_ids != null
+          ? typeof m.selected_ad_account_ids === 'string'
+            ? m.selected_ad_account_ids
+            : JSON.stringify(m.selected_ad_account_ids)
+          : '[]',
       ],
     );
   }
