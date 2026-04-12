@@ -15,9 +15,9 @@
   --color-border-row: #f9f9f9;
 
   --color-text-primary: #111111;
-  --color-text-secondary: #555555;
-  --color-text-muted: #bbbbbb;
-  --color-text-hint: #cccccc;
+  --color-text-secondary: #333333;
+  --color-text-muted: #777777;
+  --color-text-hint: #999999;
 
   --color-success-bg: #edfbf4;
   --color-success-text: #1d9e75;
@@ -61,6 +61,12 @@
 .kovo-app *::before,
 .kovo-app *::after {
   box-sizing: border-box;
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--color-text-muted);
+  opacity: 1;
 }
 
 .kovo-kpi-grid {

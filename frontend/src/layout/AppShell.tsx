@@ -23,7 +23,7 @@ function NavGroup({ label, children }: { label: string; children: React.ReactNod
           fontSize: 10,
           textTransform: 'uppercase',
           letterSpacing: '1px',
-          color: '#c0c0c0',
+          color: ds.textHint,
           fontWeight: 500,
         }}
       >
@@ -66,7 +66,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
     textDecoration: 'none',
     fontWeight: isActive ? 600 : 500,
     background: isActive ? ds.brandBg : 'transparent',
-    color: isActive ? ds.brand : '#999999',
+    color: isActive ? ds.brand : ds.textMuted,
   });
 
   const renderItem = (item: NavItem) => (

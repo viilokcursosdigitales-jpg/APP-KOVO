@@ -179,7 +179,7 @@ export default function Login() {
           <Link to="/register" style={linkStyle}>
             Crear cuenta
           </Link>
-          <Link to="/" style={{ ...linkStyle, color: '#6b7280', fontWeight: 500 }}>
+          <Link to="/" style={{ ...linkStyle, color: ds.textSecondary, fontWeight: 500 }}>
             ← Volver al inicio
           </Link>
         </div>

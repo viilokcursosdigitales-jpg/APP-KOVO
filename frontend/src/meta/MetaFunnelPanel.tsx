@@ -352,7 +352,7 @@ export function MetaFunnelPanel({
                       x={cx}
                       y={y1 + stageH / 2 + 10}
                       textAnchor="middle"
-                      fill={dark ? '#f0f0f0' : '#555555'}
+                      fill={dark ? '#f0f0f0' : ds.textSecondary}
                       fontSize={10}
                       fontWeight={500}
                     >

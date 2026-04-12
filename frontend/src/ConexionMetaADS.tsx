@@ -99,7 +99,7 @@ function FieldTooltip({ id, text }: { id: string; text: string }) {
             width: 'min(320px, calc(100vw - 48px))',
             padding: '12px 14px',
             background: ds.textPrimary,
-            color: '#e8eaef',
+            color: ds.borderCard,
             fontSize: 13,
             lineHeight: 1.45,
             borderRadius: 10,
@@ -137,10 +137,10 @@ function StatusBadge({
   status: 'disconnected' | 'loading' | 'connected' | 'error';
 }) {
   const map = {
-    disconnected: { label: 'Sin conectar', bg: '#f3f4f6', color: '#6b7280', dot: '#9ca3af' },
+    disconnected: { label: 'Sin conectar', bg: ds.bgSubtle, color: ds.textSecondary, dot: ds.textHint },
     loading: { label: 'Conectando…', bg: alpha.brand18, color: ds.brand, dot: ds.brand },
     connected: { label: 'Conectado', bg: alpha.success15, color: ds.successText, dot: ds.successText },
-    error: { label: 'Error', bg: 'rgba(220,80,80,0.15)', color: '#b91c1c', dot: '#dc2626' },
+    error: { label: 'Error', bg: ds.dangerBg, color: ds.dangerText, dot: ds.dangerText },
   }[status];
 
   return (
@@ -649,7 +649,7 @@ export default function ConexionMetaADS() {
           borderRadius: 16,
           padding: 40,
           textAlign: 'center',
-          color: '#6b7280',
+          color: ds.textSecondary,
         }}
       >
         Cargando conexión Meta…
@@ -664,7 +664,7 @@ export default function ConexionMetaADS() {
           background: ds.bgCard,
           borderRadius: 16,
           padding: 'clamp(20px, 4vw, 36px)',
-          border: '1px solid #e8eaef',
+          border: `1px solid ${ds.borderCard}`,
           textAlign: 'center',
         }}
       >
@@ -672,13 +672,13 @@ export default function ConexionMetaADS() {
           <CheckAnimated />
         </div>
         <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>¡Conectado exitosamente con Meta ADS!</h2>
-        <p style={{ margin: '0 0 20px', color: '#6b7280', fontSize: 15, lineHeight: 1.5 }}>
+        <p style={{ margin: '0 0 20px', color: ds.textSecondary, fontSize: 15, lineHeight: 1.5 }}>
           Tu app de Meta está vinculada. Si elegiste cuentas publicitarias y guardaste un token de usuario, el apartado{' '}
           <strong>Análisis de creativo</strong> mostrará métricas reales (campañas, conjuntos y anuncios). Si conectaste
           solo App ID y Secret, el dashboard seguirá en modo demostración hasta que añadas token y cuentas.
         </p>
         {saved.selectedAdAccountIds.length > 0 && (
-          <p style={{ margin: '0 0 16px', fontSize: 14, color: '#374151', textAlign: 'left' }}>
+          <p style={{ margin: '0 0 16px', fontSize: 14, color: ds.textPrimary, textAlign: 'left' }}>
             <strong>Cuentas enlazadas:</strong> {saved.selectedAdAccountIds.length} —{' '}
             {saved.selectedAdAccountIds.join(', ')}
           </p>
@@ -686,19 +686,19 @@ export default function ConexionMetaADS() {
         <div
           style={{
             textAlign: 'left',
-            background: '#f8fafc',
+            background: ds.bgSubtle,
             borderRadius: 12,
             padding: '16px 18px',
             marginBottom: 24,
-            border: '1px solid #e8eaef',
+            border: `1px solid ${ds.borderCard}`,
           }}
         >
-          <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 4 }}>Cuenta conectada</div>
+          <div style={{ fontSize: 13, color: ds.textSecondary, marginBottom: 4 }}>Cuenta conectada</div>
           <div style={{ fontSize: 17, fontWeight: 700, color: ds.textPrimary }}>{saved.accountName}</div>
-          <div style={{ fontSize: 13, color: '#6b7280', marginTop: 12 }}>App ID (referencia)</div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: '#374151' }}>{saved.appIdHint}</div>
-          <div style={{ fontSize: 13, color: '#6b7280', marginTop: 12 }}>Fecha de conexión</div>
-          <div style={{ fontSize: 15, fontWeight: 500, color: '#374151' }}>{formatConnectedDate(saved.connectedAt)}</div>
+          <div style={{ fontSize: 13, color: ds.textSecondary, marginTop: 12 }}>App ID (referencia)</div>
+          <div style={{ fontSize: 15, fontWeight: 600, color: ds.textPrimary }}>{saved.appIdHint}</div>
+          <div style={{ fontSize: 13, color: ds.textSecondary, marginTop: 12 }}>Fecha de conexión</div>
+          <div style={{ fontSize: 15, fontWeight: 500, color: ds.textPrimary }}>{formatConnectedDate(saved.connectedAt)}</div>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center', alignItems: 'center' }}>
           <StatusBadge status="connected" />
@@ -710,7 +710,7 @@ export default function ConexionMetaADS() {
               padding: '10px 18px',
               borderRadius: 10,
               border: `1px solid ${ds.brand}`,
-              background: '#fff',
+              background: ds.bgCard,
               color: ds.brand,
               fontWeight: 600,
               cursor: loading ? 'wait' : 'pointer',
@@ -725,9 +725,9 @@ export default function ConexionMetaADS() {
             style={{
               padding: '12px 22px',
               borderRadius: 10,
-              border: '1px solid #fecaca',
-              background: '#fff',
-              color: '#b91c1c',
+              border: `1px solid ${ds.dangerText}`,
+              background: ds.bgCard,
+              color: ds.dangerText,
               fontWeight: 600,
               cursor: 'pointer',
               fontSize: 14,
@@ -747,7 +747,7 @@ export default function ConexionMetaADS() {
           background: ds.bgCard,
           borderRadius: 16,
           padding: 'clamp(20px, 4vw, 36px)',
-          border: '1px solid #fecaca',
+          border: `1px solid ${ds.dangerText}`,
           textAlign: 'center',
         }}
       >
@@ -757,7 +757,7 @@ export default function ConexionMetaADS() {
             height: 64,
             margin: '0 auto 16px',
             borderRadius: '50%',
-            background: 'rgba(220,80,80,0.12)',
+            background: ds.dangerBg,
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -765,12 +765,12 @@ export default function ConexionMetaADS() {
           aria-hidden
         >
           <svg width="36" height="36" viewBox="0 0 24 24" fill="none" aria-hidden>
-            <circle cx="12" cy="12" r="10" stroke="#dc2626" strokeWidth="2" />
-            <path d="M12 7v6M12 16v.01" stroke="#dc2626" strokeWidth="2.2" strokeLinecap="round" />
+            <circle cx="12" cy="12" r="10" stroke={ds.dangerText} strokeWidth="2" />
+            <path d="M12 7v6M12 16v.01" stroke={ds.dangerText} strokeWidth="2.2" strokeLinecap="round" />
           </svg>
         </div>
         <h2 style={{ margin: '0 0 10px', fontSize: 20, color: ds.textPrimary }}>No se pudo completar la conexión</h2>
-        <p style={{ margin: '0 0 24px', color: '#374151', fontSize: 16, lineHeight: 1.5 }}>
+        <p style={{ margin: '0 0 24px', color: ds.textPrimary, fontSize: 16, lineHeight: 1.5 }}>
           {messageForErrorCode(errorCode)}
         </p>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'stretch' }}>
@@ -842,11 +842,11 @@ export default function ConexionMetaADS() {
             background: ds.bgCard,
             borderRadius: 16,
             padding: 'clamp(20px, 4vw, 32px)',
-            border: '1px solid #e8eaef',
+            border: `1px solid ${ds.borderCard}`,
           }}
         >
           <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>Antes de conectar</h2>
-          <p style={{ margin: '0 0 20px', color: '#6b7280', fontSize: 15 }}>
+          <p style={{ margin: '0 0 20px', color: ds.textSecondary, fontSize: 15 }}>
             Sigue estos pasos en Meta. En unos minutos tendrás lo necesario para enlazar tu cuenta.
           </p>
           <a
@@ -896,7 +896,7 @@ export default function ConexionMetaADS() {
                 </span>
                 <div>
                   <div style={{ fontWeight: 700, color: ds.textPrimary, marginBottom: 6 }}>{s.title}</div>
-                  <p style={{ margin: 0, color: '#6b7280', fontSize: 14, lineHeight: 1.5 }}>{s.body}</p>
+                  <p style={{ margin: 0, color: ds.textSecondary, fontSize: 14, lineHeight: 1.5 }}>{s.body}</p>
                 </div>
               </li>
             ))}
@@ -912,7 +912,7 @@ export default function ConexionMetaADS() {
               padding: '14px 20px',
               borderRadius: 10,
               border: 'none',
-              background: metaAtLimit ? 'alpha.brand45' : ds.brand,
+              background: metaAtLimit ? alpha.brand45 : ds.brand,
               color: '#fff',
               fontWeight: 700,
               cursor: metaAtLimit ? 'not-allowed' : 'pointer',
@@ -954,13 +954,13 @@ export default function ConexionMetaADS() {
             background: ds.bgCard,
             borderRadius: 16,
             padding: 'clamp(20px, 4vw, 32px)',
-            border: '1px solid #e8eaef',
+            border: `1px solid ${ds.borderCard}`,
           }}
         >
           <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>
             {editing ? 'Actualizar cuentas publicitarias' : 'Elige tus cuentas publicitarias'}
           </h2>
-          <p style={{ margin: '0 0 20px', color: '#6b7280', fontSize: 14, lineHeight: 1.5 }}>
+          <p style={{ margin: '0 0 20px', color: ds.textSecondary, fontSize: 14, lineHeight: 1.5 }}>
             Marca una o varias cuentas (act_). Las métricas del dashboard se agregarán de todas ellas.
           </p>
           {previewError && (
@@ -969,8 +969,8 @@ export default function ConexionMetaADS() {
                 marginBottom: 16,
                 padding: '12px 14px',
                 borderRadius: 10,
-                background: 'rgba(220,80,80,0.1)',
-                color: '#991b1b',
+                background: ds.dangerBg,
+                color: ds.dangerText,
                 fontSize: 14,
               }}
             >
@@ -987,9 +987,9 @@ export default function ConexionMetaADS() {
                   gap: 12,
                   padding: '12px 14px',
                   borderRadius: 10,
-                  border: '1px solid #e8eaef',
+                  border: `1px solid ${ds.borderCard}`,
                   marginBottom: 10,
-                  background: '#fafbfc',
+                  background: ds.bgSubtle,
                 }}
               >
                 <input
@@ -1001,7 +1001,7 @@ export default function ConexionMetaADS() {
                 />
                 <label htmlFor={`acct-${a.id}`} style={{ cursor: 'pointer', flex: 1, margin: 0 }}>
                   <div style={{ fontWeight: 700, color: ds.textPrimary }}>{a.name}</div>
-                  <div style={{ fontSize: 13, color: '#6b7280' }}>
+                  <div style={{ fontSize: 13, color: ds.textSecondary }}>
                     {a.id}
                     {a.currency ? ` · ${a.currency}` : ''}
                     {a.account_status != null ? ` · estado ${a.account_status}` : ''}
@@ -1019,7 +1019,7 @@ export default function ConexionMetaADS() {
               padding: '14px 20px',
               borderRadius: 10,
               border: 'none',
-              background: loading || metaAtLimit ? 'alpha.brand45' : ds.brand,
+              background: loading || metaAtLimit ? alpha.brand45 : ds.brand,
               color: '#fff',
               fontWeight: 700,
               cursor: loading ? 'wait' : 'pointer',
@@ -1069,17 +1069,17 @@ export default function ConexionMetaADS() {
             background: ds.bgCard,
             borderRadius: 16,
             padding: 'clamp(20px, 4vw, 32px)',
-            border: '1px solid #e8eaef',
+            border: `1px solid ${ds.borderCard}`,
           }}
         >
           <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>Datos de tu app</h2>
-          <p style={{ margin: '0 0 24px', color: '#6b7280', fontSize: 14 }}>
+          <p style={{ margin: '0 0 24px', color: ds.textSecondary, fontSize: 14 }}>
             Los datos se guardan en el servidor y quedan aislados por organización (multi-tenant). Solo usuarios
             autorizados de tu empresa pueden gestionarlos.
           </p>
 
           <label style={{ display: 'block', marginBottom: 18 }}>
-            <span style={{ display: 'flex', alignItems: 'center', fontWeight: 600, color: '#374151', marginBottom: 8 }}>
+            <span style={{ display: 'flex', alignItems: 'center', fontWeight: 600, color: ds.textPrimary, marginBottom: 8 }}>
               App ID (Facebook Developer)
               <FieldTooltip
                 id={`${baseId}-appid`}
@@ -1099,17 +1099,17 @@ export default function ConexionMetaADS() {
                 boxSizing: 'border-box',
                 padding: '12px 14px',
                 borderRadius: 10,
-                border: fieldErrors.appId ? '2px solid #dc2626' : '1px solid #d1d5db',
+                border: fieldErrors.appId ? `2px solid ${ds.dangerText}` : `1px solid ${ds.borderCard}`,
                 fontSize: 15,
               }}
             />
             {fieldErrors.appId && (
-              <span style={{ display: 'block', marginTop: 6, fontSize: 13, color: '#dc2626' }}>{fieldErrors.appId}</span>
+              <span style={{ display: 'block', marginTop: 6, fontSize: 13, color: ds.dangerText }}>{fieldErrors.appId}</span>
             )}
           </label>
 
           <label style={{ display: 'block', marginBottom: 18 }}>
-            <span style={{ display: 'flex', alignItems: 'center', fontWeight: 600, color: '#374151', marginBottom: 8 }}>
+            <span style={{ display: 'flex', alignItems: 'center', fontWeight: 600, color: ds.textPrimary, marginBottom: 8 }}>
               App Secret
               <FieldTooltip
                 id={`${baseId}-secret`}
@@ -1128,17 +1128,17 @@ export default function ConexionMetaADS() {
                 boxSizing: 'border-box',
                 padding: '12px 14px',
                 borderRadius: 10,
-                border: fieldErrors.appSecret ? '2px solid #dc2626' : '1px solid #d1d5db',
+                border: fieldErrors.appSecret ? `2px solid ${ds.dangerText}` : `1px solid ${ds.borderCard}`,
                 fontSize: 15,
               }}
             />
             {fieldErrors.appSecret && (
-              <span style={{ display: 'block', marginTop: 6, fontSize: 13, color: '#dc2626' }}>{fieldErrors.appSecret}</span>
+              <span style={{ display: 'block', marginTop: 6, fontSize: 13, color: ds.dangerText }}>{fieldErrors.appSecret}</span>
             )}
           </label>
 
           <label style={{ display: 'block', marginBottom: 24 }}>
-            <span style={{ display: 'flex', alignItems: 'center', fontWeight: 600, color: '#374151', marginBottom: 8 }}>
+            <span style={{ display: 'flex', alignItems: 'center', fontWeight: 600, color: ds.textPrimary, marginBottom: 8 }}>
               Access Token de usuario (para métricas en vivo)
               <FieldTooltip
                 id={`${baseId}-token`}
@@ -1156,7 +1156,7 @@ export default function ConexionMetaADS() {
                 boxSizing: 'border-box',
                 padding: '12px 14px',
                 borderRadius: 10,
-                border: '1px solid #d1d5db',
+                border: `1px solid ${ds.borderCard}`,
                 fontSize: 15,
               }}
             />
@@ -1168,8 +1168,8 @@ export default function ConexionMetaADS() {
                 marginBottom: 16,
                 padding: '12px 14px',
                 borderRadius: 10,
-                background: 'rgba(220,80,80,0.1)',
-                color: '#991b1b',
+                background: ds.dangerBg,
+                color: ds.dangerText,
                 fontSize: 14,
               }}
             >
@@ -1187,7 +1187,7 @@ export default function ConexionMetaADS() {
               padding: '14px 20px',
               borderRadius: 10,
               border: 'none',
-              background: loading || metaAtLimit ? 'alpha.brand45' : ds.brand,
+              background: loading || metaAtLimit ? alpha.brand45 : ds.brand,
               color: '#fff',
               fontWeight: 700,
               cursor: loading ? 'wait' : metaAtLimit ? 'not-allowed' : 'pointer',
@@ -1217,7 +1217,7 @@ export default function ConexionMetaADS() {
               padding: '12px 20px',
               borderRadius: 10,
               border: `1px solid ${alpha.brand40}`,
-              background: '#fff',
+              background: ds.bgCard,
               color: ds.brand,
               fontWeight: 600,
               cursor: loading || metaAtLimit ? 'not-allowed' : 'pointer',
@@ -1238,7 +1238,7 @@ export default function ConexionMetaADS() {
         background: ds.bgCard,
         borderRadius: 16,
         padding: 'clamp(24px, 5vw, 40px)',
-        border: '1px solid #e8eaef',
+        border: `1px solid ${ds.borderCard}`,
       }}
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 20 }}>
@@ -1250,8 +1250,8 @@ export default function ConexionMetaADS() {
             marginBottom: 16,
             padding: '12px 14px',
             borderRadius: 10,
-            background: 'rgba(234,179,8,0.15)',
-            color: '#854d0e',
+            background: ds.warningBg,
+            color: ds.warningText,
             fontSize: 14,
           }}
         >
@@ -1261,7 +1261,7 @@ export default function ConexionMetaADS() {
       <h2 style={{ margin: '0 0 12px', fontSize: 'clamp(22px, 4vw, 28px)', color: ds.textPrimary, lineHeight: 1.2 }}>
         Conecta tu cuenta de Meta ADS
       </h2>
-      <p style={{ margin: '0 0 28px', color: '#6b7280', fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>
+      <p style={{ margin: '0 0 28px', color: ds.textSecondary, fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>
         Enlaza tu propia app de Facebook Developer para ver métricas y gestionar anuncios con tus credenciales. Tú controlas el acceso; nosotros solo usamos lo que autorices en Meta.
       </p>
       <div
@@ -1279,7 +1279,7 @@ export default function ConexionMetaADS() {
             padding: '14px 28px',
             borderRadius: 10,
             border: 'none',
-            background: metaAtLimit ? 'alpha.brand45' : ds.brand,
+            background: metaAtLimit ? alpha.brand45 : ds.brand,
             color: '#fff',
             fontWeight: 700,
             cursor: metaAtLimit ? 'not-allowed' : 'pointer',
