@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
+import { orderListTableScrollWrapperStyle, orderListTheadStickyCell } from '../design-system/orderListTableScroll';
 import { IconPencil, IconTruck } from '../design-system/icons';
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
@@ -1111,7 +1112,7 @@ export default function MoticoPage() {
             Cargando…
           </div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
+          <div style={orderListTableScrollWrapperStyle}>
             <table
               style={{
                 ...tableBase,
@@ -1126,7 +1127,8 @@ export default function MoticoPage() {
                     style={{
                       ...moticoThPad,
                       ...moticoStickySelectCol,
-                      zIndex: 8,
+                      ...orderListTheadStickyCell,
+                      zIndex: 10,
                       background: ds.bgApp,
                       borderRight: `1px solid ${ds.borderCard}`,
                     }}
@@ -1141,17 +1143,17 @@ export default function MoticoPage() {
                       style={{ width: 16, height: 16, cursor: filteredOrders.length ? 'pointer' : 'not-allowed' }}
                     />
                   </Th>
-                  <Th style={moticoThPad}>Pedido</Th>
-                  <Th style={moticoThPad}>Fecha</Th>
-                  <Th style={moticoThPad}>Cliente</Th>
-                  <Th style={moticoThPad}>Departamento</Th>
-                  <Th style={moticoThPad}>Ciudad</Th>
-                  <Th style={moticoThPad}>Dirección</Th>
-                  <Th style={moticoThPad}>Precio</Th>
-                  <Th style={moticoThPad}>Cant.</Th>
-                  <Th style={moticoThPad}>Pago</Th>
-                  <Th style={moticoThPad}>Productos</Th>
-                  <Th style={{ ...moticoThPad, ...moticoEstadoThTd }}>Estado</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pedido</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Fecha</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Cliente</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Departamento</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Ciudad</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Dirección</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Precio</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Cant.</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Productos</Th>
+                  <Th style={{ ...moticoThPad, ...moticoEstadoThTd, ...orderListTheadStickyCell }}>Estado</Th>
                 </tr>
               </thead>
               <tbody>

@@ -193,7 +193,27 @@ function buildBatchPrintDocument(
       box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
     }
     .motico-preview-toolbar span { font-weight: 600; }
-    .motico-preview-toolbar button {
+    .motico-preview-toolbar-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .motico-preview-toolbar .motico-preview-close {
+      padding: 6px 12px;
+      border-radius: 8px;
+      border: 1px solid rgba(248, 250, 252, 0.35);
+      font-weight: 600;
+      font-size: 20px;
+      line-height: 1;
+      cursor: pointer;
+      background: transparent;
+      color: #f8fafc;
+    }
+    .motico-preview-toolbar .motico-preview-close:hover {
+      background: rgba(248, 250, 252, 0.12);
+      border-color: rgba(248, 250, 252, 0.55);
+    }
+    .motico-preview-toolbar .motico-preview-print {
       padding: 8px 18px;
       border-radius: 8px;
       border: none;
@@ -203,7 +223,7 @@ function buildBatchPrintDocument(
       background: #3b82f6;
       color: #fff;
     }
-    .motico-preview-toolbar button:hover { background: #2563eb; }
+    .motico-preview-toolbar .motico-preview-print:hover { background: #2563eb; }
     @media print {
       .motico-preview-toolbar { display: none !important; }
     }
@@ -213,7 +233,10 @@ function buildBatchPrintDocument(
   const previewBar = options?.screenPreviewToolbar
     ? `<div class="motico-preview-toolbar" role="toolbar" aria-label="Vista previa de guías">
   <span>Vista previa · Guías Motico</span>
-  <button type="button" onclick="window.print()">Imprimir</button>
+  <div class="motico-preview-toolbar-actions">
+    <button type="button" class="motico-preview-close" onclick="window.close()" aria-label="Cerrar ventana" title="Cerrar">×</button>
+    <button type="button" class="motico-preview-print" onclick="window.print()">Imprimir</button>
+  </div>
 </div>`
     : '';
 

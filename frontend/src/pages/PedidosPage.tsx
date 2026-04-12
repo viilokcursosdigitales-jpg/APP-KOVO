@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { alpha, ds } from '../design-system/ds';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
+import { orderListTableScrollWrapperStyle, orderListTheadStickyCell } from '../design-system/orderListTableScroll';
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
@@ -1074,12 +1075,20 @@ export default function PedidosPage() {
         {useLive && shopifyLoading && shopifyOrders.length === 0 ? (
           <div style={{ padding: 24, color: ds.textMuted, fontSize: 13 }}>Cargando pedidos de Shopify…</div>
         ) : (
-          <div style={{ overflowX: 'auto' }}>
+          <div style={orderListTableScrollWrapperStyle}>
             <table style={{ ...tableBase, minWidth: useLive ? 1464 : 1080 }}>
               <thead>
                 <tr>
                   {useLive ? (
-                    <Th style={{ width: 44, textAlign: 'center', paddingLeft: 12, paddingRight: 8 }}>
+                    <Th
+                      style={{
+                        ...orderListTheadStickyCell,
+                        width: 44,
+                        textAlign: 'center',
+                        paddingLeft: 12,
+                        paddingRight: 8,
+                      }}
+                    >
                       <input
                         ref={selectAllCheckboxRef}
                         type="checkbox"
@@ -1091,22 +1100,22 @@ export default function PedidosPage() {
                       />
                     </Th>
                   ) : null}
-                  <Th>Pedido</Th>
-                  <Th>Fecha</Th>
-                  <Th>Cliente</Th>
+                  <Th style={orderListTheadStickyCell}>Pedido</Th>
+                  <Th style={orderListTheadStickyCell}>Fecha</Th>
+                  <Th style={orderListTheadStickyCell}>Cliente</Th>
                   {useLive ? (
                     <>
-                      <Th>Ciudad</Th>
-                      <Th>Departamento</Th>
-                      <Th>Dirección</Th>
+                      <Th style={orderListTheadStickyCell}>Ciudad</Th>
+                      <Th style={orderListTheadStickyCell}>Departamento</Th>
+                      <Th style={orderListTheadStickyCell}>Dirección</Th>
                     </>
                   ) : null}
-                  <Th>Precio</Th>
-                  <Th>Cant.</Th>
-                  <Th>Pago (Shopify)</Th>
-                  <Th>Estado</Th>
-                  <Th>Mensajero</Th>
-                  {useLive ? <Th /> : null}
+                  <Th style={orderListTheadStickyCell}>Precio</Th>
+                  <Th style={orderListTheadStickyCell}>Cant.</Th>
+                  <Th style={orderListTheadStickyCell}>Pago (Shopify)</Th>
+                  <Th style={orderListTheadStickyCell}>Estado</Th>
+                  <Th style={orderListTheadStickyCell}>Mensajero</Th>
+                  {useLive ? <Th style={orderListTheadStickyCell} /> : null}
                 </tr>
               </thead>
               <tbody>
