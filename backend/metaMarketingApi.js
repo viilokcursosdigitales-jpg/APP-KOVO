@@ -67,8 +67,9 @@ async function listAdAccounts(accessToken) {
   return { ok: true, accounts: r.items, code: null, message: null, fb: null };
 }
 
+// omni_purchase_roas no es válido en insights anidados de campaña/conjunto/anuncio (error #100).
 const INSIGHT_FIELDS =
-  'impressions,clicks,spend,cpm,cpc,ctr,reach,frequency,actions,action_values,website_purchase_roas,omni_purchase_roas,cost_per_action_type';
+  'impressions,clicks,spend,cpm,cpc,ctr,reach,frequency,actions,action_values,website_purchase_roas,cost_per_action_type';
 
 function buildObjectFields(level, datePreset) {
   const ins = `insights.date_preset(${datePreset}){${INSIGHT_FIELDS}}`;
@@ -108,24 +109,17 @@ const PURCHASE_TYPES = new Set([
   'onsite_web_app_purchase',
 ]);
 
-/** ROAS tal como lo devuelve Meta en insights (arrays ActionStats o número). */
+/** ROAS desde campo website_purchase_roas de Meta cuando existe (arrays ActionStats o número). */
 function roasFromMetaInsightFields(ins) {
-  const sumRoasArray = (field) => {
-    const raw = ins[field];
-    if (raw == null) return 0;
-    if (typeof raw === 'string' || typeof raw === 'number') return parseNum(raw);
-    if (!Array.isArray(raw)) return 0;
-    let s = 0;
-    for (const x of raw) {
-      s += parseNum(x && x.value);
-    }
-    return s;
-  };
-  const omni = sumRoasArray('omni_purchase_roas');
-  if (omni > 0) return omni;
-  const web = sumRoasArray('website_purchase_roas');
-  if (web > 0) return web;
-  return 0;
+  const raw = ins.website_purchase_roas;
+  if (raw == null) return 0;
+  if (typeof raw === 'string' || typeof raw === 'number') return parseNum(raw);
+  if (!Array.isArray(raw)) return 0;
+  let s = 0;
+  for (const x of raw) {
+    s += parseNum(x && x.value);
+  }
+  return s;
 }
 
 const CPA_ACTION_TYPE_ORDER = [
