@@ -76,7 +76,15 @@ const filterCtl: CSSProperties = {
 };
 
 function formatMoney(n: number, currency: string) {
-  const cur = currency && currency.length === 3 ? currency : 'EUR';
+  const curRaw = currency && currency.length === 3 ? currency : 'EUR';
+  const cur = curRaw.toUpperCase();
+  if (cur === 'COP') {
+    const formatted = new Intl.NumberFormat('es-CO', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 2,
+    }).format(n);
+    return `$${formatted}`;
+  }
   try {
     return new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur }).format(n);
   } catch {
@@ -106,7 +114,7 @@ function safeBadgeVariant(v: string): StatusBadgeVariant {
 }
 
 export default function DashboardHome() {
-  const [datePreset, setDatePreset] = useState<DatePreset>('este_mes');
+  const [datePreset, setDatePreset] = useState<DatePreset>('hoy');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
   const [productId, setProductId] = useState('');

@@ -27,9 +27,9 @@ export default function MetaAdsPage() {
     },
     [setSearchParams],
   );
-  const [p1, setP1] = useState<PeriodKey>('7d');
+  const [p1, setP1] = useState<PeriodKey>('hoy');
   const [pr1, setPr1] = useState<ProductKey>('all');
-  const [p2, setP2] = useState<PeriodKey>('7d');
+  const [p2, setP2] = useState<PeriodKey>('hoy');
   const [pr2, setPr2] = useState<ProductKey>('all');
 
   return (

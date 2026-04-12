@@ -68,7 +68,7 @@ async function listAdAccounts(accessToken) {
 }
 
 const INSIGHT_FIELDS =
-  'impressions,clicks,spend,cpm,cpc,ctr,reach,frequency,actions,action_values';
+  'impressions,clicks,spend,cpm,cpc,ctr,reach,frequency,actions,action_values,website_purchase_roas,omni_purchase_roas,cost_per_action_type';
 
 function buildObjectFields(level, datePreset) {
   const ins = `insights.date_preset(${datePreset}){${INSIGHT_FIELDS}}`;
@@ -104,7 +104,57 @@ const PURCHASE_TYPES = new Set([
   'offsite_conversion.fb_pixel_purchase',
   'onsite_conversion.purchase',
   'web_in_store_purchase',
+  'onsite_web_purchase',
+  'onsite_web_app_purchase',
 ]);
+
+/** ROAS tal como lo devuelve Meta en insights (arrays ActionStats o número). */
+function roasFromMetaInsightFields(ins) {
+  const sumRoasArray = (field) => {
+    const raw = ins[field];
+    if (raw == null) return 0;
+    if (typeof raw === 'string' || typeof raw === 'number') return parseNum(raw);
+    if (!Array.isArray(raw)) return 0;
+    let s = 0;
+    for (const x of raw) {
+      s += parseNum(x && x.value);
+    }
+    return s;
+  };
+  const omni = sumRoasArray('omni_purchase_roas');
+  if (omni > 0) return omni;
+  const web = sumRoasArray('website_purchase_roas');
+  if (web > 0) return web;
+  return 0;
+}
+
+const CPA_ACTION_TYPE_ORDER = [
+  'omni_purchase',
+  'purchase',
+  'offsite_conversion.fb_pixel_purchase',
+  'onsite_conversion.purchase',
+  'web_in_store_purchase',
+  'onsite_web_purchase',
+  'onsite_web_app_purchase',
+];
+
+/** Coste por compra según cost_per_action_type de Meta (mismo criterio que el desglose de Ads). */
+function cpaFromMetaCostPerAction(ins) {
+  const arr = ins.cost_per_action_type;
+  if (!Array.isArray(arr)) return null;
+  for (const pref of CPA_ACTION_TYPE_ORDER) {
+    const hit = arr.find((a) => a && a.action_type === pref);
+    const v = parseNum(hit && hit.value);
+    if (v > 0) return v;
+  }
+  for (const a of arr) {
+    if (a && PURCHASE_TYPES.has(a.action_type)) {
+      const v = parseNum(a.value);
+      if (v > 0) return v;
+    }
+  }
+  return null;
+}
 
 function purchaseCountFromActions(actions) {
   if (!Array.isArray(actions)) return 0;
@@ -131,8 +181,10 @@ function normalizeEntity(entity, level, adAccountId, adAccountName) {
   const spend = parseNum(ins.spend);
   const purchases = purchaseCountFromActions(ins.actions);
   const revenue = purchaseValueFromActionValues(ins.action_values);
-  const roas = spend > 0 && revenue > 0 ? revenue / spend : 0;
-  const cpa = purchases > 0 ? spend / purchases : 0;
+  const roasMeta = roasFromMetaInsightFields(ins);
+  const roas = roasMeta > 0 ? roasMeta : spend > 0 && revenue > 0 ? revenue / spend : 0;
+  const cpaMeta = cpaFromMetaCostPerAction(ins);
+  const cpa = cpaMeta != null && cpaMeta > 0 ? cpaMeta : purchases > 0 ? spend / purchases : 0;
   return {
     adAccountId,
     adAccountName,
@@ -402,6 +454,69 @@ async function fetchTotalSpendForAdAccountsTimeRange(actIds, accessToken, since,
   return { spend, partialErrors };
 }
 
+/**
+ * @param {string} campaignId digits only
+ * @param {string} accessToken
+ * @returns {Promise<{ ok: boolean, accountId: string | null, error: string | null }>}
+ */
+async function getCampaignAdAccountId(campaignId, accessToken) {
+  const v = DEFAULT_VERSION;
+  const rawId = String(campaignId || '').trim();
+  if (!/^\d+$/.test(rawId)) {
+    return { ok: false, accountId: null, error: 'ID de campaña inválido' };
+  }
+  const u = `https://graph.facebook.com/${v}/${rawId}?fields=account_id&access_token=${encodeURIComponent(accessToken)}`;
+  const { ok, data } = await graphFetchJson(u);
+  if (!ok || !data) {
+    const fb = data && data.error;
+    return {
+      ok: false,
+      accountId: null,
+      error: (fb && fb.message) || 'No se pudo comprobar la campaña',
+    };
+  }
+  const aid = data.account_id ? normalizeActId(String(data.account_id)) : '';
+  if (!aid) {
+    return { ok: false, accountId: null, error: 'Campaña sin cuenta publicitaria asociada' };
+  }
+  return { ok: true, accountId: aid, error: null };
+}
+
+/**
+ * @param {string} campaignId digits only
+ * @param {string} accessToken
+ * @param {'PAUSED'|'ACTIVE'} status
+ */
+async function updateCampaignStatusGraph(campaignId, accessToken, status) {
+  const v = DEFAULT_VERSION;
+  const rawId = String(campaignId || '').trim();
+  if (!/^\d+$/.test(rawId)) {
+    return { ok: false, error: 'ID de campaña inválido', fb: null };
+  }
+  if (status !== 'PAUSED' && status !== 'ACTIVE') {
+    return { ok: false, error: 'Estado no permitido', fb: null };
+  }
+  const u = `https://graph.facebook.com/${v}/${rawId}`;
+  const body = new URLSearchParams();
+  body.set('status', status);
+  body.set('access_token', accessToken);
+  const res = await fetch(u, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: body.toString(),
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok || (data && data.error)) {
+    const fb = data && data.error;
+    return {
+      ok: false,
+      error: (fb && fb.message) || 'Error al actualizar la campaña en Meta',
+      fb: fb || null,
+    };
+  }
+  return { ok: true, error: null, fb: null, data };
+}
+
 module.exports = {
   normalizeActId,
   datePresetFromDashboardPeriod,
@@ -412,4 +527,6 @@ module.exports = {
   mergeFunnelPayloads,
   fetchAccountSpendForTimeRange,
   fetchTotalSpendForAdAccountsTimeRange,
+  getCampaignAdAccountId,
+  updateCampaignStatusGraph,
 };

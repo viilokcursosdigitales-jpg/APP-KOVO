@@ -16,6 +16,8 @@ const {
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
   fetchTotalSpendForAdAccountsTimeRange,
+  getCampaignAdAccountId,
+  updateCampaignStatusGraph,
 } = require('./metaMarketingApi');
 const cron = require('node-cron');
 const {
@@ -1193,7 +1195,7 @@ app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res)
     const level = ['campaigns', 'adsets', 'ads'].includes(String(req.query.level))
       ? String(req.query.level)
       : 'campaigns';
-    const period = String(req.query.period || '7d');
+    const period = String(req.query.period || 'hoy');
     const datePreset = datePresetFromDashboardPeriod(period);
 
     const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
@@ -1261,6 +1263,71 @@ app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res)
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener métricas de Meta' });
+  }
+});
+
+app.post('/api/meta/campaign-status', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const campaignId = String(req.body?.campaign_id || '').trim();
+    const status = String(req.body?.status || '').toUpperCase();
+    if (!campaignId) {
+      return res.status(400).json({ error: 'campaign_id requerido' });
+    }
+    if (status !== 'PAUSED' && status !== 'ACTIVE') {
+      return res.status(400).json({ error: 'status debe ser PAUSED o ACTIVE' });
+    }
+
+    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
+    if (!row || !String(row.access_token || '').trim()) {
+      return res.status(400).json({
+        error: 'Falta token de usuario en la conexión Meta.',
+        code: 'no_token',
+      });
+    }
+    const resolved = resolveAdAccountIdsForRequest(undefined, row.selected_ad_account_ids);
+    if (!resolved.ok || resolved.actIds.length === 0) {
+      return res.status(400).json({
+        error: 'No hay cuentas publicitarias seleccionadas.',
+        code: 'no_ad_accounts',
+      });
+    }
+
+    const lookup = await getCampaignAdAccountId(campaignId, row.access_token);
+    if (!lookup.ok || !lookup.accountId) {
+      return res.status(400).json({
+        error: lookup.error || 'No se pudo verificar la campaña',
+        code: 'campaign_lookup_failed',
+      });
+    }
+
+    const allowed = new Set(resolved.actIds.map((x) => normalizeActId(x)).filter(Boolean));
+    if (!allowed.has(lookup.accountId)) {
+      return res.status(403).json({
+        error: 'Esta campaña no pertenece a las cuentas publicitarias vinculadas en KOVO.',
+        code: 'campaign_not_in_selection',
+      });
+    }
+
+    const up = await updateCampaignStatusGraph(campaignId, row.access_token, status);
+    if (!up.ok) {
+      const msg = String(up.error || '').toLowerCase();
+      const needsMgmt =
+        up.fb &&
+        (up.fb.code === 10 ||
+          up.fb.code === 200 ||
+          msg.includes('ads_management') ||
+          msg.includes('permission') ||
+          msg.includes('permissions'));
+      return res.status(502).json({
+        error: up.error || 'Meta no pudo aplicar el cambio',
+        code: needsMgmt ? 'ads_management_required' : 'meta_update_failed',
+      });
+    }
+
+    res.json({ ok: true, campaign_id: campaignId, status });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al actualizar el estado de la campaña' });
   }
 });
 
@@ -1415,7 +1482,7 @@ app.put('/api/shopify/product-marketing-targets', verifyToken, scopeToOrganizati
 
 app.get('/api/meta/funnel', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const period = String(req.query.period || '7d');
+    const period = String(req.query.period || 'hoy');
     const datePreset = datePresetFromDashboardPeriod(period);
 
     const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);

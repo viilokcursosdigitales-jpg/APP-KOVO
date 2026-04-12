@@ -190,7 +190,7 @@ const inputStyle: CSSProperties = {
 
 export default function PedidosPage() {
   const [filter, setFilter] = useState<'all' | 'active' | 'done'>('all');
-  const [datePreset, setDatePreset] = useState<DatePreset>('este_mes');
+  const [datePreset, setDatePreset] = useState<DatePreset>('hoy');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
 

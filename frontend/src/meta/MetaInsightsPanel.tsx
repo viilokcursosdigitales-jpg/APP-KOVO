@@ -36,6 +36,12 @@ function formatPct(n: number, decimals = 0): string {
   return `${n.toFixed(decimals)} %`;
 }
 
+/** ROAS como en Meta Ads (decimales, no redondeo entero). */
+function formatRoasMeta(n: number) {
+  if (!Number.isFinite(n) || n <= 0) return '—';
+  return `${n.toLocaleString('es-CO', { minimumFractionDigits: 0, maximumFractionDigits: 3 })}×`;
+}
+
 type InsightLevel = 'campaigns' | 'adsets' | 'ads';
 
 type CampaignActivityFilter = 'active' | 'inactive' | 'all';
@@ -76,6 +82,14 @@ type Totals = {
   roas: number;
   cpa: number;
 };
+
+/** effective_status de Meta: ACTIVE → pausar; PAUSED → reactivar. */
+function campaignMetaControlKind(status: string): 'pause' | 'activate' | null {
+  const u = String(status || '').toUpperCase();
+  if (u === 'ACTIVE') return 'pause';
+  if (u === 'PAUSED') return 'activate';
+  return null;
+}
 
 function buildRowTargetEvaluation(
   row: InsightRow,
@@ -134,6 +148,11 @@ export function MetaInsightsPanel({
   const [shopifyProducts, setShopifyProducts] = useState<ShopifyProductOption[]>([]);
   const [shopifyCatalogOk, setShopifyCatalogOk] = useState(false);
   const [targetsByProduct, setTargetsByProduct] = useState<Record<number, ProductMarketingTargets>>({});
+  const [pausingCampaignId, setPausingCampaignId] = useState<string | null>(null);
+  const [campaignStatusBanner, setCampaignStatusBanner] = useState<{
+    kind: 'ok' | 'err';
+    text: string;
+  } | null>(null);
 
   useEffect(() => {
     let c = false;
@@ -330,18 +349,65 @@ export function MetaInsightsPanel({
     void load();
   }, [load]);
 
+  const tableColCount = level === 'campaigns' ? 14 : 13;
+
+  const setCampaignStatusOnMeta = useCallback(
+    async (campaignId: string, name: string, next: 'PAUSED' | 'ACTIVE') => {
+      const verb = next === 'PAUSED' ? 'pausar' : 'reactivar';
+      if (!window.confirm(`¿${verb.charAt(0).toUpperCase() + verb.slice(1)} la campaña «${name}» en Meta Ads?`)) {
+        return;
+      }
+      setCampaignStatusBanner(null);
+      setPausingCampaignId(campaignId);
+      try {
+        const res = await apiFetch('/api/meta/campaign-status', {
+          method: 'POST',
+          body: JSON.stringify({ campaign_id: campaignId, status: next }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          code?: string;
+        };
+        if (!res.ok) {
+          const hint =
+            data.code === 'ads_management_required'
+              ? ' Genera un token con permiso ads_management (además de ads_read) en Conexión Meta ADS.'
+              : '';
+          setCampaignStatusBanner({
+            kind: 'err',
+            text: (typeof data.error === 'string' ? data.error : 'No se pudo actualizar la campaña') + hint,
+          });
+          return;
+        }
+        setCampaignStatusBanner({
+          kind: 'ok',
+          text:
+            next === 'PAUSED'
+              ? `Campaña pausada en Meta: ${name}`
+              : `Campaña reactivada en Meta: ${name}`,
+        });
+        await load();
+      } catch {
+        setCampaignStatusBanner({ kind: 'err', text: 'Error de red al contactar con Meta' });
+      } finally {
+        setPausingCampaignId(null);
+      }
+    },
+    [load],
+  );
+
   const periods: MetaInsightPeriod[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'custom'];
 
   const metricCards = [
     { label: 'Impresiones', value: formatNumber(displayTotals.impressions) },
     { label: 'Clics', value: formatNumber(displayTotals.clicks) },
+    { label: 'Compras', value: formatNumber(displayTotals.purchases) },
     { label: 'Gasto', value: formatMoney2(displayTotals.spend) },
     { label: 'CPM', value: formatMoney2(displayTotals.cpm) },
     { label: 'CPC', value: formatMoney2(displayTotals.cpc) },
     { label: 'CTR', value: formatPct(displayTotals.ctr) },
-    { label: 'ROAS', value: displayTotals.roas > 0 ? `${Math.round(displayTotals.roas)}×` : '—' },
-    { label: 'CPA', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
-    { label: 'Compras (pixel)', value: formatNumber(displayTotals.purchases) },
+    { label: 'ROAS (Meta)', value: formatRoasMeta(displayTotals.roas) },
+    { label: 'CPA (Meta)', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
   ];
 
   const levelTabs: { id: InsightLevel; label: string }[] = [
@@ -535,6 +601,31 @@ export function MetaInsightsPanel({
 
       {dataIssue && !error && <MetaDataIssueCard issue={dataIssue} />}
 
+      {level === 'campaigns' ? (
+        <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textMuted, maxWidth: 720, lineHeight: 1.45 }}>
+          En la pestaña <strong style={{ color: ds.textSecondary }}>Campañas</strong> puedes pausar o reactivar campañas
+          en Meta. El token debe incluir <code style={{ fontSize: 11 }}>ads_management</code> además de{' '}
+          <code style={{ fontSize: 11 }}>ads_read</code>.
+        </p>
+      ) : null}
+
+      {campaignStatusBanner ? (
+        <div
+          style={{
+            marginBottom: 14,
+            padding: '10px 14px',
+            borderRadius: 10,
+            fontSize: 13,
+            lineHeight: 1.45,
+            background: campaignStatusBanner.kind === 'ok' ? ds.successBg : ds.dangerBg,
+            color: campaignStatusBanner.kind === 'ok' ? ds.successText : ds.dangerText,
+            border: `1px solid ${ds.borderCard}`,
+          }}
+        >
+          {campaignStatusBanner.text}
+        </div>
+      ) : null}
+
       {loading && !totals ? (
         <p style={{ color: ds.textMuted }}>Cargando métricas desde Meta…</p>
       ) : totals ? (
@@ -571,7 +662,7 @@ export function MetaInsightsPanel({
           overflow: 'auto',
         }}
       >
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 960 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 1040 }}>
           <thead>
             <tr style={{ background: ds.bgApp, textAlign: 'left' }}>
               {[
@@ -582,12 +673,14 @@ export function MetaInsightsPanel({
                 ...(level !== 'campaigns' ? ['ID ref.'] : []),
                 'Impresiones',
                 'Clics',
+                'Compras',
                 'Gasto',
                 'CPM',
                 'CTR',
                 'CPC',
                 'ROAS',
                 'CPA',
+                ...(level === 'campaigns' ? ['Acción'] : []),
               ].map((h) => (
                 <th
                   key={h}
@@ -611,7 +704,7 @@ export function MetaInsightsPanel({
             {filteredRows.length === 0 && !loading ? (
               <tr>
                 <td
-                  colSpan={12}
+                  colSpan={tableColCount}
                   style={{ padding: 24, color: ds.textMuted, textAlign: 'center', fontSize: 13 }}
                 >
                   {tokenBlocked ? (
@@ -673,16 +766,70 @@ export function MetaInsightsPanel({
                     )}
                     <td style={{ padding: '12px 16px' }}>{formatNumber(row.impressions)}</td>
                     <td style={{ padding: '12px 16px' }}>{formatNumber(row.clicks)}</td>
+                    <td style={{ padding: '12px 16px' }}>{formatNumber(row.purchases)}</td>
                     <td style={{ padding: '12px 16px' }}>{formatMoney2(row.spend)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpm) }}>{formatMoney2(row.cpm)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.ctr) }}>{formatPct(row.ctr)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpc) }}>{formatMoney2(row.cpc)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.roas) }}>
-                      {row.roas > 0 ? `${Math.round(row.roas)}×` : '—'}
+                      {formatRoasMeta(row.roas)}
                     </td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpa) }}>
                       {row.purchases > 0 ? formatMoney2(row.cpa) : '—'}
                     </td>
+                    {level === 'campaigns' ? (
+                      <td style={{ padding: '12px 16px', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
+                        {(() => {
+                          const kind = campaignMetaControlKind(row.status);
+                          if (!kind) {
+                            return <span style={{ fontSize: 11, color: ds.textHint }}>—</span>;
+                          }
+                          const busy = pausingCampaignId === row.id;
+                          if (kind === 'pause') {
+                            return (
+                              <button
+                                type="button"
+                                disabled={busy || tokenBlocked}
+                                onClick={() => void setCampaignStatusOnMeta(row.id, row.name, 'PAUSED')}
+                                style={{
+                                  padding: '6px 12px',
+                                  borderRadius: 8,
+                                  border: `1px solid ${ds.borderCard}`,
+                                  background: ds.warningBg,
+                                  color: ds.warningText,
+                                  fontWeight: 600,
+                                  fontSize: 11,
+                                  cursor: busy || tokenBlocked ? 'not-allowed' : 'pointer',
+                                  opacity: tokenBlocked ? 0.5 : 1,
+                                }}
+                              >
+                                {busy ? 'Aplicando…' : 'Pausar en Meta'}
+                              </button>
+                            );
+                          }
+                          return (
+                            <button
+                              type="button"
+                              disabled={busy || tokenBlocked}
+                              onClick={() => void setCampaignStatusOnMeta(row.id, row.name, 'ACTIVE')}
+                              style={{
+                                padding: '6px 12px',
+                                borderRadius: 8,
+                                border: `1px solid ${ds.borderCard}`,
+                                background: ds.brandBg,
+                                color: ds.brand,
+                                fontWeight: 600,
+                                fontSize: 11,
+                                cursor: busy || tokenBlocked ? 'not-allowed' : 'pointer',
+                                opacity: tokenBlocked ? 0.5 : 1,
+                              }}
+                            >
+                              {busy ? 'Aplicando…' : 'Reactivar en Meta'}
+                            </button>
+                          );
+                        })()}
+                      </td>
+                    ) : null}
                   </tr>
                 );
               })
