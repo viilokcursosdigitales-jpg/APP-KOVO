@@ -20,6 +20,9 @@ import {
 
 const POLL_MS = 25_000;
 const MAX_LOGO_BYTES = 400_000;
+/** Vista previa ~proporción de la celda del logo en la guía (≈18% del ancho × altura de franja 1.88in). */
+const MOTICO_GUIDE_LOGO_PREVIEW_W_PX = 118;
+const MOTICO_GUIDE_LOGO_PREVIEW_H_PX = 152;
 
 const MOTICO_STATUS_OPTIONS = [
   {
@@ -841,9 +844,9 @@ export default function MoticoPage() {
           {logoDataUrl ? (
             <div
               style={{
-                width: 140,
-                minHeight: 56,
-                alignSelf: 'stretch',
+                width: MOTICO_GUIDE_LOGO_PREVIEW_W_PX,
+                height: MOTICO_GUIDE_LOGO_PREVIEW_H_PX,
+                flexShrink: 0,
                 borderRadius: 8,
                 border: `1px solid ${ds.borderCard}`,
                 overflow: 'hidden',
@@ -851,21 +854,20 @@ export default function MoticoPage() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                flexShrink: 0,
               }}
             >
               <img
                 src={logoDataUrl}
                 alt="Logo Motico"
-                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+                style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', display: 'block' }}
               />
             </div>
           ) : (
             <div
               style={{
-                width: 140,
-                minHeight: 56,
-                alignSelf: 'stretch',
+                width: MOTICO_GUIDE_LOGO_PREVIEW_W_PX,
+                height: MOTICO_GUIDE_LOGO_PREVIEW_H_PX,
+                flexShrink: 0,
                 borderRadius: 8,
                 border: `2px dashed ${ds.borderCard}`,
                 fontSize: 11,
@@ -873,7 +875,9 @@ export default function MoticoPage() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                flexShrink: 0,
+                textAlign: 'center',
+                padding: 6,
+                boxSizing: 'border-box',
               }}
             >
               Sin logo

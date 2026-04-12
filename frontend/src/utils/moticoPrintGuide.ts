@@ -46,10 +46,10 @@ function chunk<T>(arr: T[], size: number): T[][] {
 }
 
 function logoCellHtml(logoDataUrl: string | null): string {
-  if (logoDataUrl) {
-    return `<img class="guide-logo-img" src="${String(logoDataUrl).replace(/"/g, '&quot;')}" alt="" />`;
-  }
-  return '<div class="guide-logo-fallback">LOGO</div>';
+  const inner = logoDataUrl
+    ? `<img class="guide-logo-img" src="${String(logoDataUrl).replace(/"/g, '&quot;')}" alt="" />`
+    : '<div class="guide-logo-fallback">LOGO</div>';
+  return `<div class="guide-logo-inner">${inner}</div>`;
 }
 
 function oneStripHtml(logoDataUrl: string | null, row: MoticoGuideLabelData): string {
@@ -277,26 +277,42 @@ function buildBatchPrintDocument(
       border: 1px solid #000;
       page-break-inside: avoid;
     }
+    /* Celda izquierda = ~18% del ancho útil de carta; altura = franja (1.88in). Sin tope estrecho para que el logo use todo el hueco. */
     .guide-logo-cell {
       flex: 0 0 18%;
-      min-width: 0.95in;
-      max-width: 1.35in;
+      min-width: 0;
+      align-self: stretch;
+      min-height: 0;
       border-right: 1px solid #000;
       background: #e8f4fc;
       display: flex;
       align-items: center;
       justify-content: center;
-      padding: 4px;
+      padding: 3px;
+      overflow: hidden;
+    }
+    .guide-logo-inner {
+      width: 100%;
+      height: 100%;
+      min-height: 0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     .guide-logo-img {
-      max-width: 100%;
-      max-height: 100%;
+      width: 100%;
+      height: 100%;
       object-fit: contain;
+      object-position: center;
+      display: block;
     }
     .guide-logo-fallback {
       font-size: 8pt;
       font-weight: 700;
       color: #64748b;
+      text-align: center;
+      line-height: 1.1;
+      padding: 2px;
     }
     .guide-table {
       flex: 1 1 auto;
