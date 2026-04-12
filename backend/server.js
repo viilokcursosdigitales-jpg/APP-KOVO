@@ -1263,6 +1263,155 @@ app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res)
   }
 });
 
+app.get('/api/meta/campaign-product-links', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT meta_campaign_id, product_ids FROM meta_campaign_product_links WHERE organization_id = $1`,
+      [req.organizationId],
+    );
+    const links = {};
+    for (const row of r.rows) {
+      const raw = row.product_ids;
+      const ids = Array.isArray(raw) ? raw : [];
+      links[String(row.meta_campaign_id)] = ids
+        .map((x) => Number.parseInt(String(x), 10))
+        .filter((n) => Number.isFinite(n));
+    }
+    res.json({ links });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error:
+          'Falta la tabla meta_campaign_product_links. Reinicia el backend o aplica backend/db/schema.sql.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    res.status(500).json({ error: 'Error al leer vínculos campaña–producto' });
+  }
+});
+
+app.put('/api/meta/campaign-product-links', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const cid = String(req.body?.meta_campaign_id || '').trim();
+    if (!cid) {
+      return res.status(400).json({ error: 'meta_campaign_id requerido' });
+    }
+    const raw = req.body?.product_ids;
+    const arr = Array.isArray(raw) ? raw : [];
+    const product_ids = [];
+    const seen = new Set();
+    for (const x of arr) {
+      const n = Number.parseInt(String(x), 10);
+      if (!Number.isFinite(n) || seen.has(n)) continue;
+      seen.add(n);
+      product_ids.push(n);
+      if (product_ids.length >= 80) break;
+    }
+    await pool.query(
+      `INSERT INTO meta_campaign_product_links (organization_id, meta_campaign_id, product_ids, updated_at)
+       VALUES ($1, $2, $3::jsonb, now())
+       ON CONFLICT (organization_id, meta_campaign_id) DO UPDATE SET
+         product_ids = EXCLUDED.product_ids,
+         updated_at = now()`,
+      [req.organizationId, cid, JSON.stringify(product_ids)],
+    );
+    res.json({ ok: true, meta_campaign_id: cid, product_ids });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error:
+          'Falta la tabla meta_campaign_product_links. Reinicia el backend o aplica backend/db/schema.sql.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    res.status(500).json({ error: 'Error al guardar vínculos campaña–producto' });
+  }
+});
+
+function parseMarketingTargetNum(v) {
+  if (v === null || v === undefined || v === '') return null;
+  const n = Number.parseFloat(String(v).replace(',', '.'));
+  return Number.isFinite(n) ? n : null;
+}
+
+app.get('/api/shopify/product-marketing-targets', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT shopify_product_id, cpm_target, ctr_target, cpc_target, roas_target, cpa_target
+       FROM shopify_product_marketing_targets WHERE organization_id = $1`,
+      [req.organizationId],
+    );
+    const targets = r.rows.map((row) => ({
+      product_id: Number(row.shopify_product_id),
+      cpm_target: row.cpm_target != null ? Number(row.cpm_target) : null,
+      ctr_target: row.ctr_target != null ? Number(row.ctr_target) : null,
+      cpc_target: row.cpc_target != null ? Number(row.cpc_target) : null,
+      roas_target: row.roas_target != null ? Number(row.roas_target) : null,
+      cpa_target: row.cpa_target != null ? Number(row.cpa_target) : null,
+    }));
+    res.json({ targets });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error:
+          'Falta la tabla shopify_product_marketing_targets. Reinicia el backend o aplica backend/db/schema.sql.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    res.status(500).json({ error: 'Error al leer indicadores de marketing' });
+  }
+});
+
+app.put('/api/shopify/product-marketing-targets', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const pid = Number.parseInt(String(req.body?.product_id ?? ''), 10);
+    if (!Number.isFinite(pid)) {
+      return res.status(400).json({ error: 'product_id inválido' });
+    }
+    const cpm_target = parseMarketingTargetNum(req.body?.cpm_target);
+    const ctr_target = parseMarketingTargetNum(req.body?.ctr_target);
+    const cpc_target = parseMarketingTargetNum(req.body?.cpc_target);
+    const roas_target = parseMarketingTargetNum(req.body?.roas_target);
+    const cpa_target = parseMarketingTargetNum(req.body?.cpa_target);
+
+    await pool.query(
+      `INSERT INTO shopify_product_marketing_targets
+        (organization_id, shopify_product_id, cpm_target, ctr_target, cpc_target, roas_target, cpa_target, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, now())
+       ON CONFLICT (organization_id, shopify_product_id) DO UPDATE SET
+         cpm_target = EXCLUDED.cpm_target,
+         ctr_target = EXCLUDED.ctr_target,
+         cpc_target = EXCLUDED.cpc_target,
+         roas_target = EXCLUDED.roas_target,
+         cpa_target = EXCLUDED.cpa_target,
+         updated_at = now()`,
+      [req.organizationId, pid, cpm_target, ctr_target, cpc_target, roas_target, cpa_target],
+    );
+    res.json({
+      ok: true,
+      product_id: pid,
+      cpm_target,
+      ctr_target,
+      cpc_target,
+      roas_target,
+      cpa_target,
+    });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error:
+          'Falta la tabla shopify_product_marketing_targets. Reinicia el backend o aplica backend/db/schema.sql.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    res.status(500).json({ error: 'Error al guardar indicadores de marketing' });
+  }
+});
+
 app.get('/api/meta/funnel', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const period = String(req.query.period || '7d');
@@ -1867,6 +2016,8 @@ app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, 
     let nDesp = 0;
     let nCancel = 0;
     const byDay = new Map();
+    /** @type {Map<string, { product_id: number, title: string, sales_total: number, sales_despachados: number, orderIds: Set<number>, despOrderIds: Set<number> }>} */
+    const byProduct = new Map();
 
     for (const o of orders) {
       const lf = localMap.get(Number(o.id)) || {};
@@ -1887,6 +2038,37 @@ app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, 
 
       if (dayKey && dayKey.length >= 10) {
         byDay.set(dayKey, (byDay.get(dayKey) || 0) + price);
+      }
+
+      const isDesp = internal === 'despachado';
+      const oid = Number(o.id);
+      for (const li of o.line_items || []) {
+        const pid = li.product_id;
+        if (pid == null || pid === '') continue;
+        const key = String(pid);
+        const lineRev =
+          (Number.parseFloat(String(li.price ?? 0)) || 0) * (Number.parseInt(String(li.quantity ?? 1), 10) || 0);
+        const lineTitle = String(li.name || li.title || `Producto ${key}`).trim() || `Producto ${key}`;
+        let pr = byProduct.get(key);
+        if (!pr) {
+          pr = {
+            product_id: Number(pid),
+            title: lineTitle,
+            sales_total: 0,
+            sales_despachados: 0,
+            orderIds: new Set(),
+            despOrderIds: new Set(),
+          };
+          byProduct.set(key, pr);
+        } else if (lineTitle.length > pr.title.length) {
+          pr.title = lineTitle;
+        }
+        pr.sales_total += lineRev;
+        pr.orderIds.add(oid);
+        if (isDesp) {
+          pr.sales_despachados += lineRev;
+          pr.despOrderIds.add(oid);
+        }
       }
     }
 
@@ -1910,6 +2092,18 @@ app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, 
       };
     });
 
+    const top_products = [...byProduct.values()]
+      .map((pr) => ({
+        product_id: pr.product_id,
+        title: pr.title,
+        orders_count: pr.orderIds.size,
+        orders_despachados: pr.despOrderIds.size,
+        sales_total: pr.sales_total,
+        sales_despachados: pr.sales_despachados,
+      }))
+      .sort((a, b) => b.sales_total - a.sales_total)
+      .slice(0, 12);
+
     res.json({
       source: 'shopify',
       currency,
@@ -1923,6 +2117,7 @@ app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, 
         cancelados_pct: n > 0 ? (nCancel / n) * 100 : 0,
       },
       chart,
+      top_products,
       recent,
       fetchedAt: new Date().toISOString(),
     });

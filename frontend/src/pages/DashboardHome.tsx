@@ -9,10 +9,11 @@ import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
 
-const DEMO_STOCK = [
-  { name: 'Crema hidratante', sku: 'SKU-102', qty: 8, variant: 'warning' as const },
-  { name: 'Sérum vitamina C', sku: 'SKU-088', qty: 3, variant: 'error' as const },
-  { name: 'Kit rutina PM', sku: 'SKU-201', qty: 14, variant: 'success' as const },
+const DEMO_TOP_PRODUCTS = [
+  { product_id: 1, title: 'Crema hidratante', orders_count: 42, orders_despachados: 36, sales_total: 2100, sales_despachados: 1820 },
+  { product_id: 2, title: 'Sérum vitamina C', orders_count: 31, orders_despachados: 28, sales_total: 1550, sales_despachados: 1390 },
+  { product_id: 3, title: 'Kit rutina PM', orders_count: 24, orders_despachados: 20, sales_total: 980, sales_despachados: 820 },
+  { product_id: 4, title: 'Protector solar SPF50', orders_count: 18, orders_despachados: 15, sales_total: 540, sales_despachados: 450 },
 ];
 
 const CHART_COLORS = [
@@ -38,6 +39,15 @@ type DashboardTotals = {
 };
 
 type ChartPoint = { date: string; amount: number };
+
+type TopProductRow = {
+  product_id: number;
+  title: string;
+  orders_count: number;
+  orders_despachados: number;
+  sales_total: number;
+  sales_despachados: number;
+};
 
 type RecentRow = {
   id: number;
@@ -99,6 +109,7 @@ export default function DashboardHome() {
   const [currency, setCurrency] = useState('EUR');
   const [totals, setTotals] = useState<DashboardTotals | null>(null);
   const [chart, setChart] = useState<ChartPoint[]>([]);
+  const [topProducts, setTopProducts] = useState<TopProductRow[]>([]);
   const [recent, setRecent] = useState<RecentRow[]>([]);
   const [products, setProducts] = useState<ShopifyProduct[]>([]);
 
@@ -116,6 +127,7 @@ export default function DashboardHome() {
         setShopifyOk(false);
         setTotals(null);
         setChart([]);
+        setTopProducts([]);
         setRecent([]);
         setProducts([]);
         return;
@@ -126,6 +138,7 @@ export default function DashboardHome() {
       if (!ok) {
         setTotals(null);
         setChart([]);
+        setTopProducts([]);
         setRecent([]);
         setProducts([]);
         return;
@@ -154,6 +167,7 @@ export default function DashboardHome() {
           cancelados_pct: 0,
         });
         setChart([]);
+        setTopProducts([]);
         setRecent([]);
         return;
       }
@@ -161,11 +175,13 @@ export default function DashboardHome() {
         currency?: string;
         totals: DashboardTotals;
         chart: ChartPoint[];
+        top_products?: TopProductRow[];
         recent: RecentRow[];
       };
       setCurrency(data.currency || 'EUR');
       setTotals(data.totals);
       setChart(Array.isArray(data.chart) ? data.chart : []);
+      setTopProducts(Array.isArray(data.top_products) ? data.top_products : []);
       setRecent(Array.isArray(data.recent) ? data.recent : []);
 
       if (prodRes.ok) {
@@ -175,6 +191,7 @@ export default function DashboardHome() {
     } catch {
       setError('Error de red');
       setShopifyOk(false);
+      setTopProducts([]);
     } finally {
       setLoading(false);
     }
@@ -186,6 +203,12 @@ export default function DashboardHome() {
 
   const maxChart = useMemo(() => Math.max(...chart.map((c) => c.amount), 1), [chart]);
 
+  const topRows = shopifyOk ? topProducts : !loading ? DEMO_TOP_PRODUCTS : [];
+  const maxTopSales = useMemo(() => {
+    const rows = shopifyOk ? topProducts : !loading ? DEMO_TOP_PRODUCTS : [];
+    return Math.max(...rows.map((r) => r.sales_total), 1);
+  }, [shopifyOk, loading, topProducts]);
+
   const t = totals;
 
   return (
@@ -195,7 +218,7 @@ export default function DashboardHome() {
         subtitle={
           shopifyOk
             ? 'Ventas y pedidos desde Shopify (estado Despachado / Cancelado según KOVO y pago en Shopify).'
-            : 'Resumen de ventas, pedidos e inventario. Conecta Shopify en Canales para datos reales.'
+            : 'Resumen de ventas y pedidos. Conecta Shopify en Canales para datos reales.'
         }
       />
 
@@ -451,45 +474,98 @@ export default function DashboardHome() {
             border: `1px solid ${ds.borderCard}`,
             borderRadius: 14,
             padding: '18px 20px',
+            minHeight: 280,
           }}
         >
-          <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Inventario bajo stock</div>
-          <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 14 }}>Umbrales de ejemplo</div>
-          <ul style={{ listStyle: 'none', margin: 0, padding: 0 }}>
-            {DEMO_STOCK.map((p) => (
-              <li
-                key={p.sku}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: '10px 0',
-                  borderBottom: `1px solid ${ds.borderRow}`,
-                }}
-              >
-                <div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>{p.name}</div>
-                  <div style={{ fontSize: 10.5, color: ds.textHint }}>{p.sku}</div>
-                </div>
-                <StatusBadge variant={p.variant === 'success' ? 'success' : p.variant === 'warning' ? 'warning' : 'error'}>
-                  {p.qty} uds
-                </StatusBadge>
-              </li>
-            ))}
-          </ul>
-          <Link
-            to="/inventario"
-            style={{
-              display: 'inline-block',
-              marginTop: 14,
-              fontSize: 13,
-              fontWeight: 600,
-              color: ds.brand,
-              textDecoration: 'none',
-            }}
-          >
-            Ver inventario →
-          </Link>
+          <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Productos más vendidos</div>
+          <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 14 }}>
+            {shopifyOk
+              ? 'Barras por importe total (líneas de pedido). Incluye pedidos, ventas totales, ventas despachadas y pedidos despachados.'
+              : 'Ejemplo ilustrativo — conecta Shopify para tus datos'}
+          </div>
+          {topRows.length > 0 ? (
+            <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 14 }}>
+              {topRows.map((row, idx) => {
+                const color = CHART_COLORS[idx % CHART_COLORS.length];
+                const pct = Math.max(6, (row.sales_total / maxTopSales) * 100);
+                return (
+                  <li key={row.product_id}>
+                    <div
+                      style={{
+                        fontSize: 12,
+                        fontWeight: 600,
+                        color: ds.textPrimary,
+                        marginBottom: 6,
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap',
+                      }}
+                      title={row.title}
+                    >
+                      {row.title}
+                    </div>
+                    <div
+                      style={{
+                        height: 10,
+                        borderRadius: 6,
+                        background: ds.borderRow,
+                        overflow: 'hidden',
+                        marginBottom: 8,
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: '100%',
+                          width: `${pct}%`,
+                          borderRadius: 6,
+                          background: color,
+                          boxShadow: `0 1px 6px ${color}55`,
+                          transition: 'width 0.25s ease',
+                        }}
+                      />
+                    </div>
+                    <div
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'repeat(2, minmax(0, 1fr))',
+                        gap: '6px 10px',
+                        fontSize: 10,
+                        color: ds.textMuted,
+                        lineHeight: 1.35,
+                      }}
+                    >
+                      <span>
+                        <span style={{ color: ds.textHint }}>Pedidos</span> ·{' '}
+                        <span style={{ fontWeight: 600, color: ds.textSecondary }}>{row.orders_count}</span>
+                      </span>
+                      <span>
+                        <span style={{ color: ds.textHint }}>Ventas totales</span> ·{' '}
+                        <span style={{ fontWeight: 600, color: ds.textSecondary }}>
+                          {formatMoney(row.sales_total, currency)}
+                        </span>
+                      </span>
+                      <span>
+                        <span style={{ color: ds.textHint }}>Ventas despachadas</span> ·{' '}
+                        <span style={{ fontWeight: 600, color: ds.textSecondary }}>
+                          {formatMoney(row.sales_despachados, currency)}
+                        </span>
+                      </span>
+                      <span>
+                        <span style={{ color: ds.textHint }}>Pedidos despachados</span> ·{' '}
+                        <span style={{ fontWeight: 600, color: ds.textSecondary }}>{row.orders_despachados}</span>
+                      </span>
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : shopifyOk && !loading ? (
+            <div style={{ padding: 24, textAlign: 'center', color: ds.textMuted, fontSize: 13 }}>
+              No hay líneas de producto en el rango y filtros seleccionados.
+            </div>
+          ) : (
+            <div style={{ padding: 24, textAlign: 'center', color: ds.textMuted, fontSize: 13 }}>Cargando…</div>
+          )}
         </div>
       </div>
 

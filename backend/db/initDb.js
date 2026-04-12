@@ -114,6 +114,38 @@ async function initDb(pool) {
     `CREATE INDEX IF NOT EXISTS idx_shopify_order_local_org ON shopify_order_local_fields (organization_id)`,
   );
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS meta_campaign_product_links (
+      id SERIAL PRIMARY KEY,
+      organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+      meta_campaign_id TEXT NOT NULL,
+      product_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (organization_id, meta_campaign_id)
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_meta_campaign_links_org ON meta_campaign_product_links (organization_id)`,
+  );
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shopify_product_marketing_targets (
+      id SERIAL PRIMARY KEY,
+      organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+      shopify_product_id BIGINT NOT NULL,
+      cpm_target NUMERIC(14, 4),
+      ctr_target NUMERIC(14, 4),
+      cpc_target NUMERIC(14, 4),
+      roas_target NUMERIC(14, 4),
+      cpa_target NUMERIC(14, 4),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (organization_id, shopify_product_id)
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_shopify_mkt_targets_org ON shopify_product_marketing_targets (organization_id)`,
+  );
+
   const tableCheck = await pool.query(`
     SELECT EXISTS (
       SELECT 1 FROM information_schema.tables

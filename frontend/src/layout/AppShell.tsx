@@ -9,6 +9,7 @@ import {
   IconPackage,
   IconSettings,
   IconShare,
+  IconTarget,
   IconUser,
 } from '../design-system/icons';
 
@@ -44,6 +45,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   ];
   const marketing: NavItem[] = [
     { to: '/meta-ads', label: 'Meta Ads', icon: <IconMegaphone /> },
+    { to: '/indicadores-marketing', label: 'Indicadores', icon: <IconTarget /> },
     { to: '/canales', label: 'Canales', icon: <IconShare /> },
   ];
   const account: NavItem[] = [];

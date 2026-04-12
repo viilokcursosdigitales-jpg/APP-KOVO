@@ -2,6 +2,15 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { MetaDataIssueCard, MetaFetchErrorPanel, MetaLiveDataStrip } from './MetaApiStatusBanner';
+import { MetaCampaignProductAssign } from './MetaCampaignProductAssign';
+import {
+  aggregateTargetsForProducts,
+  campaignIdForInsightRow,
+  evaluateInsightAgainstTargets,
+  insightMetricCellBg,
+  insightRowBg,
+  type ProductMarketingTargets,
+} from './marketingTargetEval';
 import { resolveMetaDataIssue } from './metaDataIssues';
 
 export type MetaInsightPeriod = 'hoy' | '3d' | '7d' | '14d' | '30d' | 'custom';
@@ -33,6 +42,10 @@ function formatPct(n: number, decimals = 2): string {
 }
 
 type InsightLevel = 'campaigns' | 'adsets' | 'ads';
+
+type CampaignActivityFilter = 'active' | 'inactive' | 'all';
+
+type ShopifyProductOption = { id: number; title: string };
 
 type InsightRow = {
   adAccountId: string;
@@ -69,6 +82,40 @@ type Totals = {
   cpa: number;
 };
 
+function buildRowTargetEvaluation(
+  row: InsightRow,
+  level: InsightLevel,
+  links: Record<string, number[]>,
+  targetsByProduct: Record<number, ProductMarketingTargets>,
+) {
+  const cid = campaignIdForInsightRow(row, level);
+  const pids = cid ? links[cid] || [] : [];
+  if (pids.length === 0) {
+    return {
+      rowHighlight: 'neutral' as const,
+      cpm: 'neutral' as const,
+      ctr: 'neutral' as const,
+      cpc: 'neutral' as const,
+      roas: 'neutral' as const,
+      cpa: 'neutral' as const,
+      tooltip:
+        'Vincula productos Shopify a esta campaña (columna Productos) para comparar con los objetivos de Indicadores de marketing.',
+    };
+  }
+  const agg = aggregateTargetsForProducts(pids, targetsByProduct);
+  return evaluateInsightAgainstTargets(
+    {
+      cpm: row.cpm,
+      ctr: row.ctr,
+      cpc: row.cpc,
+      roas: row.roas,
+      cpa: row.cpa,
+      purchases: row.purchases,
+    },
+    agg,
+  );
+}
+
 export function MetaInsightsPanel({
   period,
   setPeriod,
@@ -86,6 +133,12 @@ export function MetaInsightsPanel({
   const [meta, setMeta] = useState<{ datePreset: string; fetchedAt: string } | null>(null);
   const [accountOptions, setAccountOptions] = useState<{ id: string; name: string }[]>([]);
   const [filterActId, setFilterActId] = useState('');
+  const [campaignActivityFilter, setCampaignActivityFilter] = useState<CampaignActivityFilter>('active');
+  const [filterProductId, setFilterProductId] = useState('');
+  const [campaignProductLinks, setCampaignProductLinks] = useState<Record<string, number[]>>({});
+  const [shopifyProducts, setShopifyProducts] = useState<ShopifyProductOption[]>([]);
+  const [shopifyCatalogOk, setShopifyCatalogOk] = useState(false);
+  const [targetsByProduct, setTargetsByProduct] = useState<Record<number, ProductMarketingTargets>>({});
 
   useEffect(() => {
     let c = false;
@@ -104,6 +157,136 @@ export function MetaInsightsPanel({
       c = true;
     };
   }, []);
+
+  useEffect(() => {
+    let c = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/meta/campaign-product-links');
+        if (!res.ok || c) return;
+        const data = (await res.json()) as { links?: Record<string, number[]> };
+        if (c) return;
+        const raw = data.links && typeof data.links === 'object' ? data.links : {};
+        const next: Record<string, number[]> = {};
+        for (const [k, v] of Object.entries(raw)) {
+          if (Array.isArray(v)) {
+            next[k] = v.map((x) => Number.parseInt(String(x), 10)).filter((n) => Number.isFinite(n));
+          }
+        }
+        setCampaignProductLinks(next);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      c = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let c = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/shopify/products?limit=250');
+        if (c) return;
+        if (!res.ok) {
+          setShopifyCatalogOk(false);
+          setShopifyProducts([]);
+          return;
+        }
+        const data = (await res.json()) as { products?: { id: number | string; title?: string }[] };
+        const list = Array.isArray(data.products)
+          ? data.products.map((p) => ({
+              id: Number.parseInt(String(p.id), 10),
+              title: String(p.title || '(sin título)'),
+            }))
+          : [];
+        setShopifyCatalogOk(true);
+        setShopifyProducts(list.filter((p) => Number.isFinite(p.id)));
+      } catch {
+        setShopifyCatalogOk(false);
+        setShopifyProducts([]);
+      }
+    })();
+    return () => {
+      c = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let c = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/shopify/product-marketing-targets');
+        if (!res.ok || c) return;
+        const data = (await res.json()) as {
+          targets?: {
+            product_id: number;
+            cpm_target: number | null;
+            ctr_target: number | null;
+            cpc_target: number | null;
+            roas_target: number | null;
+            cpa_target: number | null;
+          }[];
+        };
+        const map: Record<number, ProductMarketingTargets> = {};
+        for (const t of Array.isArray(data.targets) ? data.targets : []) {
+          map[t.product_id] = {
+            cpm_target: t.cpm_target,
+            ctr_target: t.ctr_target,
+            cpc_target: t.cpc_target,
+            roas_target: t.roas_target,
+            cpa_target: t.cpa_target,
+          };
+        }
+        if (!c) setTargetsByProduct(map);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      c = true;
+    };
+  }, []);
+
+  const handleCampaignProductsSaved = useCallback((campaignId: string, ids: number[]) => {
+    setCampaignProductLinks((prev) => ({ ...prev, [campaignId]: ids }));
+  }, []);
+
+  const filteredRows = useMemo(() => {
+    return rows.filter((row) => {
+      const st = String(row.status || '').toUpperCase();
+      if (campaignActivityFilter === 'active' && st !== 'ACTIVE') return false;
+      if (campaignActivityFilter === 'inactive' && st === 'ACTIVE') return false;
+
+      if (!filterProductId.trim()) return true;
+      const pid = Number.parseInt(filterProductId, 10);
+      if (!Number.isFinite(pid)) return true;
+      const cid = level === 'campaigns' ? String(row.id) : String(row.campaignId || '');
+      if (!cid) return false;
+      const linked = campaignProductLinks[cid] || [];
+      return linked.includes(pid);
+    });
+  }, [rows, campaignActivityFilter, filterProductId, level, campaignProductLinks]);
+
+  const displayTotals = useMemo(() => {
+    const base = filteredRows.reduce(
+      (acc, x) => ({
+        impressions: acc.impressions + x.impressions,
+        clicks: acc.clicks + x.clicks,
+        spend: acc.spend + x.spend,
+        purchases: acc.purchases + x.purchases,
+        revenue: acc.revenue + x.revenue,
+      }),
+      { impressions: 0, clicks: 0, spend: 0, purchases: 0, revenue: 0 },
+    );
+    const cpm = base.impressions > 0 ? (base.spend / base.impressions) * 1000 : 0;
+    const cpc = base.clicks > 0 ? base.spend / base.clicks : 0;
+    const ctr = base.impressions > 0 ? (base.clicks / base.impressions) * 100 : 0;
+    const roas = base.spend > 0 && base.revenue > 0 ? base.revenue / base.spend : 0;
+    const cpa = base.purchases > 0 ? base.spend / base.purchases : 0;
+    return { ...base, cpm, cpc, ctr, roas, cpa };
+  }, [filteredRows]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -154,20 +337,17 @@ export function MetaInsightsPanel({
 
   const periods: MetaInsightPeriod[] = ['hoy', '3d', '7d', '14d', '30d', 'custom'];
 
-  const metricCards =
-    totals != null
-      ? [
-          { label: 'Impresiones', value: formatNumber(totals.impressions) },
-          { label: 'Clics', value: formatNumber(totals.clicks) },
-          { label: 'Gasto', value: formatMoney2(totals.spend) },
-          { label: 'CPM', value: formatMoney2(totals.cpm) },
-          { label: 'CPC', value: formatMoney2(totals.cpc) },
-          { label: 'CTR', value: formatPct(totals.ctr) },
-          { label: 'ROAS', value: totals.roas > 0 ? `${totals.roas.toFixed(2)}×` : '—' },
-          { label: 'CPA', value: totals.purchases > 0 ? formatMoney2(totals.cpa) : '—' },
-          { label: 'Compras (pixel)', value: formatNumber(totals.purchases) },
-        ]
-      : [];
+  const metricCards = [
+    { label: 'Impresiones', value: formatNumber(displayTotals.impressions) },
+    { label: 'Clics', value: formatNumber(displayTotals.clicks) },
+    { label: 'Gasto', value: formatMoney2(displayTotals.spend) },
+    { label: 'CPM', value: formatMoney2(displayTotals.cpm) },
+    { label: 'CPC', value: formatMoney2(displayTotals.cpc) },
+    { label: 'CTR', value: formatPct(displayTotals.ctr) },
+    { label: 'ROAS', value: displayTotals.roas > 0 ? `${displayTotals.roas.toFixed(2)}×` : '—' },
+    { label: 'CPA', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
+    { label: 'Compras (pixel)', value: formatNumber(displayTotals.purchases) },
+  ];
 
   const levelTabs: { id: InsightLevel; label: string }[] = [
     { id: 'campaigns', label: 'Campañas' },
@@ -179,6 +359,28 @@ export function MetaInsightsPanel({
     () => resolveMetaDataIssue(partialErrors, error, code),
     [partialErrors, error, code],
   );
+
+  const activityFilterCopy = useMemo(() => {
+    if (level === 'campaigns') {
+      return {
+        active: 'Solo campañas activas',
+        inactive: 'Solo campañas no activas',
+        all: 'Todas (activas y no activas)',
+      };
+    }
+    if (level === 'adsets') {
+      return {
+        active: 'Solo conjuntos activos',
+        inactive: 'Solo conjuntos no activos',
+        all: 'Todos (activos y no activos)',
+      };
+    }
+    return {
+      active: 'Solo anuncios activos',
+      inactive: 'Solo anuncios no activos',
+      all: 'Todos (activos y no activos)',
+    };
+  }, [level]);
 
   const tokenBlocked = dataIssue?.type === 'token_expired';
 
@@ -244,6 +446,45 @@ export function MetaInsightsPanel({
             ))}
           </select>
         )}
+        <select
+          value={campaignActivityFilter}
+          onChange={(e) => setCampaignActivityFilter(e.target.value as CampaignActivityFilter)}
+          title="Filtra por estado efectivo en Meta (campaña, conjunto o anuncio según la pestaña)"
+          style={{
+            padding: '8px 12px',
+            borderRadius: 8,
+            border: `1px solid ${ds.borderCard}`,
+            fontSize: 13,
+            maxWidth: 240,
+            background: ds.bgCard,
+            color: ds.textPrimary,
+          }}
+        >
+          <option value="active">{activityFilterCopy.active}</option>
+          <option value="inactive">{activityFilterCopy.inactive}</option>
+          <option value="all">{activityFilterCopy.all}</option>
+        </select>
+        <select
+          value={filterProductId}
+          onChange={(e) => setFilterProductId(e.target.value)}
+          title="Muestra solo filas cuya campaña tiene vinculado este producto"
+          style={{
+            padding: '8px 12px',
+            borderRadius: 8,
+            border: `1px solid ${ds.borderCard}`,
+            fontSize: 13,
+            maxWidth: 260,
+            background: ds.bgCard,
+            color: ds.textPrimary,
+          }}
+        >
+          <option value="">Todos los productos</option>
+          {shopifyProducts.map((p) => (
+            <option key={p.id} value={String(p.id)}>
+              {p.title}
+            </option>
+          ))}
+        </select>
         <button
           type="button"
           onClick={() => void load()}
@@ -301,7 +542,7 @@ export function MetaInsightsPanel({
 
       {loading && !totals ? (
         <p style={{ color: ds.textMuted }}>Cargando métricas desde Meta…</p>
-      ) : totals && metricCards.length > 0 ? (
+      ) : totals ? (
         <div
           style={{
             display: 'grid',
@@ -342,12 +583,14 @@ export function MetaInsightsPanel({
                 'Cuenta publicitaria',
                 level === 'campaigns' ? 'Campaña' : level === 'adsets' ? 'Conjunto' : 'Anuncio',
                 'Estado',
+                ...(level === 'campaigns' ? ['Productos (Shopify)'] : []),
                 ...(level !== 'campaigns' ? ['ID ref.'] : []),
                 'Impresiones',
                 'Clics',
                 'Gasto',
                 'CPM',
                 'CTR',
+                'CPC',
                 'ROAS',
                 'CPA',
               ].map((h) => (
@@ -370,10 +613,10 @@ export function MetaInsightsPanel({
             </tr>
           </thead>
           <tbody>
-            {rows.length === 0 && !loading ? (
+            {filteredRows.length === 0 && !loading ? (
               <tr>
                 <td
-                  colSpan={level === 'campaigns' ? 10 : 11}
+                  colSpan={12}
                   style={{ padding: 24, color: ds.textMuted, textAlign: 'center', fontSize: 13 }}
                 >
                   {tokenBlocked ? (
@@ -382,40 +625,72 @@ export function MetaInsightsPanel({
                       <strong style={{ color: ds.textSecondary }}>Renueva el token</strong> en la pestaña Conexión Meta ADS
                       y vuelve a actualizar.
                     </>
-                  ) : (
+                  ) : rows.length === 0 ? (
                     <>
                       No hay filas con datos de insights en este período (puede que no haya entregas o que el token no
                       tenga permisos).
+                    </>
+                  ) : (
+                    <>
+                      Ninguna fila coincide con los filtros de estado de campaña o producto. Prueba &quot;Todas las
+                      campañas&quot; o &quot;Todos los productos&quot;.
                     </>
                   )}
                 </td>
               </tr>
             ) : (
-              rows.map((row) => (
-                <tr key={`${row.adAccountId}-${row.id}`} style={{ borderBottom: `1px solid ${ds.borderRow}` }}>
-                  <td style={{ padding: '12px 16px', maxWidth: 160 }} title={row.adAccountId}>
-                    <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{row.adAccountName}</div>
-                    <div style={{ fontSize: 10.5, color: ds.textHint }}>{row.adAccountId}</div>
-                  </td>
-                  <td style={{ padding: '12px 16px', maxWidth: 220 }}>
-                    <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{row.name}</div>
-                    <div style={{ fontSize: 10.5, color: ds.textHint }}>id {row.id}</div>
-                  </td>
-                  <td style={{ padding: '12px 16px' }}>{row.status || '—'}</td>
-                  {level !== 'campaigns' && (
-                    <td style={{ padding: '12px 16px', fontSize: 11, color: ds.textMuted, maxWidth: 100 }}>
-                      {level === 'adsets' ? row.campaignId : row.adsetId}
+              filteredRows.map((row) => {
+                const ev = buildRowTargetEvaluation(row, level, campaignProductLinks, targetsByProduct);
+                const rowBg = insightRowBg(ev.rowHighlight);
+                return (
+                  <tr
+                    key={`${row.adAccountId}-${row.id}`}
+                    style={{
+                      borderBottom: `1px solid ${ds.borderRow}`,
+                      background: rowBg,
+                    }}
+                    title={ev.tooltip}
+                  >
+                    <td style={{ padding: '12px 16px', maxWidth: 160 }} title={row.adAccountId}>
+                      <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{row.adAccountName}</div>
+                      <div style={{ fontSize: 10.5, color: ds.textHint }}>{row.adAccountId}</div>
                     </td>
-                  )}
-                  <td style={{ padding: '12px 16px' }}>{formatNumber(row.impressions)}</td>
-                  <td style={{ padding: '12px 16px' }}>{formatNumber(row.clicks)}</td>
-                  <td style={{ padding: '12px 16px' }}>{formatMoney2(row.spend)}</td>
-                  <td style={{ padding: '12px 16px' }}>{formatMoney2(row.cpm)}</td>
-                  <td style={{ padding: '12px 16px' }}>{formatPct(row.ctr)}</td>
-                  <td style={{ padding: '12px 16px' }}>{row.roas > 0 ? `${row.roas.toFixed(2)}×` : '—'}</td>
-                  <td style={{ padding: '12px 16px' }}>{row.purchases > 0 ? formatMoney2(row.cpa) : '—'}</td>
-                </tr>
-              ))
+                    <td style={{ padding: '12px 16px', maxWidth: 220 }}>
+                      <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{row.name}</div>
+                      <div style={{ fontSize: 10.5, color: ds.textHint }}>id {row.id}</div>
+                    </td>
+                    <td style={{ padding: '12px 16px' }}>{row.status || '—'}</td>
+                    {level === 'campaigns' ? (
+                      <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
+                        <MetaCampaignProductAssign
+                          campaignId={String(row.id)}
+                          productIds={campaignProductLinks[String(row.id)] || []}
+                          products={shopifyProducts}
+                          shopifyOk={shopifyCatalogOk}
+                          onUpdate={handleCampaignProductsSaved}
+                        />
+                      </td>
+                    ) : null}
+                    {level !== 'campaigns' && (
+                      <td style={{ padding: '12px 16px', fontSize: 11, color: ds.textMuted, maxWidth: 100 }}>
+                        {level === 'adsets' ? row.campaignId : row.adsetId}
+                      </td>
+                    )}
+                    <td style={{ padding: '12px 16px' }}>{formatNumber(row.impressions)}</td>
+                    <td style={{ padding: '12px 16px' }}>{formatNumber(row.clicks)}</td>
+                    <td style={{ padding: '12px 16px' }}>{formatMoney2(row.spend)}</td>
+                    <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpm) }}>{formatMoney2(row.cpm)}</td>
+                    <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.ctr) }}>{formatPct(row.ctr)}</td>
+                    <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpc) }}>{formatMoney2(row.cpc)}</td>
+                    <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.roas) }}>
+                      {row.roas > 0 ? `${row.roas.toFixed(2)}×` : '—'}
+                    </td>
+                    <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpa) }}>
+                      {row.purchases > 0 ? formatMoney2(row.cpa) : '—'}
+                    </td>
+                  </tr>
+                );
+              })
             )}
           </tbody>
         </table>

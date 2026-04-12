@@ -8,6 +8,7 @@ import ForgotPassword from './pages/ForgotPassword';
 import Home from './pages/Home';
 import InventarioPage from './pages/InventarioPage';
 import Login from './pages/Login';
+import MarketingIndicatorsPage from './pages/MarketingIndicatorsPage';
 import MetaAdsPage from './pages/MetaAdsPage';
 import PedidosPage from './pages/PedidosPage';
 import Profile from './pages/Profile';
@@ -30,6 +31,7 @@ export default function App() {
           <Route path="/pedidos" element={<PedidosPage />} />
           <Route path="/inventario" element={<InventarioPage />} />
           <Route path="/meta-ads" element={<MetaAdsPage />} />
+          <Route path="/indicadores-marketing" element={<MarketingIndicatorsPage />} />
           <Route path="/canales" element={<CanalesPage />} />
           <Route path="/profile" element={<Profile />} />
           <Route element={<AdminRoute />}>
