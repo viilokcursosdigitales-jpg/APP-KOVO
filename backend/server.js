@@ -22,6 +22,13 @@ const {
   exchangeAndPersistLongLivedForConnection,
   runEvaluatorTokenRefreshCron,
 } = require('./metaTokenService');
+const {
+  sanitizeShopDomain,
+  verifyShopifyOAuthHmac,
+  verifyShopifyWebhookHmac,
+  shopifyRequest,
+  registerUninstallWebhook,
+} = require('./shopifyService');
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
 const hasFrontendDist = fs.existsSync(staticDir);
 
@@ -72,7 +79,26 @@ app.use(
     credentials: true,
   }),
 );
-app.use(express.json());
+app.use(
+  express.json({
+    verify(req, res, buf) {
+      if (req.method === 'POST' && String(req.originalUrl || '').startsWith('/api/shopify/webhooks/')) {
+        req.rawBody = Buffer.from(buf);
+      }
+    },
+  }),
+);
+
+const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY || '';
+const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET || '';
+const SHOPIFY_APP_URL = String(process.env.SHOPIFY_APP_URL || '').replace(/\/$/, '');
+const SHOPIFY_REDIRECT_URI =
+  String(process.env.SHOPIFY_REDIRECT_URI || '').trim() ||
+  (SHOPIFY_APP_URL ? `${SHOPIFY_APP_URL}/api/shopify/callback` : '');
+const SHOPIFY_SCOPES = String(process.env.SHOPIFY_SCOPES || '')
+  .split(/[\s,]+/)
+  .filter(Boolean)
+  .join(',');
 
 function getPlanLimits(plan) {
   return PLAN_LIMITS[plan] || PLAN_LIMITS.free;
@@ -1302,6 +1328,259 @@ app.delete('/api/meta/connections/:id', verifyToken, scopeToOrganization, async 
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al eliminar la conexión' });
+  }
+});
+
+async function cleanupShopifyOauthStates() {
+  await pool.query(`DELETE FROM shopify_oauth_states WHERE expires_at < now()`);
+}
+
+async function getActiveShopifyConnection(organizationId) {
+  const { rows } = await pool.query(
+    `SELECT id, shop_domain, access_token, scope, status, installed_at, updated_at
+     FROM shopify_connections
+     WHERE organization_id = $1 AND status = 'connected'
+     ORDER BY id DESC
+     LIMIT 1`,
+    [organizationId],
+  );
+  return rows[0] || null;
+}
+
+function shopifyConfigured() {
+  return Boolean(SHOPIFY_API_KEY && SHOPIFY_API_SECRET && SHOPIFY_REDIRECT_URI);
+}
+
+app.get('/api/shopify/auth', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    if (!shopifyConfigured()) {
+      return res.status(503).json({ error: 'Shopify OAuth no está configurado en el servidor' });
+    }
+    const shop = sanitizeShopDomain(req.query.shop);
+    if (!shop) {
+      return res.status(400).json({ error: 'Dominio inválido. Debe ser algo como mitienda.myshopify.com' });
+    }
+    await cleanupShopifyOauthStates();
+    const state = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+    await pool.query(
+      `INSERT INTO shopify_oauth_states (state, organization_id, shop_domain, expires_at) VALUES ($1, $2, $3, $4)`,
+      [state, req.organizationId, shop, expiresAt],
+    );
+    const params = new URLSearchParams({
+      client_id: SHOPIFY_API_KEY,
+      scope: SHOPIFY_SCOPES,
+      redirect_uri: SHOPIFY_REDIRECT_URI,
+      state,
+    });
+    const authorizeUrl = `https://${shop}/admin/oauth/authorize?${params.toString()}`;
+    const wantsJson = (req.get('accept') || '').includes('application/json');
+    if (wantsJson) {
+      return res.json({ authorizeUrl });
+    }
+    return res.redirect(302, authorizeUrl);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al iniciar OAuth Shopify' });
+  }
+});
+
+app.get('/api/shopify/callback', async (req, res) => {
+  const base = SHOPIFY_APP_URL || '';
+  const redirectErr = () => res.redirect(302, `${base}/canales?shopify=error`);
+  const redirectOk = () => res.redirect(302, `${base}/canales?shopify=connected`);
+  try {
+    if (!SHOPIFY_API_SECRET || !SHOPIFY_API_KEY) {
+      return redirectErr();
+    }
+    const query = req.query;
+    const code = query.code;
+    const shop = sanitizeShopDomain(query.shop);
+    const state = query.state;
+    if (!code || !shop || !state || !verifyShopifyOAuthHmac(query, SHOPIFY_API_SECRET)) {
+      return redirectErr();
+    }
+    const { rows } = await pool.query(
+      `SELECT organization_id, shop_domain FROM shopify_oauth_states WHERE state = $1 AND expires_at > now()`,
+      [state],
+    );
+    const stateRow = rows[0];
+    if (!stateRow || sanitizeShopDomain(stateRow.shop_domain) !== shop) {
+      return redirectErr();
+    }
+    await pool.query(`DELETE FROM shopify_oauth_states WHERE state = $1`, [state]);
+
+    const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        client_id: SHOPIFY_API_KEY,
+        client_secret: SHOPIFY_API_SECRET,
+        code,
+      }),
+    });
+    const tokenBody = await tokenRes.json().catch(() => ({}));
+    if (!tokenRes.ok || !tokenBody.access_token) {
+      console.error('[shopify] oauth access_token error', tokenBody);
+      return redirectErr();
+    }
+    const scopeStr =
+      typeof tokenBody.scope === 'string' ? tokenBody.scope : SHOPIFY_SCOPES || '';
+    await pool.query(
+      `INSERT INTO shopify_connections (organization_id, shop_domain, access_token, scope, status, installed_at, updated_at)
+       VALUES ($1, $2, $3, $4, 'connected', now(), now())
+       ON CONFLICT (organization_id, shop_domain)
+       DO UPDATE SET
+         access_token = EXCLUDED.access_token,
+         scope = EXCLUDED.scope,
+         status = 'connected',
+         updated_at = now()`,
+      [stateRow.organization_id, shop, tokenBody.access_token, scopeStr],
+    );
+    await registerUninstallWebhook(shop, tokenBody.access_token);
+    return redirectOk();
+  } catch (e) {
+    console.error(e);
+    return redirectErr();
+  }
+});
+
+app.post('/api/shopify/webhooks/uninstalled', async (req, res) => {
+  try {
+    if (!SHOPIFY_API_SECRET) {
+      return res.status(503).send('Config');
+    }
+    const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
+    const rawBody = req.rawBody;
+    if (!rawBody || !verifyShopifyWebhookHmac(rawBody, hmacHeader, SHOPIFY_API_SECRET)) {
+      return res.status(401).send('Invalid HMAC');
+    }
+    const shopHeader = req.get('X-Shopify-Shop-Domain');
+    const normalized = shopHeader ? sanitizeShopDomain(shopHeader) : null;
+    const domain = normalized || (shopHeader ? String(shopHeader).toLowerCase().trim() : '');
+    if (!domain) {
+      return res.status(400).send('Missing shop');
+    }
+    await pool.query(
+      `UPDATE shopify_connections SET status = 'disconnected', updated_at = now() WHERE lower(shop_domain) = lower($1)`,
+      [domain],
+    );
+    return res.status(200).send('OK');
+  } catch (e) {
+    console.error('[shopify webhook]', e);
+    return res.status(500).send('Error');
+  }
+});
+
+app.get('/api/shopify/connection', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const row = await getActiveShopifyConnection(req.organizationId);
+    if (!row) {
+      return res.json({ status: 'disconnected', shop_domain: null, scope: null, installed_at: null });
+    }
+    res.json({
+      status: row.status,
+      shop_domain: row.shop_domain,
+      scope: row.scope,
+      installed_at: row.installed_at,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al leer conexión Shopify' });
+  }
+});
+
+app.delete('/api/shopify/connection', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `UPDATE shopify_connections SET status = 'disconnected', updated_at = now()
+       WHERE organization_id = $1 AND status = 'connected'`,
+      [req.organizationId],
+    );
+    res.json({ ok: true, disconnected: result.rowCount > 0 });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al desconectar Shopify' });
+  }
+});
+
+app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const row = await getActiveShopifyConnection(req.organizationId);
+    if (!row) {
+      return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
+    }
+    const r = await shopifyRequest(row.shop_domain, row.access_token, 'orders.json?limit=50&status=any');
+    if (!r.ok) {
+      return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
+    }
+    res.json(r.data);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener pedidos' });
+  }
+});
+
+app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const row = await getActiveShopifyConnection(req.organizationId);
+    if (!row) {
+      return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
+    }
+    const r = await shopifyRequest(row.shop_domain, row.access_token, 'products.json?limit=50');
+    if (!r.ok) {
+      return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
+    }
+    res.json(r.data);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener productos' });
+  }
+});
+
+app.get('/api/shopify/inventory', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const row = await getActiveShopifyConnection(req.organizationId);
+    if (!row) {
+      return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
+    }
+    const r = await shopifyRequest(row.shop_domain, row.access_token, 'inventory_levels.json?limit=50');
+    if (!r.ok) {
+      return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
+    }
+    res.json(r.data);
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener inventario' });
+  }
+});
+
+app.get('/api/shopify/analytics', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const row = await getActiveShopifyConnection(req.organizationId);
+    if (!row) {
+      return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
+    }
+    const r = await shopifyRequest(row.shop_domain, row.access_token, 'orders.json?status=paid&limit=250');
+    if (!r.ok) {
+      return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
+    }
+    const orders = (r.data && r.data.orders) || [];
+    let revenue = 0;
+    for (const o of orders) {
+      revenue += Number.parseFloat(String(o.total_price ?? 0)) || 0;
+    }
+    const n = orders.length;
+    const currency = n > 0 && orders[0].currency ? orders[0].currency : '';
+    res.json({
+      orders_count: n,
+      revenue,
+      aov: n > 0 ? revenue / n : 0,
+      currency,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al calcular analítica' });
   }
 });
 

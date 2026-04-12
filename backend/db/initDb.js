@@ -69,6 +69,34 @@ async function initDb(pool) {
     ADD COLUMN IF NOT EXISTS disconnect_reason TEXT
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shopify_connections (
+      id SERIAL PRIMARY KEY,
+      organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+      shop_domain VARCHAR(255) NOT NULL,
+      access_token TEXT NOT NULL,
+      scope TEXT,
+      status VARCHAR(20) NOT NULL DEFAULT 'connected',
+      installed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (organization_id, shop_domain)
+    )
+  `);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_shopify_connections_org ON shopify_connections (organization_id)`);
+  await pool.query(`CREATE INDEX IF NOT EXISTS idx_shopify_connections_shop ON shopify_connections (shop_domain)`);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shopify_oauth_states (
+      state TEXT PRIMARY KEY,
+      organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+      shop_domain VARCHAR(255) NOT NULL,
+      expires_at TIMESTAMPTZ NOT NULL
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_shopify_oauth_states_expires ON shopify_oauth_states (expires_at)`,
+  );
+
   const { rows: orphans } = await pool.query(
     'SELECT * FROM users WHERE organization_id IS NULL',
   );

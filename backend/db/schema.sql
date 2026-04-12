@@ -61,3 +61,27 @@ CREATE INDEX IF NOT EXISTS idx_users_organization_id ON users (organization_id);
 CREATE INDEX IF NOT EXISTS idx_users_email_lower ON users (lower(email));
 CREATE INDEX IF NOT EXISTS idx_invitations_organization_id ON invitations (organization_id);
 CREATE INDEX IF NOT EXISTS idx_orders_organization_id ON orders (organization_id);
+
+CREATE TABLE IF NOT EXISTS shopify_connections (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  shop_domain VARCHAR(255) NOT NULL,
+  access_token TEXT NOT NULL,
+  scope TEXT,
+  status VARCHAR(20) NOT NULL DEFAULT 'connected',
+  installed_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (organization_id, shop_domain)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shopify_connections_org ON shopify_connections (organization_id);
+CREATE INDEX IF NOT EXISTS idx_shopify_connections_shop ON shopify_connections (shop_domain);
+
+CREATE TABLE IF NOT EXISTS shopify_oauth_states (
+  state TEXT PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  shop_domain VARCHAR(255) NOT NULL,
+  expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_shopify_oauth_states_expires ON shopify_oauth_states (expires_at);
