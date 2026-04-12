@@ -67,9 +67,10 @@ async function listAdAccounts(accessToken) {
   return { ok: true, accounts: r.items, code: null, message: null, fb: null };
 }
 
-// omni_purchase_roas no es válido en insights anidados de campaña/conjunto/anuncio (error #100).
+// Solo campos admitidos en insights anidados (act_*/campaigns|adsets|ads?fields=…,insights.date_preset(…) {…}).
+// omni_purchase_roas / website_purchase_roas / cost_per_action_type suelen devolver (#100) en este modo; ROAS y CPA se calculan con actions + action_values + spend.
 const INSIGHT_FIELDS =
-  'impressions,clicks,spend,cpm,cpc,ctr,reach,frequency,actions,action_values,website_purchase_roas,cost_per_action_type';
+  'impressions,clicks,spend,cpm,cpc,ctr,reach,frequency,actions,action_values';
 
 function buildObjectFields(level, datePreset) {
   const ins = `insights.date_preset(${datePreset}){${INSIGHT_FIELDS}}`;
@@ -109,47 +110,6 @@ const PURCHASE_TYPES = new Set([
   'onsite_web_app_purchase',
 ]);
 
-/** ROAS desde campo website_purchase_roas de Meta cuando existe (arrays ActionStats o número). */
-function roasFromMetaInsightFields(ins) {
-  const raw = ins.website_purchase_roas;
-  if (raw == null) return 0;
-  if (typeof raw === 'string' || typeof raw === 'number') return parseNum(raw);
-  if (!Array.isArray(raw)) return 0;
-  let s = 0;
-  for (const x of raw) {
-    s += parseNum(x && x.value);
-  }
-  return s;
-}
-
-const CPA_ACTION_TYPE_ORDER = [
-  'omni_purchase',
-  'purchase',
-  'offsite_conversion.fb_pixel_purchase',
-  'onsite_conversion.purchase',
-  'web_in_store_purchase',
-  'onsite_web_purchase',
-  'onsite_web_app_purchase',
-];
-
-/** Coste por compra según cost_per_action_type de Meta (mismo criterio que el desglose de Ads). */
-function cpaFromMetaCostPerAction(ins) {
-  const arr = ins.cost_per_action_type;
-  if (!Array.isArray(arr)) return null;
-  for (const pref of CPA_ACTION_TYPE_ORDER) {
-    const hit = arr.find((a) => a && a.action_type === pref);
-    const v = parseNum(hit && hit.value);
-    if (v > 0) return v;
-  }
-  for (const a of arr) {
-    if (a && PURCHASE_TYPES.has(a.action_type)) {
-      const v = parseNum(a.value);
-      if (v > 0) return v;
-    }
-  }
-  return null;
-}
-
 function purchaseCountFromActions(actions) {
   if (!Array.isArray(actions)) return 0;
   let n = 0;
@@ -175,10 +135,8 @@ function normalizeEntity(entity, level, adAccountId, adAccountName) {
   const spend = parseNum(ins.spend);
   const purchases = purchaseCountFromActions(ins.actions);
   const revenue = purchaseValueFromActionValues(ins.action_values);
-  const roasMeta = roasFromMetaInsightFields(ins);
-  const roas = roasMeta > 0 ? roasMeta : spend > 0 && revenue > 0 ? revenue / spend : 0;
-  const cpaMeta = cpaFromMetaCostPerAction(ins);
-  const cpa = cpaMeta != null && cpaMeta > 0 ? cpaMeta : purchases > 0 ? spend / purchases : 0;
+  const roas = spend > 0 && revenue > 0 ? revenue / spend : 0;
+  const cpa = purchases > 0 ? spend / purchases : 0;
   return {
     adAccountId,
     adAccountName,

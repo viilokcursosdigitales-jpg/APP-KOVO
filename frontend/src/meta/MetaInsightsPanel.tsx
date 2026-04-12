@@ -406,8 +406,8 @@ export function MetaInsightsPanel({
     { label: 'CPM', value: formatMoney2(displayTotals.cpm) },
     { label: 'CPC', value: formatMoney2(displayTotals.cpc) },
     { label: 'CTR', value: formatPct(displayTotals.ctr) },
-    { label: 'ROAS (Meta)', value: formatRoasMeta(displayTotals.roas) },
-    { label: 'CPA (Meta)', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
+    { label: 'ROAS', value: formatRoasMeta(displayTotals.roas) },
+    { label: 'CPA', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
   ];
 
   const levelTabs: { id: InsightLevel; label: string }[] = [
