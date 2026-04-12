@@ -145,6 +145,12 @@ const moticoEstadoSelectStyle: CSSProperties = {
   boxSizing: 'border-box',
 };
 
+const moticoMensajeroThTd: CSSProperties = {
+  minWidth: 128,
+  width: 148,
+  verticalAlign: 'middle',
+};
+
 const modalFieldStyle: CSSProperties = {
   width: '100%',
   maxWidth: '100%',
@@ -1051,7 +1057,7 @@ export default function MoticoPage() {
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ ...tableBase, minWidth: 1760 }}>
+            <table style={{ ...tableBase, minWidth: 1910 }}>
               <thead>
                 <tr>
                   <Th style={moticoThPad}>
@@ -1076,6 +1082,7 @@ export default function MoticoPage() {
                   <Th style={moticoThPad}>Pago</Th>
                   <Th style={moticoThPad}>Productos</Th>
                   <Th style={{ ...moticoThPad, ...moticoEstadoThTd }}>Estado</Th>
+                  <Th style={{ ...moticoThPad, ...moticoMensajeroThTd }}>Mensajero</Th>
                 </tr>
               </thead>
               <tbody>
@@ -1210,6 +1217,11 @@ export default function MoticoPage() {
                             </a>
                           ) : null}
                         </div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={{ ...moticoTdPad, ...moticoMensajeroThTd }}>
+                        <span style={{ fontSize: 12, color: ds.textSecondary, wordBreak: 'break-word' }}>
+                          {o.mensajero?.trim() || '—'}
+                        </span>
                       </Td>
                     </tr>
                   );
