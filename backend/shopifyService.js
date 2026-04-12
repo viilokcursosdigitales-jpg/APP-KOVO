@@ -1,6 +1,7 @@
 const crypto = require('crypto');
 
-const DEFAULT_API_VERSION = process.env.SHOPIFY_API_VERSION || '2026-04';
+const DEFAULT_API_VERSION =
+  process.env.SHOPIFY_API_VERSION || process.env.SHOPIFY_API_VERSTON || '2026-04';
 
 /**
  * @param {string} shop ej. mitienda.myshopify.com

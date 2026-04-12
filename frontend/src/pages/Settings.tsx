@@ -818,8 +818,10 @@ export default function Settings() {
               recibirá el email hasta que añadas <code style={{ fontSize: 11 }}>RESEND_API_KEY</code> (Resend) o{' '}
               <code style={{ fontSize: 11 }}>SMTP_HOST</code>, <code style={{ fontSize: 11 }}>SMTP_USER</code> y{' '}
               <code style={{ fontSize: 11 }}>SMTP_PASS</code> en el <code style={{ fontSize: 11 }}>.env</code> del
-              backend y reinicies el proceso. Consulta <code style={{ fontSize: 11 }}>backend/.env.example</code> y
-              comprueba que <code style={{ fontSize: 11 }}>PUBLIC_APP_URL</code> sea la URL pública de la app.
+              backend y reinicies el proceso. Con Resend y <code style={{ fontSize: 11 }}>onboarding@resend.dev</code>{' '}
+              solo llega correo a tu propio email hasta que verifiques un dominio en Resend. Consulta{' '}
+              <code style={{ fontSize: 11 }}>backend/.env.example</code> y{' '}
+              <code style={{ fontSize: 11 }}>PUBLIC_APP_URL</code>.
             </div>
           ) : null}
 

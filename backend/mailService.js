@@ -8,6 +8,18 @@
 
 const nodemailer = require('nodemailer');
 
+/** Quita comillas si Render/u otro panel las guardó como parte del valor. */
+function trimEnvValue(v) {
+  let s = String(v ?? '').trim();
+  if (s.length >= 2) {
+    const q = s[0];
+    if ((q === '"' || q === "'") && s[s.length - 1] === q) {
+      s = s.slice(1, -1).trim();
+    }
+  }
+  return s;
+}
+
 function getSmtpConfig() {
   const host = String(process.env.SMTP_HOST || '').trim();
   const user = String(process.env.SMTP_USER || '').trim();
@@ -22,10 +34,41 @@ function getSmtpConfig() {
 }
 
 function getResendConfig() {
-  const key = String(process.env.RESEND_API_KEY || '').trim();
+  const key = trimEnvValue(process.env.RESEND_API_KEY);
   if (!key) return null;
-  const from = String(process.env.RESEND_FROM || 'KOVO <onboarding@resend.dev>').trim();
+  let from = trimEnvValue(process.env.RESEND_FROM) || 'KOVO <onboarding@resend.dev>';
+  // Resend exige formato "Nombre <correo@dominio.com>" con espacio antes de <
+  if (from.includes('<') && !/\s</.test(from)) {
+    from = from.replace('<', ' <');
+  }
   return { key, from };
+}
+
+/** Texto legible a partir del JSON de error de Resend (ver https://resend.com/docs/api-reference/errors ). */
+function parseResendErrorPayload(data, httpStatus) {
+  if (!data || typeof data !== 'object') {
+    return httpStatus ? `Resend HTTP ${httpStatus}` : 'Error desconocido de Resend';
+  }
+  const main = typeof data.message === 'string' ? data.message.trim() : '';
+  if (main) return main;
+  if (Array.isArray(data.errors)) {
+    const parts = data.errors.map((e) => {
+      if (typeof e === 'string') return e;
+      if (e && typeof e.message === 'string') return e.message;
+      if (e && typeof e.path === 'string' && typeof e.message === 'string') return `${e.path}: ${e.message}`;
+      try {
+        return JSON.stringify(e);
+      } catch {
+        return String(e);
+      }
+    });
+    const joined = parts.filter(Boolean).join(' · ');
+    if (joined) return joined;
+  }
+  if (typeof data.name === 'string' && data.name) {
+    return `${data.name}${main ? `: ${main}` : ''}`;
+  }
+  return httpStatus ? `Resend HTTP ${httpStatus}` : 'Error de Resend';
 }
 
 function getPublicAppUrl() {
@@ -74,12 +117,9 @@ async function sendViaResend(opts) {
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const msg =
-        (typeof data.message === 'string' && data.message) ||
-        (typeof data.error === 'string' && data.error) ||
-        `HTTP ${res.status}`;
-      console.error('[mail] Resend:', msg);
-      return { ok: false, error: String(msg) };
+      const msg = parseResendErrorPayload(data, res.status);
+      console.error('[mail] Resend HTTP', res.status, msg, data && Object.keys(data).length ? JSON.stringify(data) : '');
+      return { ok: false, error: String(msg), resend_status: res.status };
     }
     return { ok: true };
   } catch (e) {

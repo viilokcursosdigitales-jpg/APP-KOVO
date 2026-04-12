@@ -19,10 +19,10 @@ const DEMO = [
 ];
 
 const INTERNAL_OPTIONS = [
-  { value: 'sin_confirmar', label: 'SIN CONFIRMAR' },
-  { value: 'confirmado', label: 'CONFIRMADO' },
-  { value: 'despachado', label: 'DESPACHADO' },
-  { value: 'cancelado', label: 'CANCELADO' },
+  { value: 'sin_confirmar', label: 'Sin confirmar' },
+  { value: 'confirmado', label: 'Confirmado' },
+  { value: 'despachado', label: 'Despachado' },
+  { value: 'cancelado', label: 'Cancelado' },
 ] as const;
 
 type InternalStatusValue = (typeof INTERNAL_OPTIONS)[number]['value'];
@@ -33,6 +33,8 @@ const MENSAJERO_OPTIONS = [
   { value: 'dropi', label: 'Dropi' },
   { value: 'effix', label: 'Effix' },
 ] as const;
+
+type MensajeroOptionValue = (typeof MENSAJERO_OPTIONS)[number]['value'];
 
 type ShopifyOrderRow = {
   id: number;
@@ -126,9 +128,9 @@ function estadoSelectStyle(internalStatus: string): CSSProperties {
   switch (internalStatus) {
     case 'sin_confirmar':
       return {
-        background: '#e8eaef',
-        color: '#5b616e',
-        borderColor: '#cdd2dc',
+        background: '#eff6ff',
+        color: '#3b5bdb',
+        borderColor: '#bfdbfe',
       };
     case 'confirmado':
       return {
@@ -226,7 +228,14 @@ export default function PedidosPage() {
   const [bulkInternalStatus, setBulkInternalStatus] = useState<InternalStatusValue>('sin_confirmar');
   const [bulkStatusApplying, setBulkStatusApplying] = useState(false);
   const [bulkStatusFeedback, setBulkStatusFeedback] = useState('');
+  const [bulkMensajero, setBulkMensajero] = useState<MensajeroOptionValue>('');
+  const [bulkMensajeroApplying, setBulkMensajeroApplying] = useState(false);
+  const [bulkMensajeroFeedback, setBulkMensajeroFeedback] = useState('');
+  const [cityMenuOpen, setCityMenuOpen] = useState(false);
+  const cityFilterWrapRef = useRef<HTMLDivElement>(null);
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
+
+  const bulkActionBusy = bulkStatusApplying || bulkMensajeroApplying;
 
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
@@ -350,6 +359,7 @@ export default function PedidosPage() {
     if (ids.length === 0) return;
     setBulkStatusApplying(true);
     setBulkStatusFeedback('');
+    setBulkMensajeroFeedback('');
     try {
       const results = await Promise.all(ids.map((id) => patchLocalFields(id, { internal_status: bulkInternalStatus })));
       const ok = results.filter(Boolean).length;
@@ -364,6 +374,31 @@ export default function PedidosPage() {
       setBulkStatusApplying(false);
     }
   }, [selectedOrderIds, bulkInternalStatus, patchLocalFields]);
+
+  const applyBulkMensajero = useCallback(async () => {
+    const ids = [...selectedOrderIds];
+    if (ids.length === 0) return;
+    setBulkMensajeroApplying(true);
+    setBulkMensajeroFeedback('');
+    setBulkStatusFeedback('');
+    try {
+      const body = bulkMensajero === '' ? { mensajero: null } : { mensajero: bulkMensajero };
+      const results = await Promise.all(ids.map((id) => patchLocalFields(id, body)));
+      const ok = results.filter(Boolean).length;
+      const fail = ids.length - ok;
+      const label = MENSAJERO_OPTIONS.find((o) => o.value === bulkMensajero)?.label ?? '—';
+      if (fail > 0) {
+        setBulkMensajeroFeedback(`${ok} actualizado(s), ${fail} error(es). Revisa la conexión o vuelve a intentar.`);
+      } else {
+        setBulkMensajeroFeedback(
+          `${ok} pedido${ok === 1 ? '' : 's'} con mensajero ${bulkMensajero === '' ? 'sin asignar' : label}.`,
+        );
+      }
+      window.setTimeout(() => setBulkMensajeroFeedback(''), 6000);
+    } finally {
+      setBulkMensajeroApplying(false);
+    }
+  }, [selectedOrderIds, bulkMensajero, patchLocalFields]);
 
   const schedulePriceSave = useCallback(
     (orderId: number, raw: string) => {
@@ -466,6 +501,16 @@ export default function PedidosPage() {
     const valid = new Set(cityOptions.map((c) => c.value));
     setSelectedCityKeys((prev) => prev.filter((k) => valid.has(k)));
   }, [cityOptions]);
+
+  useEffect(() => {
+    if (!cityMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = cityFilterWrapRef.current;
+      if (el && e.target instanceof Node && !el.contains(e.target)) setCityMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    return () => document.removeEventListener('mousedown', onDoc);
+  }, [cityMenuOpen]);
 
   const filteredShopify = useMemo(
     () =>
@@ -660,9 +705,23 @@ export default function PedidosPage() {
                 alignItems: 'flex-start',
               }}
             >
-              <details className="kovo-city-filter" style={{ flex: '1 1 240px', maxWidth: 380 }}>
-                <summary
+              <div
+                ref={cityFilterWrapRef}
+                className="kovo-city-filter"
+                style={{ position: 'relative', flex: '1 1 240px', maxWidth: 380 }}
+                onMouseEnter={() => setCityMenuOpen(true)}
+                onMouseLeave={() => setCityMenuOpen(false)}
+              >
+                <button
+                  type="button"
+                  aria-expanded={cityMenuOpen}
+                  aria-haspopup="listbox"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setCityMenuOpen((o) => !o);
+                  }}
                   style={{
+                    width: '100%',
                     padding: '7px 14px',
                     borderRadius: 8,
                     border: `1px solid ${selectedCityKeys.length ? ds.brand : ds.borderCard}`,
@@ -672,6 +731,7 @@ export default function PedidosPage() {
                     fontWeight: 600,
                     cursor: 'pointer',
                     userSelect: 'none',
+                    textAlign: 'left',
                   }}
                 >
                   Ciudad
@@ -679,90 +739,102 @@ export default function PedidosPage() {
                     ? ` · ${selectedCityKeys.length} seleccionada(s)`
                     : ' · todas'}{' '}
                   ▾
-                </summary>
-                <div
-                  style={{
-                    marginTop: 8,
-                    padding: 12,
-                    borderRadius: 10,
-                    border: `1px solid ${ds.borderCard}`,
-                    background: ds.bgCard,
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 10,
-                  }}
-                >
-                  <p style={{ margin: 0, fontSize: 10, color: ds.textMuted, lineHeight: 1.4 }}>
-                    Marca una o varias ciudades; la tabla solo muestra pedidos de las elegidas. Sin ninguna
-                    marcada se muestran todas.
-                  </p>
+                </button>
+                {cityMenuOpen ? (
                   <div
-                    role="group"
-                    aria-label="Ciudades del filtro"
                     style={{
-                      maxHeight: 220,
-                      overflowY: 'auto',
+                      position: 'absolute',
+                      zIndex: 30,
+                      left: 0,
+                      right: 0,
+                      top: '100%',
+                      marginTop: 8,
+                      padding: 12,
+                      borderRadius: 10,
+                      border: `1px solid ${ds.borderCard}`,
+                      background: ds.bgCard,
+                      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.12)',
                       display: 'flex',
                       flexDirection: 'column',
-                      gap: 4,
-                      padding: 4,
-                      borderRadius: 8,
-                      border: `1px solid ${ds.borderCard}`,
-                      background: ds.bgSubtle,
+                      gap: 10,
                     }}
                   >
-                    {cityOptions.map((c) => {
-                      const on = selectedCityKeys.includes(c.value);
-                      return (
-                        <label
-                          key={c.value}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 8,
-                            padding: '6px 8px',
-                            borderRadius: 6,
-                            cursor: 'pointer',
-                            background: on ? ds.brandBg : 'transparent',
-                            fontSize: 12,
-                            color: on ? ds.brand : ds.textPrimary,
-                            fontWeight: on ? 600 : 500,
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={on}
-                            onChange={() =>
-                              setSelectedCityKeys((prev) =>
-                                prev.includes(c.value) ? prev.filter((x) => x !== c.value) : [...prev, c.value],
-                              )
-                            }
-                            style={{ accentColor: ds.brand, flexShrink: 0, width: 16, height: 16 }}
-                          />
-                          {c.label}
-                        </label>
-                      );
-                    })}
+                    <p style={{ margin: 0, fontSize: 10, color: ds.textMuted, lineHeight: 1.4 }}>
+                      Marca una o varias ciudades; la tabla solo muestra pedidos de las elegidas. Sin ninguna
+                      marcada se muestran todas.
+                    </p>
+                    <div
+                      role="listbox"
+                      aria-label="Ciudades del filtro"
+                      style={{
+                        maxHeight: 220,
+                        overflowY: 'auto',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 4,
+                        padding: 4,
+                        borderRadius: 8,
+                        border: `1px solid ${ds.borderCard}`,
+                        background: ds.bgSubtle,
+                      }}
+                    >
+                      {cityOptions.map((c) => {
+                        const on = selectedCityKeys.includes(c.value);
+                        return (
+                          <label
+                            key={c.value}
+                            style={{
+                              display: 'flex',
+                              alignItems: 'center',
+                              gap: 8,
+                              padding: '6px 8px',
+                              borderRadius: 6,
+                              cursor: 'pointer',
+                              background: on ? ds.brandBg : 'transparent',
+                              fontSize: 12,
+                              color: on ? ds.brand : ds.textPrimary,
+                              fontWeight: on ? 600 : 500,
+                            }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={on}
+                              onChange={() => {
+                                setSelectedCityKeys((prev) =>
+                                  prev.includes(c.value) ? prev.filter((x) => x !== c.value) : [...prev, c.value],
+                                );
+                                setCityMenuOpen(false);
+                              }}
+                              style={{ accentColor: ds.brand, flexShrink: 0, width: 16, height: 16 }}
+                            />
+                            {c.label}
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSelectedCityKeys([]);
+                        setCityMenuOpen(false);
+                      }}
+                      style={{
+                        alignSelf: 'flex-start',
+                        padding: '6px 12px',
+                        borderRadius: 8,
+                        border: `1px solid ${ds.borderCard}`,
+                        background: ds.bgSubtle,
+                        color: ds.brand,
+                        fontSize: 11,
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Mostrar todas las ciudades
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => setSelectedCityKeys([])}
-                    style={{
-                      alignSelf: 'flex-start',
-                      padding: '6px 12px',
-                      borderRadius: 8,
-                      border: `1px solid ${ds.borderCard}`,
-                      background: ds.bgSubtle,
-                      color: ds.brand,
-                      fontSize: 11,
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                    }}
-                  >
-                    Mostrar todas las ciudades
-                  </button>
-                </div>
-              </details>
+                ) : null}
+              </div>
             </div>
           ) : useLive && shopifyOrders.length > 0 && !shopifyLoading ? (
             <div style={{ width: '100%', flexBasis: '100%', marginTop: 6, fontSize: 11, color: ds.textMuted }}>
@@ -865,7 +937,7 @@ export default function PedidosPage() {
                   <select
                     value={bulkInternalStatus}
                     onChange={(e) => setBulkInternalStatus(e.target.value as InternalStatusValue)}
-                    disabled={bulkStatusApplying}
+                    disabled={bulkActionBusy}
                     style={{
                       ...selectStyle,
                       ...estadoSelectStyle(bulkInternalStatus),
@@ -882,7 +954,7 @@ export default function PedidosPage() {
                 </label>
                 <button
                   type="button"
-                  disabled={bulkStatusApplying}
+                  disabled={bulkActionBusy}
                   onClick={() => void applyBulkInternalStatus()}
                   style={{
                     padding: '6px 12px',
@@ -893,15 +965,62 @@ export default function PedidosPage() {
                     fontSize: 11,
                     fontWeight: 600,
                     cursor: bulkStatusApplying ? 'wait' : 'pointer',
-                    opacity: bulkStatusApplying ? 0.75 : 1,
+                    opacity: bulkActionBusy ? 0.75 : 1,
                   }}
                 >
                   {bulkStatusApplying ? 'Aplicando…' : 'Aplicar estado'}
                 </button>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: ds.textMuted,
+                  }}
+                >
+                  Mensajero
+                  <select
+                    value={bulkMensajero}
+                    onChange={(e) => setBulkMensajero(e.target.value as MensajeroOptionValue)}
+                    disabled={bulkActionBusy}
+                    style={{
+                      ...selectStyle,
+                      ...mensajeroSelectStyle(bulkMensajero || null),
+                      maxWidth: 160,
+                    }}
+                    aria-label="Mensajero a aplicar en masa"
+                  >
+                    {MENSAJERO_OPTIONS.map((opt) => (
+                      <option key={opt.label} value={opt.value} style={mensajeroOptionStyle(opt.value)}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  disabled={bulkActionBusy}
+                  onClick={() => void applyBulkMensajero()}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    background: ds.bgSubtle,
+                    color: ds.textPrimary,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: bulkMensajeroApplying ? 'wait' : 'pointer',
+                    opacity: bulkActionBusy ? 0.75 : 1,
+                  }}
+                >
+                  {bulkMensajeroApplying ? 'Aplicando…' : 'Aplicar mensajero'}
+                </button>
                 <button
                   type="button"
                   onClick={clearOrderSelection}
-                  disabled={bulkStatusApplying}
+                  disabled={bulkActionBusy}
                   style={{
                     padding: '6px 12px',
                     borderRadius: 8,
@@ -910,22 +1029,42 @@ export default function PedidosPage() {
                     color: ds.brand,
                     fontSize: 11,
                     fontWeight: 600,
-                    cursor: bulkStatusApplying ? 'not-allowed' : 'pointer',
+                    cursor: bulkActionBusy ? 'not-allowed' : 'pointer',
                   }}
                 >
                   Quitar selección
                 </button>
               </div>
-              {bulkStatusFeedback ? (
+              {bulkStatusFeedback || bulkMensajeroFeedback ? (
                 <div
                   style={{
                     fontSize: 11,
-                    color: bulkStatusFeedback.includes('error') ? ds.dangerText : ds.textSecondary,
                     textAlign: 'right',
                     lineHeight: 1.35,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 4,
+                    alignItems: 'flex-end',
                   }}
                 >
-                  {bulkStatusFeedback}
+                  {bulkStatusFeedback ? (
+                    <div
+                      style={{
+                        color: bulkStatusFeedback.includes('error') ? ds.dangerText : ds.textSecondary,
+                      }}
+                    >
+                      {bulkStatusFeedback}
+                    </div>
+                  ) : null}
+                  {bulkMensajeroFeedback ? (
+                    <div
+                      style={{
+                        color: bulkMensajeroFeedback.includes('error') ? ds.dangerText : ds.textSecondary,
+                      }}
+                    >
+                      {bulkMensajeroFeedback}
+                    </div>
+                  ) : null}
                 </div>
               ) : null}
             </div>
@@ -953,6 +1092,7 @@ export default function PedidosPage() {
                     </Th>
                   ) : null}
                   <Th>Pedido</Th>
+                  <Th>Fecha</Th>
                   <Th>Cliente</Th>
                   {useLive ? (
                     <>
@@ -961,7 +1101,6 @@ export default function PedidosPage() {
                       <Th>Dirección</Th>
                     </>
                   ) : null}
-                  <Th>Fecha</Th>
                   <Th>Precio</Th>
                   <Th>Cant.</Th>
                   <Th>Pago (Shopify)</Th>
@@ -991,6 +1130,7 @@ export default function PedidosPage() {
                             <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
                             <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
                           </Td>
+                          <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
                           <Td isLast={i === arr.length - 1}>{o.client}</Td>
                           <Td isLast={i === arr.length - 1}>
                             <span style={{ fontSize: 11 }}>{o.shippingCity?.trim() || '—'}</span>
@@ -1010,7 +1150,6 @@ export default function PedidosPage() {
                               {o.shippingAddressLine?.trim() || '—'}
                             </div>
                           </Td>
-                          <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
                           <Td isLast={i === arr.length - 1}>
                             <input
                               type="text"
@@ -1107,8 +1246,8 @@ export default function PedidosPage() {
                           <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.id}</div>
                           <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
                         </Td>
-                        <Td isLast={i === arr.length - 1}>{o.client}</Td>
                         <Td isLast={i === arr.length - 1}>{o.date}</Td>
+                        <Td isLast={i === arr.length - 1}>{o.client}</Td>
                         <Td isLast={i === arr.length - 1}>{o.total}</Td>
                         <Td isLast={i === arr.length - 1}>—</Td>
                         <Td isLast={i === arr.length - 1}>

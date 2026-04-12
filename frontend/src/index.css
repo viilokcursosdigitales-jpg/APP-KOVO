@@ -35,10 +35,4 @@ body {
   background: var(--color-bg-app);
 }
 
-/* Pedidos: filtro de ciudades (details + select multiple) */
-details.kovo-city-filter > summary {
-  list-style: none;
-}
-details.kovo-city-filter > summary::-webkit-details-marker {
-  display: none;
-}
+/* Pedidos: filtro de ciudades (dropdown); el panel se posiciona en el componente */

@@ -398,10 +398,49 @@ function logInvitationSmtp(email, acceptUrl, sendRes) {
   if (!isMailConfigured()) {
     console.warn(`[invite] Correo no configurado (Resend/SMTP). Enlace invitación ${email}: ${acceptUrl}`);
   } else if (!sendRes.ok && !sendRes.skipped) {
-    console.error(`[invite] Fallo SMTP para ${email}:`, sendRes.error);
+    console.error(`[invite] Fallo envío correo para ${email}:`, sendRes.error);
   } else if (process.env.NODE_ENV !== 'production' && sendRes.ok) {
     console.log(`[invite] Correo enviado a ${email} · ${acceptUrl}`);
   }
+}
+
+/** Mensaje para la UI según resultado de Resend/SMTP (incluye pistas de Resend “solo tu email” / dominio). */
+function inviteEmailUserMessage(sendRes, invitedEmail, opts = {}) {
+  const resent = Boolean(opts.resent);
+  const fromResend = sendRes && sendRes.resend_status != null;
+  if (sendRes.ok) {
+    return {
+      email_sent: true,
+      message: resent
+        ? `Se reenvió el correo a ${invitedEmail} con el mismo enlace de invitación.`
+        : `Se envió un correo a ${invitedEmail} con el enlace para aceptar la invitación.`,
+    };
+  }
+  if (sendRes.skipped) {
+    return {
+      email_sent: false,
+      message: resent
+        ? 'No hay Resend ni SMTP configurado. Copia el enlace y envíalo tú (es el mismo de siempre).'
+        : 'Invitación creada. No hay Resend ni SMTP configurado en el servidor; copia el enlace que muestra la app y envíalo tú.',
+    };
+  }
+  const err = String(sendRes.error || '');
+  let message = resent
+    ? `No se pudo reenviar el correo (${err || 'error de envío'}). Copia el enlace y envíalo tú.`
+    : `Invitación creada, pero no se pudo enviar el correo (${err || 'error de envío'}). Copia el enlace y envíalo tú.`;
+  if (/only send testing emails|your own email address/i.test(err)) {
+    message +=
+      ' En Resend, con remitente de prueba (p. ej. onboarding@resend.dev) solo se entrega a tu propio correo. Verifica un dominio en https://resend.com/domains y usa RESEND_FROM del tipo «Nombre <noreply@tudominio.com>» para invitar a cualquier dirección.';
+  } else if (/domain is not verified|not verified/i.test(err)) {
+    message +=
+      ' El dominio del remitente no está verificado en Resend: completa SPF/DKIM en el panel de Resend.';
+  } else if (/invalid_api_key|API key is invalid|Missing API key|restricted_api_key/i.test(err)) {
+    message +=
+      ' Revisa RESEND_API_KEY en Render (clave de envío, sin comillas ni espacios al inicio/final).';
+  } else if (!fromResend && err) {
+    message += ' Si usas SMTP, comprueba usuario, contraseña y puerto.';
+  }
+  return { email_sent: false, message };
 }
 
 async function verifyToken(req, res, next) {
@@ -1320,17 +1359,7 @@ app.post(
       );
       logInvitationSmtp(email, acceptUrl, sendRes);
 
-      let message;
-      let email_sent = false;
-      if (sendRes.ok) {
-        email_sent = true;
-        message = `Se envió un correo a ${email} con el enlace para aceptar la invitación.`;
-      } else if (sendRes.skipped) {
-        message =
-          'Invitación creada. Falta configurar el envío de correo (SMTP) en el servidor; copia el enlace y envíalo tú al invitado.';
-      } else {
-        message = `Invitación creada, pero no se pudo enviar el correo (${sendRes.error || 'error SMTP'}). Copia el enlace y envíalo tú.`;
-      }
+      const { email_sent, message } = inviteEmailUserMessage(sendRes, email);
 
       res.status(201).json({
         ok: true,
@@ -1409,17 +1438,7 @@ app.post(
       );
       logInvitationSmtp(row.email, acceptUrl, sendRes);
 
-      let message;
-      let email_sent = false;
-      if (sendRes.ok) {
-        email_sent = true;
-        message = `Se reenvió el correo a ${row.email} con el mismo enlace de invitación.`;
-      } else if (sendRes.skipped) {
-        message =
-          'No hay SMTP configurado en el servidor. Copia el enlace y envíalo tú al invitado (es el mismo de siempre).';
-      } else {
-        message = `No se pudo enviar el correo (${sendRes.error || 'error SMTP'}). Copia el enlace y envíalo tú.`;
-      }
+      const { email_sent, message } = inviteEmailUserMessage(sendRes, row.email, { resent: true });
 
       res.json({
         ok: true,
