@@ -110,6 +110,41 @@ const selectStyle: CSSProperties = {
   fontWeight: 600,
 };
 
+/** Padding horizontal 18px (rango 16–20px pedido) en la tabla Pedidos Motico. */
+const MOTICO_CELL_H_PAD = 18;
+const moticoThPad: CSSProperties = { padding: `11px ${MOTICO_CELL_H_PAD}px` };
+const moticoTdPad: CSSProperties = { padding: `12px ${MOTICO_CELL_H_PAD}px` };
+
+/** Columna Estado: select + lápiz + Shopify en fila; ancho mínimo para evitar solapes. */
+const moticoEstadoThTd: CSSProperties = {
+  minWidth: 460,
+  width: 460,
+  verticalAlign: 'middle',
+};
+
+const moticoEstadoActionsRow: CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: 8,
+  flexWrap: 'nowrap',
+  minWidth: 0,
+};
+
+/** Área del desplegable de estado: ancho mínimo fijo tipo “badge” y tope para no comer el lápiz. */
+const moticoEstadoSelectShell: CSSProperties = {
+  flex: '1 1 auto',
+  minWidth: 240,
+  maxWidth: 300,
+};
+
+const moticoEstadoSelectStyle: CSSProperties = {
+  ...selectStyle,
+  width: '100%',
+  minWidth: 0,
+  maxWidth: '100%',
+  boxSizing: 'border-box',
+};
+
 const modalFieldStyle: CSSProperties = {
   width: '100%',
   maxWidth: '100%',
@@ -471,8 +506,13 @@ export default function MoticoPage() {
       return;
     }
     const labels = list.map(buildLabelFromOrder);
-    const ok = openMoticoGuidesBatchPrint(logoDataUrl, labels);
-    if (!ok) setGuideHint('Permite ventanas emergentes para abrir la vista previa de impresión.');
+    void openMoticoGuidesBatchPrint(logoDataUrl, labels).then((ok) => {
+      if (!ok) {
+        setGuideHint(
+          'No se pudo generar el PDF. Permite ventanas emergentes para la vista previa o revisa la consola del navegador.',
+        );
+      }
+    });
   }, [logoDataUrl, orders, selectedIds, buildLabelFromOrder]);
 
   const onMoticoStatusChange = useCallback(
@@ -1011,10 +1051,10 @@ export default function MoticoPage() {
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ ...tableBase, minWidth: 1680 }}>
+            <table style={{ ...tableBase, minWidth: 1760 }}>
               <thead>
                 <tr>
-                  <Th>
+                  <Th style={moticoThPad}>
                     <input
                       ref={headerSelectRef}
                       type="checkbox"
@@ -1025,19 +1065,17 @@ export default function MoticoPage() {
                       style={{ width: 16, height: 16, cursor: filteredOrders.length ? 'pointer' : 'not-allowed' }}
                     />
                   </Th>
-                  <Th>Pedido</Th>
-                  <Th>Fecha</Th>
-                  <Th>Cliente</Th>
-                  <Th>Departamento</Th>
-                  <Th>Ciudad</Th>
-                  <Th>Dirección</Th>
-                  <Th>Precio</Th>
-                  <Th>Cant.</Th>
-                  <Th>Pago</Th>
-                  <Th>Productos</Th>
-                  <Th>Estado</Th>
-                  <Th style={{ width: 52 }} aria-label="Editar pedido" />
-                  <Th />
+                  <Th style={moticoThPad}>Pedido</Th>
+                  <Th style={moticoThPad}>Fecha</Th>
+                  <Th style={moticoThPad}>Cliente</Th>
+                  <Th style={moticoThPad}>Departamento</Th>
+                  <Th style={moticoThPad}>Ciudad</Th>
+                  <Th style={moticoThPad}>Dirección</Th>
+                  <Th style={moticoThPad}>Precio</Th>
+                  <Th style={moticoThPad}>Cant.</Th>
+                  <Th style={moticoThPad}>Pago</Th>
+                  <Th style={moticoThPad}>Productos</Th>
+                  <Th style={{ ...moticoThPad, ...moticoEstadoThTd }}>Estado</Th>
                 </tr>
               </thead>
               <tbody>
@@ -1058,7 +1096,7 @@ export default function MoticoPage() {
                         background: `${meta.chipBg}22`,
                       }}
                     >
-                      <Td isLast={i === arr.length - 1}>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <input
                           type="checkbox"
                           checked={selectedSet.has(o.id)}
@@ -1067,19 +1105,23 @@ export default function MoticoPage() {
                           style={{ width: 16, height: 16, cursor: 'pointer' }}
                         />
                       </Td>
-                      <Td isLast={i === arr.length - 1}>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
                         <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
                       </Td>
-                      <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
-                      <Td isLast={i === arr.length - 1}>{o.client}</Td>
-                      <Td isLast={i === arr.length - 1}>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        {formatDate(o.createdAt)}
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        {o.client}
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <span style={{ fontSize: 11 }}>{sa?.province?.trim() || '—'}</span>
                       </Td>
-                      <Td isLast={i === arr.length - 1}>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <span style={{ fontSize: 11 }}>{sa?.city?.trim() || '—'}</span>
                       </Td>
-                      <Td isLast={i === arr.length - 1}>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div
                           style={{
                             fontSize: 11,
@@ -1092,75 +1134,82 @@ export default function MoticoPage() {
                           {dirLine || '—'}
                         </div>
                       </Td>
-                      <Td isLast={i === arr.length - 1}>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>{showPrice}</div>
                         <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
                           Shopify: {formatMoneyFromString(o.shopifyTotal, o.currency)}
                         </div>
                       </Td>
-                      <Td isLast={i === arr.length - 1}>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>{showQty}</div>
                         <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>Shopify: {o.shopifyQuantity}</div>
                       </Td>
-                      <Td isLast={i === arr.length - 1}>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
                       </Td>
-                      <Td isLast={i === arr.length - 1}>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div style={{ fontSize: 11, color: ds.textSecondary, maxWidth: 200, lineHeight: 1.35 }}>
                           {summarizeProducts(o.productIds)}
                         </div>
                       </Td>
-                      <Td isLast={i === arr.length - 1}>
-                        <select
-                          style={{
-                            ...selectStyle,
-                            background: meta.chipBg,
-                            color: meta.chipFg,
-                            borderColor: meta.chipBorder,
-                          }}
-                          value={o.motico_status}
-                          onChange={(e) => void onMoticoStatusChange(o, e.target.value)}
-                          aria-label="Estado Motico"
-                        >
-                          {MOTICO_STATUS_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={{ textAlign: 'center', verticalAlign: 'middle' }}>
-                        <button
-                          type="button"
-                          aria-label={`Editar pedido ${o.orderName}: dirección, precio y cantidad`}
-                          onClick={() => openOrderEditor(o)}
-                          style={{
-                            padding: 6,
-                            borderRadius: 8,
-                            border: `1px solid ${ds.borderCard}`,
-                            background: ds.bgCard,
-                            color: ds.brand,
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            lineHeight: 0,
-                          }}
-                        >
-                          <IconPencil size={16} />
-                        </button>
-                      </Td>
-                      <Td isLast={i === arr.length - 1}>
-                        {shopDomain ? (
-                          <a
-                            href={`https://${shopDomain}/admin/orders/${o.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ fontSize: 11, color: ds.brand, fontWeight: 600 }}
+                      <Td isLast={i === arr.length - 1} style={{ ...moticoTdPad, ...moticoEstadoThTd }}>
+                        <div style={moticoEstadoActionsRow}>
+                          <div style={moticoEstadoSelectShell}>
+                            <select
+                              style={{
+                                ...moticoEstadoSelectStyle,
+                                background: meta.chipBg,
+                                color: meta.chipFg,
+                                borderColor: meta.chipBorder,
+                              }}
+                              value={o.motico_status}
+                              onChange={(e) => void onMoticoStatusChange(o, e.target.value)}
+                              aria-label="Estado Motico"
+                            >
+                              {MOTICO_STATUS_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </div>
+                          <button
+                            type="button"
+                            aria-label={`Editar pedido ${o.orderName}: dirección, precio y cantidad`}
+                            onClick={() => openOrderEditor(o)}
+                            style={{
+                              flexShrink: 0,
+                              padding: 6,
+                              borderRadius: 8,
+                              border: `1px solid ${ds.borderCard}`,
+                              background: ds.bgCard,
+                              color: ds.brand,
+                              cursor: 'pointer',
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              lineHeight: 0,
+                            }}
                           >
-                            Shopify
-                          </a>
-                        ) : null}
+                            <IconPencil size={16} />
+                          </button>
+                          {shopDomain ? (
+                            <a
+                              href={`https://${shopDomain}/admin/orders/${o.id}`}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              style={{
+                                flexShrink: 0,
+                                fontSize: 11,
+                                color: ds.brand,
+                                fontWeight: 600,
+                                whiteSpace: 'nowrap',
+                              }}
+                            >
+                              Shopify
+                            </a>
+                          ) : null}
+                        </div>
                       </Td>
                     </tr>
                   );

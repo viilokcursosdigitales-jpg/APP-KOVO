@@ -251,18 +251,102 @@ function buildBatchPrintDocument(logoDataUrl: string | null, labels: MoticoGuide
 </head>
 <body>
 ${pagesHtml}
-<script>window.onload=function(){window.print();};</script>
 </body>
 </html>`;
 }
 
-/** Abre ventana de impresión con N guías, máximo ${GUIAS_POR_HOJA} por hoja carta. */
-export function openMoticoGuidesBatchPrint(logoDataUrl: string | null, labels: MoticoGuideLabelData[]): boolean {
+const PDF_REVOKE_MS = 120_000;
+
+/**
+ * Genera un PDF con las guías (máx. ${GUIAS_POR_HOJA} por hoja carta), abre una pestaña con vista previa
+ * y dispara la descarga del archivo.
+ */
+export async function openMoticoGuidesBatchPrint(
+  logoDataUrl: string | null,
+  labels: MoticoGuideLabelData[],
+): Promise<boolean> {
   if (!labels.length) return false;
-  const w = window.open('', '_blank', 'noopener,noreferrer,width=980,height=1200');
-  if (!w) return false;
-  w.document.open();
-  w.document.write(buildBatchPrintDocument(logoDataUrl, labels));
-  w.document.close();
-  return true;
+
+  const html = buildBatchPrintDocument(logoDataUrl, labels);
+  let iframe: HTMLIFrameElement | null = null;
+
+  try {
+    const [{ jsPDF }, { default: html2canvas }] = await Promise.all([import('jspdf'), import('html2canvas')]);
+
+    iframe = document.createElement('iframe');
+    iframe.setAttribute('aria-hidden', 'true');
+    iframe.title = 'Motico guías PDF';
+    iframe.style.cssText =
+      'position:fixed;left:-10000px;top:0;width:8.5in;min-height:11in;height:auto;max-height:none;visibility:hidden;border:0;margin:0;padding:0';
+    document.body.appendChild(iframe);
+
+    const idoc = iframe.contentDocument;
+    if (!idoc) return false;
+
+    idoc.open();
+    idoc.write(html);
+    idoc.close();
+
+    await new Promise<void>((resolve) => {
+      const finish = () => resolve();
+      if (iframe!.contentDocument?.readyState === 'complete') {
+        requestAnimationFrame(() => requestAnimationFrame(finish));
+      } else {
+        iframe!.onload = finish;
+      }
+    });
+    await new Promise((r) => setTimeout(r, 200));
+
+    const pageEls = Array.from(idoc.querySelectorAll<HTMLElement>('.print-page'));
+    if (!pageEls.length) return false;
+
+    const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+
+    for (let i = 0; i < pageEls.length; i++) {
+      const el = pageEls[i];
+      const canvas = await html2canvas(el, {
+        scale: 2,
+        useCORS: true,
+        logging: false,
+        backgroundColor: '#ffffff',
+        windowWidth: el.scrollWidth,
+        windowHeight: el.scrollHeight,
+      });
+      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+      let imgW = pageW;
+      let imgH = (canvas.height * imgW) / canvas.width;
+      if (imgH > pageH) {
+        imgH = pageH;
+        imgW = (canvas.width * pageH) / canvas.height;
+      }
+      const x = (pageW - imgW) / 2;
+      if (i > 0) pdf.addPage();
+      pdf.addImage(imgData, 'JPEG', x, 0, imgW, imgH);
+    }
+
+    const stamp = new Date().toISOString().slice(0, 10);
+    const fileName = `guias-motico-${stamp}.pdf`;
+    const blob = pdf.output('blob');
+    const url = URL.createObjectURL(blob);
+
+    window.open(url, '_blank', 'noopener,noreferrer');
+
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = fileName;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+
+    setTimeout(() => URL.revokeObjectURL(url), PDF_REVOKE_MS);
+    return true;
+  } catch (e) {
+    console.error('openMoticoGuidesBatchPrint', e);
+    return false;
+  } finally {
+    if (iframe?.parentNode) iframe.parentNode.removeChild(iframe);
+  }
 }
