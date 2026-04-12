@@ -91,6 +91,80 @@ function campaignMetaControlKind(status: string): 'pause' | 'activate' | null {
   return null;
 }
 
+const META_DELIVERY_BLUE = '#1877f2';
+const META_DELIVERY_GREY = '#3a3d44';
+
+/** Interruptor tipo Meta Ads Manager: azul encendido (activa), gris apagado (pausada). */
+function MetaCampaignDeliveryToggle({
+  rowStatus,
+  busy,
+  tokenBlocked,
+  onPause,
+  onActivate,
+}: {
+  rowStatus: string;
+  busy: boolean;
+  tokenBlocked: boolean;
+  onPause: () => void;
+  onActivate: () => void;
+}) {
+  const kind = campaignMetaControlKind(rowStatus);
+  const isOn = kind === 'pause';
+  const notEditable = kind === null;
+  const disabled = tokenBlocked || notEditable || busy;
+
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={isOn}
+      aria-busy={busy}
+      aria-label={notEditable ? 'Estado no editable' : isOn ? 'Campaña activa, pausar en Meta' : 'Campaña pausada, activar en Meta'}
+      disabled={disabled}
+      onClick={() => {
+        if (isOn) onPause();
+        else onActivate();
+      }}
+      title={
+        notEditable
+          ? 'Solo se puede activar o pausar campañas en estado Activa o Pausada'
+          : isOn
+            ? 'Campaña activa en Meta — clic para pausar'
+            : 'Campaña pausada — clic para activar'
+      }
+      style={{
+        position: 'relative',
+        width: 44,
+        height: 24,
+        borderRadius: 12,
+        border: 'none',
+        padding: 0,
+        background: notEditable ? '#aeb0b8' : isOn ? META_DELIVERY_BLUE : META_DELIVERY_GREY,
+        cursor: disabled ? 'not-allowed' : 'pointer',
+        opacity: tokenBlocked ? 0.45 : 1,
+        flexShrink: 0,
+        boxSizing: 'border-box',
+        transition: 'background 0.2s ease',
+      }}
+    >
+      <span
+        aria-hidden
+        style={{
+          position: 'absolute',
+          top: 2,
+          left: isOn ? 22 : 2,
+          width: 20,
+          height: 20,
+          borderRadius: '50%',
+          background: '#fff',
+          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.28)',
+          transition: 'left 0.2s ease',
+        }}
+      />
+    </button>
+  );
+}
+
 function buildRowTargetEvaluation(
   row: InsightRow,
   level: InsightLevel,
@@ -603,9 +677,9 @@ export function MetaInsightsPanel({
 
       {level === 'campaigns' ? (
         <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textMuted, maxWidth: 720, lineHeight: 1.45 }}>
-          En la pestaña <strong style={{ color: ds.textSecondary }}>Campañas</strong> puedes pausar o reactivar campañas
-          en Meta. El token debe incluir <code style={{ fontSize: 11 }}>ads_management</code> además de{' '}
-          <code style={{ fontSize: 11 }}>ads_read</code>.
+          En <strong style={{ color: ds.textSecondary }}>Campañas</strong>, la columna <strong>Act.</strong> usa el mismo
+          tipo de interruptor que Meta Ads Manager (azul = entregando, gris = pausada). Requiere{' '}
+          <code style={{ fontSize: 11 }}>ads_management</code> en el token.
         </p>
       ) : null}
 
@@ -667,6 +741,7 @@ export function MetaInsightsPanel({
             <tr style={{ background: ds.bgApp, textAlign: 'left' }}>
               {[
                 'Cuenta publicitaria',
+                ...(level === 'campaigns' ? ['Act.'] : []),
                 level === 'campaigns' ? 'Campaña' : level === 'adsets' ? 'Conjunto' : 'Anuncio',
                 'Estado',
                 ...(level === 'campaigns' ? ['Productos (Shopify)'] : []),
@@ -680,7 +755,6 @@ export function MetaInsightsPanel({
                 'CPC',
                 'ROAS',
                 'CPA',
-                ...(level === 'campaigns' ? ['Acción'] : []),
               ].map((h) => (
                 <th
                   key={h}
@@ -743,6 +817,17 @@ export function MetaInsightsPanel({
                       <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{row.adAccountName}</div>
                       <div style={{ fontSize: 10.5, color: ds.textHint }}>{row.adAccountId}</div>
                     </td>
+                    {level === 'campaigns' ? (
+                      <td style={{ padding: '12px 14px', verticalAlign: 'middle', width: 56 }}>
+                        <MetaCampaignDeliveryToggle
+                          rowStatus={row.status}
+                          busy={pausingCampaignId === row.id}
+                          tokenBlocked={tokenBlocked}
+                          onPause={() => void setCampaignStatusOnMeta(row.id, row.name, 'PAUSED')}
+                          onActivate={() => void setCampaignStatusOnMeta(row.id, row.name, 'ACTIVE')}
+                        />
+                      </td>
+                    ) : null}
                     <td style={{ padding: '12px 16px', maxWidth: 220 }}>
                       <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{row.name}</div>
                       <div style={{ fontSize: 10.5, color: ds.textHint }}>id {row.id}</div>
@@ -777,59 +862,6 @@ export function MetaInsightsPanel({
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpa) }}>
                       {row.purchases > 0 ? formatMoney2(row.cpa) : '—'}
                     </td>
-                    {level === 'campaigns' ? (
-                      <td style={{ padding: '12px 16px', verticalAlign: 'middle', whiteSpace: 'nowrap' }}>
-                        {(() => {
-                          const kind = campaignMetaControlKind(row.status);
-                          if (!kind) {
-                            return <span style={{ fontSize: 11, color: ds.textHint }}>—</span>;
-                          }
-                          const busy = pausingCampaignId === row.id;
-                          if (kind === 'pause') {
-                            return (
-                              <button
-                                type="button"
-                                disabled={busy || tokenBlocked}
-                                onClick={() => void setCampaignStatusOnMeta(row.id, row.name, 'PAUSED')}
-                                style={{
-                                  padding: '6px 12px',
-                                  borderRadius: 8,
-                                  border: `1px solid ${ds.borderCard}`,
-                                  background: ds.warningBg,
-                                  color: ds.warningText,
-                                  fontWeight: 600,
-                                  fontSize: 11,
-                                  cursor: busy || tokenBlocked ? 'not-allowed' : 'pointer',
-                                  opacity: tokenBlocked ? 0.5 : 1,
-                                }}
-                              >
-                                {busy ? 'Aplicando…' : 'Pausar en Meta'}
-                              </button>
-                            );
-                          }
-                          return (
-                            <button
-                              type="button"
-                              disabled={busy || tokenBlocked}
-                              onClick={() => void setCampaignStatusOnMeta(row.id, row.name, 'ACTIVE')}
-                              style={{
-                                padding: '6px 12px',
-                                borderRadius: 8,
-                                border: `1px solid ${ds.borderCard}`,
-                                background: ds.brandBg,
-                                color: ds.brand,
-                                fontWeight: 600,
-                                fontSize: 11,
-                                cursor: busy || tokenBlocked ? 'not-allowed' : 'pointer',
-                                opacity: tokenBlocked ? 0.5 : 1,
-                              }}
-                            >
-                              {busy ? 'Aplicando…' : 'Reactivar en Meta'}
-                            </button>
-                          );
-                        })()}
-                      </td>
-                    ) : null}
                   </tr>
                 );
               })
