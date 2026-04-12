@@ -29,6 +29,7 @@ const {
   shopifyRequest,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
+  mapFinancialToBadge,
 } = require('./shopifyService');
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
 const hasFrontendDist = fs.existsSync(staticDir);
@@ -1809,13 +1810,136 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
   }
 });
 
+app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const row = await getActiveShopifyConnection(req.organizationId);
+    if (!row) {
+      return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
+    }
+    const limit = 250;
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    qs.set('status', 'any');
+    qs.set(
+      'fields',
+      'id,name,email,created_at,total_price,currency,financial_status,line_items,customer,order_number',
+    );
+    const min = req.query.created_at_min;
+    const max = req.query.created_at_max;
+    if (typeof min === 'string' && min.trim()) qs.set('created_at_min', min.trim());
+    if (typeof max === 'string' && max.trim()) qs.set('created_at_max', max.trim());
+
+    const productIdFilter = req.query.product_id;
+    const hasProductFilter = typeof productIdFilter === 'string' && productIdFilter.trim() !== '';
+
+    const r = await shopifyRequest(row.shop_domain, row.access_token, `orders.json?${qs.toString()}`);
+    if (!r.ok) {
+      return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
+    }
+
+    let orders = (r.data && r.data.orders) || [];
+    if (hasProductFilter) {
+      const pid = productIdFilter.trim();
+      orders = orders.filter((o) =>
+        (o.line_items || []).some((li) => String(li.product_id) === pid),
+      );
+    }
+
+    const ids = orders.map((o) => o.id);
+    let localMap;
+    try {
+      localMap = await loadLocalFieldsMap(req.organizationId, ids);
+    } catch (dbErr) {
+      if (dbErr && dbErr.code === '42P01') {
+        return res.status(503).json({
+          error:
+            'Falta la tabla shopify_order_local_fields. Reinicia el backend o aplica backend/db/schema.sql.',
+          code: 'schema_missing',
+        });
+      }
+      throw dbErr;
+    }
+
+    const currency = orders[0]?.currency || 'EUR';
+    let salesAll = 0;
+    let salesDesp = 0;
+    let n = 0;
+    let nDesp = 0;
+    let nCancel = 0;
+    const byDay = new Map();
+
+    for (const o of orders) {
+      const lf = localMap.get(Number(o.id)) || {};
+      const internal = String(lf.internal_status || 'sin_confirmar');
+      const price = Number.parseFloat(String(o.total_price ?? 0)) || 0;
+      const dayKey = String(o.created_at || '').slice(0, 10);
+      const fin = String(o.financial_status || '').toLowerCase();
+      const isCancel =
+        internal === 'cancelado' || fin === 'voided' || fin === 'refunded';
+
+      salesAll += price;
+      n += 1;
+      if (internal === 'despachado') {
+        salesDesp += price;
+        nDesp += 1;
+      }
+      if (isCancel) nCancel += 1;
+
+      if (dayKey && dayKey.length >= 10) {
+        byDay.set(dayKey, (byDay.get(dayKey) || 0) + price);
+      }
+    }
+
+    const chart = [...byDay.entries()]
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([date, amount]) => ({ date, amount }));
+
+    const recent = orders.slice(0, 8).map((o) => {
+      const customer = o.customer || {};
+      const client =
+        [customer.first_name, customer.last_name].filter(Boolean).join(' ').trim() || 'Invitado';
+      const fb = mapFinancialToBadge(o.financial_status);
+      return {
+        id: o.id,
+        orderName: o.name || (o.order_number != null ? `#${o.order_number}` : `#${o.id}`),
+        client,
+        total: o.total_price,
+        currency: o.currency || currency,
+        financialLabel: fb.label,
+        badgeVariant: fb.variant,
+      };
+    });
+
+    res.json({
+      source: 'shopify',
+      currency,
+      totals: {
+        sales_all: salesAll,
+        sales_despachados: salesDesp,
+        orders_count: n,
+        orders_despachados: nDesp,
+        despachados_pct: n > 0 ? (nDesp / n) * 100 : 0,
+        orders_cancelados: nCancel,
+        cancelados_pct: n > 0 ? (nCancel / n) * 100 : 0,
+      },
+      chart,
+      recent,
+      fetchedAt: new Date().toISOString(),
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al calcular el dashboard' });
+  }
+});
+
 app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const row = await getActiveShopifyConnection(req.organizationId);
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
-    const r = await shopifyRequest(row.shop_domain, row.access_token, 'products.json?limit=50');
+    const lim = Math.min(250, Math.max(1, parseInt(String(req.query.limit || '50'), 10) || 50));
+    const r = await shopifyRequest(row.shop_domain, row.access_token, `products.json?limit=${lim}`);
     if (!r.ok) {
       return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
     }

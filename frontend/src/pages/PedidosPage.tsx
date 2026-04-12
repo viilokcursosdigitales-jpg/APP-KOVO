@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
-import { ds } from '../design-system/ds';
+import { alpha, ds } from '../design-system/ds';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
+import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
 
 const POLL_MS = 25_000;
 const SAVE_DEBOUNCE_MS = 450;
@@ -15,17 +16,6 @@ const DEMO = [
   { id: '#4819', client: 'Ana R.', email: 'ana@mail.com', date: '10 abr 2026', total: '€ 210,50', st: 'success' as const, lb: 'Completado' },
   { id: '#4818', client: 'Luis M.', email: 'luis@mail.com', date: '10 abr 2026', total: '€ 45,00', st: 'paused' as const, lb: 'Pendiente' },
   { id: '#4817', client: 'Elena S.', email: 'elena@mail.com', date: '09 abr 2026', total: '€ 312,00', st: 'error' as const, lb: 'Cancelado' },
-];
-
-type DatePreset = 'hoy' | 'ayer' | 'este_mes' | 'mes_anterior' | 'este_ano' | 'personalizado';
-
-const DATE_PRESETS: { id: DatePreset; label: string }[] = [
-  { id: 'hoy', label: 'Hoy' },
-  { id: 'ayer', label: 'Ayer' },
-  { id: 'este_mes', label: 'Este mes' },
-  { id: 'mes_anterior', label: 'Mes anterior' },
-  { id: 'este_ano', label: 'Este año' },
-  { id: 'personalizado', label: 'Personalizado' },
 ];
 
 const INTERNAL_OPTIONS = [
@@ -41,50 +31,6 @@ const MENSAJERO_OPTIONS = [
   { value: 'dropi', label: 'Dropi' },
   { value: 'effix', label: 'Effix' },
 ] as const;
-
-function buildDateRange(
-  preset: DatePreset,
-  customFrom: string,
-  customTo: string,
-): { min: string | null; max: string | null } {
-  const now = new Date();
-  const isoDay = (d: Date) => {
-    const s = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-    const e = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-    return { min: s.toISOString(), max: e.toISOString() };
-  };
-  if (preset === 'hoy') return isoDay(now);
-  if (preset === 'ayer') {
-    const y = new Date(now);
-    y.setDate(y.getDate() - 1);
-    return isoDay(y);
-  }
-  if (preset === 'este_mes') {
-    const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    return { min: start.toISOString(), max: end.toISOString() };
-  }
-  if (preset === 'mes_anterior') {
-    const first = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
-    const lastDay = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
-    return { min: first.toISOString(), max: lastDay.toISOString() };
-  }
-  if (preset === 'este_ano') {
-    const start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    return { min: start.toISOString(), max: end.toISOString() };
-  }
-  if (preset === 'personalizado' && customFrom && customTo) {
-    const [fy, fm, fd] = customFrom.split('-').map(Number);
-    const [ty, tm, td] = customTo.split('-').map(Number);
-    const start = new Date(fy, fm - 1, fd, 0, 0, 0, 0);
-    const end = new Date(ty, tm - 1, td, 23, 59, 59, 999);
-    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return { min: null, max: null };
-    if (start > end) return { min: end.toISOString(), max: start.toISOString() };
-    return { min: start.toISOString(), max: end.toISOString() };
-  }
-  return { min: null, max: null };
-}
 
 type ShopifyOrderRow = {
   id: number;
@@ -154,6 +100,82 @@ const selectStyle: CSSProperties = {
   fontSize: 11,
   fontWeight: 600,
 };
+
+/** Colores del desplegable Estado (valor seleccionado). */
+function estadoSelectStyle(internalStatus: string): CSSProperties {
+  switch (internalStatus) {
+    case 'sin_confirmar':
+      return {
+        background: '#e8eaef',
+        color: '#5b616e',
+        borderColor: '#cdd2dc',
+      };
+    case 'confirmado':
+      return {
+        background: '#d8f5e4',
+        color: '#0d5c36',
+        borderColor: '#86efac',
+      };
+    case 'despachado':
+      return {
+        background: '#14532d',
+        color: '#ecfdf5',
+        borderColor: '#166534',
+      };
+    case 'cancelado':
+      return {
+        background: '#fecaca',
+        color: '#991b1b',
+        borderColor: '#f87171',
+      };
+    default:
+      return {};
+  }
+}
+
+function estadoOptionStyle(value: string): CSSProperties {
+  const s = estadoSelectStyle(value);
+  return { backgroundColor: s.background as string, color: s.color as string };
+}
+
+/** Motico = violeta KOVO; Effix = azul claro; Dropi = naranja claro. */
+function mensajeroSelectStyle(value: string | null | undefined): CSSProperties {
+  const v = value || '';
+  if (!v) {
+    return {
+      background: ds.bgSubtle,
+      color: ds.textMuted,
+      borderColor: ds.borderCard,
+    };
+  }
+  switch (v) {
+    case 'motico':
+      return {
+        background: alpha.brand12,
+        color: '#4f36c4',
+        borderColor: alpha.brand35,
+      };
+    case 'effix':
+      return {
+        background: '#dbeafe',
+        color: '#1e3a8a',
+        borderColor: '#93c5fd',
+      };
+    case 'dropi':
+      return {
+        background: '#ffedd5',
+        color: '#c2410c',
+        borderColor: '#fdba74',
+      };
+    default:
+      return {};
+  }
+}
+
+function mensajeroOptionStyle(value: string): CSSProperties {
+  const s = mensajeroSelectStyle(value || null);
+  return { backgroundColor: s.background as string, color: s.color as string };
+}
 
 const inputStyle: CSSProperties = {
   width: '100%',
@@ -622,12 +644,16 @@ export default function PedidosPage() {
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <select
-                              style={selectStyle}
+                              style={{ ...selectStyle, ...estadoSelectStyle(o.internal_status) }}
                               value={o.internal_status}
                               onChange={(e) => void patchLocalFields(o.id, { internal_status: e.target.value })}
                             >
                               {INTERNAL_OPTIONS.map((opt) => (
-                                <option key={opt.value} value={opt.value}>
+                                <option
+                                  key={opt.value}
+                                  value={opt.value}
+                                  style={estadoOptionStyle(opt.value)}
+                                >
                                   {opt.label}
                                 </option>
                               ))}
@@ -635,7 +661,7 @@ export default function PedidosPage() {
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <select
-                              style={selectStyle}
+                              style={{ ...selectStyle, ...mensajeroSelectStyle(o.mensajero) }}
                               value={o.mensajero || ''}
                               onChange={(e) =>
                                 void patchLocalFields(o.id, {
@@ -644,7 +670,11 @@ export default function PedidosPage() {
                               }
                             >
                               {MENSAJERO_OPTIONS.map((opt) => (
-                                <option key={opt.label} value={opt.value}>
+                                <option
+                                  key={opt.label}
+                                  value={opt.value}
+                                  style={mensajeroOptionStyle(opt.value)}
+                                >
                                   {opt.label}
                                 </option>
                               ))}

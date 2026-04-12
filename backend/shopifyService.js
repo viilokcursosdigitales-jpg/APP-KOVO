@@ -186,5 +186,6 @@ module.exports = {
   shopifyRequest,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
+  mapFinancialToBadge,
   DEFAULT_API_VERSION,
 };

@@ -1,17 +1,13 @@
+import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
+import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
 import { IconCart } from '../design-system/icons';
 import { KpiCard } from '../design-system/KpiCard';
 import { PageHeader } from '../design-system/PageHeader';
-import { StatusBadge } from '../design-system/StatusBadge';
-
-const DEMO_ORDERS = [
-  { id: '#4821', name: 'María G.', sub: 'Hace 2 h', total: '€ 124,90', status: 'success' as const, label: 'Completado' },
-  { id: '#4820', name: 'Pedro L.', sub: 'Hace 5 h', total: '€ 89,00', status: 'info' as const, label: 'En proceso' },
-  { id: '#4819', name: 'Ana R.', sub: 'Ayer', total: '€ 210,50', status: 'success' as const, label: 'Completado' },
-  { id: '#4818', name: 'Luis M.', sub: 'Ayer', total: '€ 45,00', status: 'paused' as const, label: 'Pendiente' },
-];
+import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
+import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
 
 const DEMO_STOCK = [
   { name: 'Crema hidratante', sku: 'SKU-102', qty: 8, variant: 'warning' as const },
@@ -19,30 +15,324 @@ const DEMO_STOCK = [
   { name: 'Kit rutina PM', sku: 'SKU-201', qty: 14, variant: 'success' as const },
 ];
 
-const CHART_WEEKS = [
-  { w: 'S1', a: 62, b: 44 },
-  { w: 'S2', a: 55, b: 48 },
-  { w: 'S3', a: 70, b: 52 },
-  { w: 'S4', a: 58, b: 60 },
+const CHART_COLORS = [
+  '#6c47ff',
+  '#22c55e',
+  '#3b82f6',
+  '#f97316',
+  '#a855f7',
+  '#14b8a6',
+  '#ec4899',
+  '#eab308',
+  '#6366f1',
 ];
 
+type DashboardTotals = {
+  sales_all: number;
+  sales_despachados: number;
+  orders_count: number;
+  orders_despachados: number;
+  despachados_pct: number;
+  orders_cancelados: number;
+  cancelados_pct: number;
+};
+
+type ChartPoint = { date: string; amount: number };
+
+type RecentRow = {
+  id: number;
+  orderName: string;
+  client: string;
+  total: string;
+  currency: string;
+  financialLabel: string;
+  badgeVariant: string;
+};
+
+type ShopifyProduct = { id: number; title: string };
+
+const filterCtl: CSSProperties = {
+  padding: '7px 12px',
+  borderRadius: 8,
+  border: `1px solid ${ds.borderCard}`,
+  background: ds.bgCard,
+  color: ds.textPrimary,
+  fontSize: 12,
+  fontWeight: 500,
+  minWidth: 0,
+};
+
+function formatMoney(n: number, currency: string) {
+  const cur = currency && currency.length === 3 ? currency : 'EUR';
+  try {
+    return new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur }).format(n);
+  } catch {
+    return `${n.toFixed(2)} ${currency}`;
+  }
+}
+
+function formatDayLabel(isoDate: string) {
+  try {
+    const [y, m, d] = isoDate.split('-').map(Number);
+    const dt = new Date(y, m - 1, d);
+    return dt.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+  } catch {
+    return isoDate;
+  }
+}
+
+function safeBadgeVariant(v: string): StatusBadgeVariant {
+  return ['success', 'paused', 'error', 'info', 'warning'].includes(v)
+    ? (v as StatusBadgeVariant)
+    : 'info';
+}
+
 export default function DashboardHome() {
-  const maxBar = Math.max(...CHART_WEEKS.flatMap((x) => [x.a, x.b]), 1);
+  const [datePreset, setDatePreset] = useState<DatePreset>('este_mes');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+  const [productId, setProductId] = useState('');
+
+  const [shopifyOk, setShopifyOk] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+  const [currency, setCurrency] = useState('EUR');
+  const [totals, setTotals] = useState<DashboardTotals | null>(null);
+  const [chart, setChart] = useState<ChartPoint[]>([]);
+  const [recent, setRecent] = useState<RecentRow[]>([]);
+  const [products, setProducts] = useState<ShopifyProduct[]>([]);
+
+  const dateQuery = useMemo(
+    () => buildDateRange(datePreset, customFrom, customTo),
+    [datePreset, customFrom, customTo],
+  );
+
+  const loadDashboard = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const conn = await apiFetch('/api/shopify/connection');
+      if (!conn.ok) {
+        setShopifyOk(false);
+        setTotals(null);
+        setChart([]);
+        setRecent([]);
+        setProducts([]);
+        return;
+      }
+      const crow = (await conn.json()) as { status?: string; shop_domain?: string | null };
+      const ok = crow.status === 'connected' && Boolean(crow.shop_domain);
+      setShopifyOk(ok);
+      if (!ok) {
+        setTotals(null);
+        setChart([]);
+        setRecent([]);
+        setProducts([]);
+        return;
+      }
+
+      const qs = new URLSearchParams();
+      if (dateQuery.min) qs.set('created_at_min', dateQuery.min);
+      if (dateQuery.max) qs.set('created_at_max', dateQuery.max);
+      if (productId.trim()) qs.set('product_id', productId.trim());
+
+      const [dashRes, prodRes] = await Promise.all([
+        apiFetch(`/api/shopify/dashboard?${qs.toString()}`),
+        apiFetch('/api/shopify/products?limit=250'),
+      ]);
+
+      if (!dashRes.ok) {
+        const err = (await dashRes.json().catch(() => ({}))) as { error?: string };
+        setError(typeof err.error === 'string' ? err.error : 'Error al cargar el dashboard');
+        setTotals({
+          sales_all: 0,
+          sales_despachados: 0,
+          orders_count: 0,
+          orders_despachados: 0,
+          despachados_pct: 0,
+          orders_cancelados: 0,
+          cancelados_pct: 0,
+        });
+        setChart([]);
+        setRecent([]);
+        return;
+      }
+      const data = (await dashRes.json()) as {
+        currency?: string;
+        totals: DashboardTotals;
+        chart: ChartPoint[];
+        recent: RecentRow[];
+      };
+      setCurrency(data.currency || 'EUR');
+      setTotals(data.totals);
+      setChart(Array.isArray(data.chart) ? data.chart : []);
+      setRecent(Array.isArray(data.recent) ? data.recent : []);
+
+      if (prodRes.ok) {
+        const pdata = (await prodRes.json()) as { products?: ShopifyProduct[] };
+        setProducts(Array.isArray(pdata.products) ? pdata.products : []);
+      }
+    } catch {
+      setError('Error de red');
+      setShopifyOk(false);
+    } finally {
+      setLoading(false);
+    }
+  }, [dateQuery.min, dateQuery.max, productId]);
+
+  useEffect(() => {
+    void loadDashboard();
+  }, [loadDashboard]);
+
+  const maxChart = useMemo(() => Math.max(...chart.map((c) => c.amount), 1), [chart]);
+
+  const t = totals;
 
   return (
     <>
-      <PageHeader title="Dashboard" subtitle="Resumen de ventas, pedidos e inventario." />
-
-      <div className="kovo-kpi-grid-dash">
-        <KpiCard variant="sales" label="Ingresos (30 días)" value="€ 18.420,00" icon={<IconCart />} />
-        <KpiCard variant="traffic" label="Pedidos" value="326" icon={<IconCart />} />
-        <KpiCard variant="spend" label="Ticket medio" value="€ 56,50" icon={<IconCart />} />
-        <KpiCard variant="conversion" label="Tasa conversión" value="3,2 %" icon={<IconCart />} />
-      </div>
+      <PageHeader
+        title="Dashboard"
+        subtitle={
+          shopifyOk
+            ? 'Ventas y pedidos desde Shopify (estado Despachado / Cancelado según KOVO y pago en Shopify).'
+            : 'Resumen de ventas, pedidos e inventario. Conecta Shopify en Canales para datos reales.'
+        }
+      />
 
       <div
         style={{
-          marginTop: 24,
+          display: 'flex',
+          flexWrap: 'wrap',
+          gap: 10,
+          alignItems: 'center',
+          marginBottom: 18,
+        }}
+      >
+        <span style={{ fontSize: 12, fontWeight: 600, color: ds.textMuted }}>Fecha</span>
+        {DATE_PRESETS.map((p) => (
+          <button
+            key={p.id}
+            type="button"
+            disabled={!shopifyOk && loading}
+            onClick={() => setDatePreset(p.id)}
+            style={{
+              padding: '6px 12px',
+              borderRadius: 8,
+              border: `1px solid ${ds.borderCard}`,
+              background: datePreset === p.id ? ds.brandBg : ds.bgCard,
+              color: datePreset === p.id ? ds.brand : ds.textSecondary,
+              fontSize: 11,
+              fontWeight: datePreset === p.id ? 600 : 500,
+              cursor: shopifyOk || !loading ? 'pointer' : 'not-allowed',
+              opacity: shopifyOk || !loading ? 1 : 0.6,
+            }}
+          >
+            {p.id === 'este_ano' ? 'Este año (hasta hoy)' : p.label}
+          </button>
+        ))}
+        {datePreset === 'personalizado' ? (
+          <>
+            <input
+              type="date"
+              value={customFrom}
+              onChange={(e) => setCustomFrom(e.target.value)}
+              disabled={!shopifyOk}
+              style={{ ...filterCtl, maxWidth: 150 }}
+            />
+            <span style={{ fontSize: 12, color: ds.textMuted }}>a</span>
+            <input
+              type="date"
+              value={customTo}
+              onChange={(e) => setCustomTo(e.target.value)}
+              disabled={!shopifyOk}
+              style={{ ...filterCtl, maxWidth: 150 }}
+            />
+          </>
+        ) : null}
+
+        <span style={{ fontSize: 12, fontWeight: 600, color: ds.textMuted, marginLeft: 8 }}>Producto</span>
+        <select
+          value={productId}
+          onChange={(e) => setProductId(e.target.value)}
+          disabled={!shopifyOk}
+          style={{ ...filterCtl, minWidth: 200, maxWidth: 320, fontWeight: 600 }}
+        >
+          <option value="">Todos los productos</option>
+          {products.map((p) => (
+            <option key={p.id} value={String(p.id)}>
+              {p.title}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {error ? (
+        <div
+          style={{
+            marginBottom: 16,
+            padding: '12px 16px',
+            borderRadius: 12,
+            background: ds.dangerBg,
+            color: ds.dangerText,
+            fontSize: 13,
+          }}
+        >
+          {error}
+        </div>
+      ) : null}
+
+      {shopifyOk && t ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+            gap: 14,
+            marginBottom: 24,
+          }}
+        >
+          <KpiCard
+            variant="sales"
+            label="Total ventas (pedidos en rango)"
+            value={formatMoney(t.sales_all, currency)}
+            icon={<IconCart />}
+          />
+          <KpiCard
+            variant="conversion"
+            label="Ventas pedidos despachados"
+            value={formatMoney(t.sales_despachados, currency)}
+            icon={<IconCart />}
+          />
+          <KpiCard
+            variant="traffic"
+            label="Total pedidos"
+            value={String(t.orders_count)}
+            icon={<IconCart />}
+          />
+          <KpiCard
+            variant="stock"
+            label="Pedidos despachados"
+            value={`${t.orders_despachados} · ${t.despachados_pct.toFixed(1)} %`}
+            icon={<IconCart />}
+          />
+          <KpiCard
+            variant="alert"
+            label="Pedidos cancelados / anulados / reembolsados"
+            value={`${t.orders_cancelados} · ${t.cancelados_pct.toFixed(1)} %`}
+            icon={<IconCart />}
+          />
+        </div>
+      ) : !loading ? (
+        <div className="kovo-kpi-grid-dash" style={{ marginBottom: 24 }}>
+          <KpiCard variant="sales" label="Ingresos (30 días) — demo" value="€ 18.420,00" icon={<IconCart />} />
+          <KpiCard variant="traffic" label="Pedidos — demo" value="326" icon={<IconCart />} />
+          <KpiCard variant="spend" label="Ticket medio — demo" value="€ 56,50" icon={<IconCart />} />
+          <KpiCard variant="conversion" label="Tasa conversión — demo" value="3,2 %" icon={<IconCart />} />
+        </div>
+      ) : null}
+
+      <div
+        style={{
+          marginTop: 8,
           display: 'grid',
           gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)',
           gap: 14,
@@ -58,43 +348,101 @@ export default function DashboardHome() {
             padding: '18px 20px',
           }}
         >
-          <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary, marginBottom: 4 }}>Ventas semanales</div>
-          <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 16 }}>Serie principal vs. anterior (demo)</div>
-          <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, height: 160, paddingTop: 8 }}>
-            {CHART_WEEKS.map((row) => (
-              <div key={row.w} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
-                <div style={{ display: 'flex', gap: 4, alignItems: 'flex-end', height: 120 }}>
+          <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary, marginBottom: 4 }}>
+            Ventas por día
+          </div>
+          <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 16 }}>
+            {shopifyOk ? 'Importe por fecha de creación del pedido (colores por día)' : 'Serie demo'}
+          </div>
+          {shopifyOk && chart.length > 0 ? (
+            <>
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'flex-end',
+                  gap: 8,
+                  minHeight: 180,
+                  paddingTop: 8,
+                  overflowX: 'auto',
+                  paddingBottom: 4,
+                }}
+              >
+                {chart.map((row, idx) => (
                   <div
+                    key={row.date}
                     style={{
-                      width: '42%',
-                      height: `${(row.a / maxBar) * 100}%`,
-                      minHeight: 4,
-                      background: ds.brand,
-                      borderRadius: 6,
+                      flex: '1 0 36px',
+                      maxWidth: 48,
+                      display: 'flex',
+                      flexDirection: 'column',
+                      alignItems: 'center',
+                      gap: 8,
                     }}
-                  />
-                  <div
-                    style={{
-                      width: '42%',
-                      height: `${(row.b / maxBar) * 100}%`,
-                      minHeight: 4,
-                      background: ds.brandPale,
-                      borderRadius: 6,
-                    }}
-                  />
-                </div>
-                <span style={{ fontSize: 10, color: ds.textHint }}>{row.w}</span>
+                  >
+                    <div
+                      title={`${formatDayLabel(row.date)}: ${formatMoney(row.amount, currency)}`}
+                      style={{
+                        width: '100%',
+                        height: `${Math.max(8, (row.amount / maxChart) * 140)}px`,
+                        minHeight: 8,
+                        background: CHART_COLORS[idx % CHART_COLORS.length],
+                        borderRadius: 8,
+                        boxShadow: `0 2px 8px ${CHART_COLORS[idx % CHART_COLORS.length]}40`,
+                      }}
+                    />
+                    <span style={{ fontSize: 9, color: ds.textHint, textAlign: 'center', lineHeight: 1.2 }}>
+                      {formatDayLabel(row.date)}
+                    </span>
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-          <div style={{ display: 'flex', gap: 16, marginTop: 12, fontSize: 11, color: ds.textMuted }}>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ width: 10, height: 10, borderRadius: 3, background: ds.brand }} /> Actual
-            </span>
-            <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-              <span style={{ width: 10, height: 10, borderRadius: 3, background: ds.brandPale }} /> Anterior
-            </span>
-          </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginTop: 14, fontSize: 10, color: ds.textMuted }}>
+                {chart.slice(0, 8).map((row, idx) => (
+                  <span key={row.date} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <span
+                      style={{
+                        width: 10,
+                        height: 10,
+                        borderRadius: 3,
+                        background: CHART_COLORS[idx % CHART_COLORS.length],
+                      }}
+                    />
+                    {formatDayLabel(row.date)} {formatMoney(row.amount, currency)}
+                  </span>
+                ))}
+                {chart.length > 8 ? <span>+{chart.length - 8} días más en el gráfico</span> : null}
+              </div>
+            </>
+          ) : shopifyOk && !loading ? (
+            <div style={{ padding: 32, textAlign: 'center', color: ds.textMuted, fontSize: 13 }}>
+              No hay ventas en el rango y filtros seleccionados.
+            </div>
+          ) : (
+            <>
+              <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, height: 160, paddingTop: 8 }}>
+                {[
+                  { w: 'S1', h: 62 },
+                  { w: 'S2', h: 55 },
+                  { w: 'S3', h: 70 },
+                  { w: 'S4', h: 58 },
+                ].map((row, idx) => (
+                  <div key={row.w} style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8 }}>
+                    <div
+                      style={{
+                        width: '70%',
+                        height: `${row.h}%`,
+                        minHeight: 40,
+                        background: CHART_COLORS[idx % CHART_COLORS.length],
+                        borderRadius: 8,
+                      }}
+                    />
+                    <span style={{ fontSize: 10, color: ds.textHint }}>{row.w}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 12 }}>Datos de demostración</div>
+            </>
+          )}
         </div>
 
         <div
@@ -148,7 +496,7 @@ export default function DashboardHome() {
       <div style={{ marginTop: 24 }}>
         <DataTable
           title="Pedidos recientes"
-          subtitle="Últimas transacciones (demo)"
+          subtitle={shopifyOk ? 'En el rango y filtro de producto actual' : 'Últimas transacciones (demo)'}
           action={
             <Link to="/pedidos" style={{ fontSize: 13, fontWeight: 600, color: ds.brand, textDecoration: 'none' }}>
               Ver todos →
@@ -165,23 +513,52 @@ export default function DashboardHome() {
               </tr>
             </thead>
             <tbody>
-              {DEMO_ORDERS.map((o, i) => (
-                <tr key={o.id}>
-                  <Td isLast={i === DEMO_ORDERS.length - 1}>
-                    <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.id}</div>
-                    <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.sub}</div>
-                  </Td>
-                  <Td isLast={i === DEMO_ORDERS.length - 1}>{o.name}</Td>
-                  <Td isLast={i === DEMO_ORDERS.length - 1}>{o.total}</Td>
-                  <Td isLast={i === DEMO_ORDERS.length - 1}>
-                    <StatusBadge variant={o.status}>{o.label}</StatusBadge>
-                  </Td>
-                </tr>
-              ))}
+              {shopifyOk && recent.length > 0
+                ? recent.map((o, i) => (
+                    <tr key={o.id}>
+                      <Td isLast={i === recent.length - 1}>
+                        <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
+                      </Td>
+                      <Td isLast={i === recent.length - 1}>{o.client}</Td>
+                      <Td isLast={i === recent.length - 1}>
+                        {formatMoney(Number.parseFloat(String(o.total)) || 0, o.currency || currency)}
+                      </Td>
+                      <Td isLast={i === recent.length - 1}>
+                        <StatusBadge variant={safeBadgeVariant(o.badgeVariant)}>{o.financialLabel}</StatusBadge>
+                      </Td>
+                    </tr>
+                  ))
+                : [
+                    { id: '#4821', name: 'María G.', sub: 'Hace 2 h', total: '€ 124,90', status: 'success' as const, label: 'Completado' },
+                    { id: '#4820', name: 'Pedro L.', sub: 'Hace 5 h', total: '€ 89,00', status: 'info' as const, label: 'En proceso' },
+                    { id: '#4819', name: 'Ana R.', sub: 'Ayer', total: '€ 210,50', status: 'success' as const, label: 'Completado' },
+                    { id: '#4818', name: 'Luis M.', sub: 'Ayer', total: '€ 45,00', status: 'paused' as const, label: 'Pendiente' },
+                  ].map((o, i, arr) => (
+                    <tr key={o.id}>
+                      <Td isLast={i === arr.length - 1}>
+                        <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.id}</div>
+                        <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.sub}</div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1}>{o.name}</Td>
+                      <Td isLast={i === arr.length - 1}>{o.total}</Td>
+                      <Td isLast={i === arr.length - 1}>
+                        <StatusBadge variant={o.status}>{o.label}</StatusBadge>
+                      </Td>
+                    </tr>
+                  ))}
             </tbody>
           </table>
         </DataTable>
       </div>
+
+      {!shopifyOk && !loading ? (
+        <div style={{ marginTop: 16, fontSize: 13, color: ds.textSecondary }}>
+          <Link to="/canales" style={{ color: ds.brand, fontWeight: 600 }}>
+            Conectar Shopify en Canales
+          </Link>
+          {' '}para filtros, KPIs y gráfico con datos reales (máx. 250 pedidos por consulta).
+        </div>
+      ) : null}
 
       <style>{`
         @media (max-width: 900px) {
