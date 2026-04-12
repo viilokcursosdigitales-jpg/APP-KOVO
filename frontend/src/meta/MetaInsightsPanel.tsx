@@ -11,7 +11,7 @@ import {
   insightRowBg,
   type ProductMarketingTargets,
 } from './marketingTargetEval';
-import { formatMetaMoney } from './formatMetaMoney';
+import { formatMetaMoneyWhole } from './formatMetaMoney';
 import { resolveMetaDataIssue } from './metaDataIssues';
 
 export type MetaInsightPeriod = 'hoy' | 'ayer' | '3d' | '7d' | '14d' | '30d' | 'custom';
@@ -30,9 +30,9 @@ function formatNumber(n: number): string {
   return new Intl.NumberFormat('es-ES').format(Math.round(n));
 }
 
-const formatMoney2 = formatMetaMoney;
+const formatMoney2 = formatMetaMoneyWhole;
 
-function formatPct(n: number, decimals = 2): string {
+function formatPct(n: number, decimals = 0): string {
   return `${n.toFixed(decimals)} %`;
 }
 
@@ -339,7 +339,7 @@ export function MetaInsightsPanel({
     { label: 'CPM', value: formatMoney2(displayTotals.cpm) },
     { label: 'CPC', value: formatMoney2(displayTotals.cpc) },
     { label: 'CTR', value: formatPct(displayTotals.ctr) },
-    { label: 'ROAS', value: displayTotals.roas > 0 ? `${displayTotals.roas.toFixed(2)}×` : '—' },
+    { label: 'ROAS', value: displayTotals.roas > 0 ? `${Math.round(displayTotals.roas)}×` : '—' },
     { label: 'CPA', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
     { label: 'Compras (pixel)', value: formatNumber(displayTotals.purchases) },
   ];
@@ -678,7 +678,7 @@ export function MetaInsightsPanel({
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.ctr) }}>{formatPct(row.ctr)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpc) }}>{formatMoney2(row.cpc)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.roas) }}>
-                      {row.roas > 0 ? `${row.roas.toFixed(2)}×` : '—'}
+                      {row.roas > 0 ? `${Math.round(row.roas)}×` : '—'}
                     </td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpa) }}>
                       {row.purchases > 0 ? formatMoney2(row.cpa) : '—'}

@@ -78,11 +78,11 @@ export default function MarketingIndicatorsPage() {
         };
         for (const t of Array.isArray(tdata.targets) ? tdata.targets : []) {
           map[t.product_id] = {
-            cpm_target: t.cpm_target,
-            ctr_target: t.ctr_target,
-            cpc_target: t.cpc_target,
-            roas_target: t.roas_target,
-            cpa_target: t.cpa_target,
+            cpm_target: t.cpm_target != null ? Math.round(Number(t.cpm_target)) : null,
+            ctr_target: t.ctr_target != null ? Math.round(Number(t.ctr_target)) : null,
+            cpc_target: t.cpc_target != null ? Math.round(Number(t.cpc_target)) : null,
+            roas_target: t.roas_target != null ? Math.round(Number(t.roas_target)) : null,
+            cpa_target: t.cpa_target != null ? Math.round(Number(t.cpa_target)) : null,
           };
         }
       }
@@ -105,8 +105,16 @@ export default function MarketingIndicatorsPage() {
 
   const setField = (productId: number, field: keyof ProductMarketingTargets, raw: string) => {
     const t = raw.trim();
-    const num = t === '' ? null : Number.parseFloat(t.replace(',', '.'));
-    const val = num != null && Number.isFinite(num) ? num : null;
+    if (t === '') {
+      setDraft((d) => ({
+        ...d,
+        [productId]: { ...(d[productId] || emptyTargets()), [field]: null },
+      }));
+      return;
+    }
+    const num = Number.parseFloat(t.replace(',', '.'));
+    if (!Number.isFinite(num)) return;
+    const val = Math.round(num);
     setDraft((d) => ({
       ...d,
       [productId]: { ...(d[productId] || emptyTargets()), [field]: val },
@@ -122,11 +130,11 @@ export default function MarketingIndicatorsPage() {
         method: 'PUT',
         body: JSON.stringify({
           product_id: productId,
-          cpm_target: t.cpm_target,
-          ctr_target: t.ctr_target,
-          cpc_target: t.cpc_target,
-          roas_target: t.roas_target,
-          cpa_target: t.cpa_target,
+          cpm_target: t.cpm_target != null ? Math.round(t.cpm_target) : null,
+          ctr_target: t.ctr_target != null ? Math.round(t.ctr_target) : null,
+          cpc_target: t.cpc_target != null ? Math.round(t.cpc_target) : null,
+          roas_target: t.roas_target != null ? Math.round(t.roas_target) : null,
+          cpa_target: t.cpa_target != null ? Math.round(t.cpa_target) : null,
         }),
       });
       if (!res.ok) {
@@ -191,8 +199,8 @@ export default function MarketingIndicatorsPage() {
       ) : null}
 
       <p style={{ margin: '0 0 16px', fontSize: 13, color: ds.textSecondary, maxWidth: 720, lineHeight: 1.5 }}>
-        CPM y CPC en COP (peso colombiano); CTR en % (igual que en Meta); ROAS en veces (p. ej. 2,5); CPA en COP. Deja
-        vacío lo que no quieras
+        CPM y CPC en COP (peso colombiano); CTR en % (igual que en Meta); ROAS en veces (enteros, p. ej. 3); CPA en COP.
+        Valores sin decimales. Deja vacío lo que no quieras
         usar.{' '}
         <Link to="/meta-ads" style={{ color: ds.brand, fontWeight: 600 }}>
           Ir a Meta Ads
@@ -254,7 +262,7 @@ export default function MarketingIndicatorsPage() {
                   <Td isLast={false}>
                     <input
                       type="text"
-                      inputMode="decimal"
+                      inputMode="numeric"
                       value={fieldVal(p.id, 'cpm_target')}
                       onChange={(e) => setField(p.id, 'cpm_target', e.target.value)}
                       style={inputStyle}
@@ -264,7 +272,7 @@ export default function MarketingIndicatorsPage() {
                   <Td isLast={false}>
                     <input
                       type="text"
-                      inputMode="decimal"
+                      inputMode="numeric"
                       value={fieldVal(p.id, 'ctr_target')}
                       onChange={(e) => setField(p.id, 'ctr_target', e.target.value)}
                       style={inputStyle}
@@ -274,7 +282,7 @@ export default function MarketingIndicatorsPage() {
                   <Td isLast={false}>
                     <input
                       type="text"
-                      inputMode="decimal"
+                      inputMode="numeric"
                       value={fieldVal(p.id, 'cpc_target')}
                       onChange={(e) => setField(p.id, 'cpc_target', e.target.value)}
                       style={inputStyle}
@@ -284,7 +292,7 @@ export default function MarketingIndicatorsPage() {
                   <Td isLast={false}>
                     <input
                       type="text"
-                      inputMode="decimal"
+                      inputMode="numeric"
                       value={fieldVal(p.id, 'roas_target')}
                       onChange={(e) => setField(p.id, 'roas_target', e.target.value)}
                       style={inputStyle}
@@ -294,7 +302,7 @@ export default function MarketingIndicatorsPage() {
                   <Td isLast={false}>
                     <input
                       type="text"
-                      inputMode="decimal"
+                      inputMode="numeric"
                       value={fieldVal(p.id, 'cpa_target')}
                       onChange={(e) => setField(p.id, 'cpa_target', e.target.value)}
                       style={inputStyle}

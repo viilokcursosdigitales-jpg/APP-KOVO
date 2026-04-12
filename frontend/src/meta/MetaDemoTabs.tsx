@@ -169,11 +169,11 @@ export function TabCreativo({
     { label: 'Impresiones', value: formatNumber(metrics.impressions) },
     { label: 'Gasto publicitario', value: formatMoney2(metrics.spend) },
     { label: 'CPM', value: formatMoney2(metrics.cpm) },
-    { label: 'CTR enlace', value: formatPct(metrics.ctrLink) },
+    { label: 'CTR enlace', value: formatPct(metrics.ctrLink, 0) },
     { label: 'CPC', value: formatMoney2(metrics.cpc) },
-    { label: 'Hook rate', value: formatPct(metrics.hookRate) },
-    { label: 'Retención video', value: formatPct(metrics.videoRetention) },
-    { label: 'ROAS', value: metrics.roas.toFixed(2) + '×', highlight: true },
+    { label: 'Hook rate', value: formatPct(metrics.hookRate, 0) },
+    { label: 'Retención video', value: formatPct(metrics.videoRetention, 0) },
+    { label: 'ROAS', value: `${Math.round(metrics.roas)}×`, highlight: true },
     { label: 'CPA', value: formatMoney2(metrics.cpa), highlight: true },
     { label: 'Compras', value: formatNumber(metrics.purchases) },
   ];
@@ -251,19 +251,19 @@ export function TabCreativo({
                   <Td isLast={idx === ads.length - 1}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <MiniBar value={row.ctrLink} max={maxCtr} />
-                      <span>{formatPct(row.ctrLink)}</span>
+                      <span>{formatPct(row.ctrLink, 0)}</span>
                     </div>
                   </Td>
                   <Td isLast={idx === ads.length - 1}>{formatMoney2(row.cpc)}</Td>
-                  <Td isLast={idx === ads.length - 1}>{formatPct(row.hookRate)}</Td>
+                  <Td isLast={idx === ads.length - 1}>{formatPct(row.hookRate, 0)}</Td>
                   <Td isLast={idx === ads.length - 1}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <MiniBar value={row.retention} max={maxRet} />
-                      <span>{formatPct(row.retention)}</span>
+                      <span>{formatPct(row.retention, 0)}</span>
                     </div>
                   </Td>
                   <Td isLast={idx === ads.length - 1}>
-                    <MetricPill>{row.roas.toFixed(2)}×</MetricPill>
+                    <MetricPill>{Math.round(row.roas)}×</MetricPill>
                   </Td>
                   <Td isLast={idx === ads.length - 1}>{formatMoney2(row.cpa)}</Td>
                 </tr>
@@ -389,7 +389,7 @@ export function TabEmbudo({
               const y = 20 + (i + 1) * (stageH + 36) - 18;
               return (
                 <text key={`drop-${i}`} x={cx + tops[i] / 2 + 8} y={y} fill={ds.dangerText} fontSize={12} fontWeight={700}>
-                  −{d.toFixed(1)} %
+                  −{d.toFixed(0)} %
                 </text>
               );
             })}
@@ -435,11 +435,11 @@ export function TabEmbudo({
               </div>
               <div>
                 <span style={{ color: ds.textMuted }}>Tasa de conversión (clic → compra): </span>
-                <strong style={{ fontWeight: 600, color: ds.textPrimary }}>{formatPct(convRate, 2)}</strong>
+                <strong style={{ fontWeight: 600, color: ds.textPrimary }}>{formatPct(convRate)}</strong>
               </div>
               <div>
                 <span style={{ color: ds.textMuted }}>ROAS: </span>
-                <MetricPill>{roas.toFixed(2)}×</MetricPill>
+                <MetricPill>{Math.round(roas)}×</MetricPill>
               </div>
             </div>
             <p style={{ margin: '12px 0 0', fontSize: 11, color: ds.textMuted }}>

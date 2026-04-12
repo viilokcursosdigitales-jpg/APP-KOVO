@@ -36,6 +36,9 @@ type DashboardTotals = {
   despachados_pct: number;
   orders_cancelados: number;
   cancelados_pct: number;
+  ad_spend: number | null;
+  roas: number | null;
+  roas_despachado: number | null;
 };
 
 type ChartPoint = { date: string; amount: number };
@@ -79,6 +82,11 @@ function formatMoney(n: number, currency: string) {
   } catch {
     return `${n.toFixed(2)} ${currency}`;
   }
+}
+
+function formatRoas(n: number | null | undefined) {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return `${n.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}×`;
 }
 
 function formatDayLabel(isoDate: string) {
@@ -165,6 +173,9 @@ export default function DashboardHome() {
           despachados_pct: 0,
           orders_cancelados: 0,
           cancelados_pct: 0,
+          ad_spend: null,
+          roas: null,
+          roas_despachado: null,
         });
         setChart([]);
         setTopProducts([]);
@@ -179,7 +190,13 @@ export default function DashboardHome() {
         recent: RecentRow[];
       };
       setCurrency(data.currency || 'EUR');
-      setTotals(data.totals);
+      const tot = data.totals;
+      setTotals({
+        ...tot,
+        ad_spend: tot.ad_spend ?? null,
+        roas: tot.roas ?? null,
+        roas_despachado: tot.roas_despachado ?? null,
+      });
       setChart(Array.isArray(data.chart) ? data.chart : []);
       setTopProducts(Array.isArray(data.top_products) ? data.top_products : []);
       setRecent(Array.isArray(data.recent) ? data.recent : []);
@@ -289,6 +306,12 @@ export default function DashboardHome() {
         </select>
       </div>
 
+      {productId.trim() ? (
+        <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 12, maxWidth: 560, lineHeight: 1.45 }}>
+          Con un producto concreto seleccionado no se muestran gasto publicitario ni ROAS (el gasto Meta es de toda la cuenta y las ventas están filtradas por producto).
+        </div>
+      ) : null}
+
       {error ? (
         <div
           style={{
@@ -323,6 +346,24 @@ export default function DashboardHome() {
             variant="conversion"
             label="Ventas pedidos despachados"
             value={formatMoney(t.sales_despachados, currency)}
+            icon={<IconCart />}
+          />
+          <KpiCard
+            variant="spend"
+            label="Gasto publicitario (Meta, mismo rango)"
+            value={t.ad_spend != null ? formatMoney(t.ad_spend, currency) : '—'}
+            icon={<IconCart />}
+          />
+          <KpiCard
+            variant="sales"
+            label="ROAS (ventas Shopify ÷ gasto)"
+            value={formatRoas(t.roas)}
+            icon={<IconCart />}
+          />
+          <KpiCard
+            variant="conversion"
+            label="ROAS despachado (ventas despachadas ÷ gasto)"
+            value={formatRoas(t.roas_despachado)}
             icon={<IconCart />}
           />
           <KpiCard

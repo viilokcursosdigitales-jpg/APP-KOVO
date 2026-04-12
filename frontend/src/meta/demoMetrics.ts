@@ -1,6 +1,6 @@
 /** Demo data for Meta tabs (no API). */
 
-import { formatMetaMoney } from './formatMetaMoney';
+import { formatMetaMoneyWhole } from './formatMetaMoney';
 
 export type PeriodKey = 'hoy' | 'ayer' | '3d' | '7d' | '14d' | '30d' | 'custom';
 export type ProductKey = 'all' | 'crema' | 'serum' | 'kit';
@@ -50,10 +50,10 @@ export function formatNumber(n: number): string {
 }
 
 export function formatMoney2(n: number): string {
-  return formatMetaMoney(n);
+  return formatMetaMoneyWhole(n);
 }
 
-export function formatPct(n: number, decimals = 1): string {
+export function formatPct(n: number, decimals = 0): string {
   return `${n.toFixed(decimals)} %`;
 }
 

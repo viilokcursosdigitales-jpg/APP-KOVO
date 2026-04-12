@@ -14,3 +14,17 @@ export function formatMetaMoney(n: number): string {
     return `${n.toFixed(2)} ${CURRENCY}`;
   }
 }
+
+/** Misma moneda que formatMetaMoney, sin decimales (Meta Ads, embudo, objetivos). */
+export function formatMetaMoneyWhole(n: number): string {
+  try {
+    return new Intl.NumberFormat(LOCALE, {
+      style: 'currency',
+      currency: CURRENCY,
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(n);
+  } catch {
+    return `${Math.round(n)} ${CURRENCY}`;
+  }
+}

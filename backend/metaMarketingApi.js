@@ -349,6 +349,59 @@ async function fetchFunnelForAdAccounts(actIds, accessToken, datePreset) {
   return { merged, partialErrors, ok: payloads.length > 0 };
 }
 
+/**
+ * Gasto agregado de cuenta para un rango since/until (YYYY-MM-DD), API de insights de cuenta.
+ * @param {string} actId
+ * @param {string} accessToken
+ * @param {string} since
+ * @param {string} until
+ */
+async function fetchAccountSpendForTimeRange(actId, accessToken, since, until) {
+  const v = DEFAULT_VERSION;
+  const id = normalizeActId(actId);
+  if (!id) {
+    return { ok: false, spend: 0, error: 'ID de cuenta publicitaria no válido' };
+  }
+  const tr = JSON.stringify({ since, until });
+  const fields = 'spend';
+  const url = `https://graph.facebook.com/${v}/${id}/insights?fields=${encodeURIComponent(fields)}&time_range=${encodeURIComponent(tr)}&access_token=${encodeURIComponent(accessToken)}`;
+  const { ok, data } = await graphFetchJson(url);
+  if (!ok || !data) {
+    const fb = data && data.error;
+    return {
+      ok: false,
+      spend: 0,
+      error: (fb && fb.message) || 'Error al leer gasto en el rango',
+    };
+  }
+  const row0 = Array.isArray(data.data) && data.data[0] ? data.data[0] : null;
+  if (!row0) {
+    return { ok: true, spend: 0, error: null };
+  }
+  return { ok: true, spend: parseNum(row0.spend), error: null };
+}
+
+/**
+ * @param {string[]} actIds
+ * @param {string} accessToken
+ * @param {string} since YYYY-MM-DD
+ * @param {string} until YYYY-MM-DD
+ */
+async function fetchTotalSpendForAdAccountsTimeRange(actIds, accessToken, since, until) {
+  let spend = 0;
+  const partialErrors = [];
+  for (const raw of actIds) {
+    const id = normalizeActId(raw);
+    const r = await fetchAccountSpendForTimeRange(id, accessToken, since, until);
+    if (!r.ok) {
+      partialErrors.push({ adAccountId: id, error: r.error || 'Error' });
+      continue;
+    }
+    spend += r.spend;
+  }
+  return { spend, partialErrors };
+}
+
 module.exports = {
   normalizeActId,
   datePresetFromDashboardPeriod,
@@ -357,4 +410,6 @@ module.exports = {
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
   mergeFunnelPayloads,
+  fetchAccountSpendForTimeRange,
+  fetchTotalSpendForAdAccountsTimeRange,
 };

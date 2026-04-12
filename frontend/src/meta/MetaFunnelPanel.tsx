@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { MetaDataIssueCard, MetaFetchErrorPanel, MetaLiveDataStrip } from './MetaApiStatusBanner';
-import { formatMetaMoney } from './formatMetaMoney';
+import { formatMetaMoneyWhole } from './formatMetaMoney';
 import { resolveMetaDataIssue } from './metaDataIssues';
 import { MetricPill } from '../design-system/MetricPill';
 import type { MetaInsightPeriod } from './MetaInsightsPanel';
@@ -21,9 +21,9 @@ function formatNumber(n: number): string {
   return new Intl.NumberFormat('es-ES').format(Math.round(n));
 }
 
-const formatMoney2 = formatMetaMoney;
+const formatMoney2 = formatMetaMoneyWhole;
 
-function formatPct(n: number, decimals = 2): string {
+function formatPct(n: number, decimals = 0): string {
   return `${n.toFixed(decimals)} %`;
 }
 
@@ -320,7 +320,7 @@ export function MetaFunnelPanel({
                     fontSize={11}
                     fontWeight={700}
                   >
-                    −{d.toFixed(1)} %
+                    −{d.toFixed(0)} %
                   </text>
                 );
               })}
@@ -373,12 +373,12 @@ export function MetaFunnelPanel({
                 </div>
                 <div>
                   <span style={{ color: ds.textMuted }}>Clic → compra: </span>
-                  <strong style={{ fontWeight: 600, color: ds.textPrimary }}>{formatPct(convRate, 2)}</strong>
+                  <strong style={{ fontWeight: 600, color: ds.textPrimary }}>{formatPct(convRate)}</strong>
                   <span style={{ color: ds.textHint, fontSize: 11 }}> ({formatNumber(linkClicks)} clics)</span>
                 </div>
                 <div>
                   <span style={{ color: ds.textMuted }}>ROAS (valor compras / gasto): </span>
-                  {roas > 0 ? <MetricPill>{`${roas.toFixed(2)}×`}</MetricPill> : <strong>—</strong>}
+                  {roas > 0 ? <MetricPill>{`${Math.round(roas)}×`}</MetricPill> : <strong>—</strong>}
                 </div>
               </div>
             </div>

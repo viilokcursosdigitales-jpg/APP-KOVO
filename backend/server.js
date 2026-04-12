@@ -15,6 +15,7 @@ const {
   fetchInsightsForAdAccount,
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
+  fetchTotalSpendForAdAccountsTimeRange,
 } = require('./metaMarketingApi');
 const cron = require('node-cron');
 const {
@@ -2104,6 +2105,43 @@ app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, 
       .sort((a, b) => b.sales_total - a.sales_total)
       .slice(0, 12);
 
+    let ad_spend = null;
+    let roas = null;
+    let roas_despachado = null;
+    const minIso = typeof min === 'string' && min.trim().length >= 10 ? min.trim() : '';
+    const maxIso = typeof max === 'string' && max.trim().length >= 10 ? max.trim() : '';
+    const sinceDay = minIso.slice(0, 10);
+    const untilDay = maxIso.slice(0, 10);
+
+    if (sinceDay && untilDay && !hasProductFilter) {
+      try {
+        const metaRow = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
+        if (metaRow && String(metaRow.access_token || '').trim()) {
+          const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
+          if (resolved.ok && resolved.actIds.length > 0) {
+            const { spend, partialErrors } = await fetchTotalSpendForAdAccountsTimeRange(
+              resolved.actIds,
+              metaRow.access_token,
+              sinceDay,
+              untilDay,
+            );
+            ad_spend = spend;
+            if (spend > 0) {
+              roas = salesAll / spend;
+              roas_despachado = salesDesp / spend;
+            }
+            if (partialErrors.length > 0 && ad_spend === 0 && resolved.actIds.length === partialErrors.length) {
+              ad_spend = null;
+              roas = null;
+              roas_despachado = null;
+            }
+          }
+        }
+      } catch (metaErr) {
+        console.error('[shopify/dashboard] meta spend:', metaErr);
+      }
+    }
+
     res.json({
       source: 'shopify',
       currency,
@@ -2115,6 +2153,9 @@ app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, 
         despachados_pct: n > 0 ? (nDesp / n) * 100 : 0,
         orders_cancelados: nCancel,
         cancelados_pct: n > 0 ? (nCancel / n) * 100 : 0,
+        ad_spend,
+        roas,
+        roas_despachado,
       },
       chart,
       top_products,

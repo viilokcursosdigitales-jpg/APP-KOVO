@@ -1,6 +1,6 @@
 /** Objetivos por producto (Shopify) para comparar con filas de Meta Insights. */
 
-import { formatMetaMoney } from './formatMetaMoney';
+import { formatMetaMoneyWhole } from './formatMetaMoney';
 
 export type ProductMarketingTargets = {
   cpm_target: number | null;
@@ -118,7 +118,7 @@ export function evaluateInsightAgainstTargets(
   if (t.cpm_target != null && Number.isFinite(t.cpm_target)) {
     if (m.cpm <= t.cpm_target) {
       cpmH = 'good';
-      passes.push(`CPM ≤ ${formatMetaMoney(t.cpm_target)}`);
+      passes.push(`CPM ≤ ${formatMetaMoneyWhole(t.cpm_target)}`);
     } else {
       cpmH = 'bad';
       failures.push(TIP_CPM_BAD);
@@ -129,7 +129,7 @@ export function evaluateInsightAgainstTargets(
   if (t.ctr_target != null && Number.isFinite(t.ctr_target)) {
     if (m.ctr >= t.ctr_target) {
       ctrH = 'good';
-      passes.push(`CTR ≥ ${t.ctr_target.toFixed(2)} %`);
+      passes.push(`CTR ≥ ${Math.round(t.ctr_target)} %`);
     } else {
       ctrH = 'bad';
       failures.push(TIP_CTR_BAD);
@@ -140,7 +140,7 @@ export function evaluateInsightAgainstTargets(
   if (t.cpc_target != null && Number.isFinite(t.cpc_target)) {
     if (m.cpc <= t.cpc_target) {
       cpcH = 'good';
-      passes.push(`CPC ≤ ${formatMetaMoney(t.cpc_target)}`);
+      passes.push(`CPC ≤ ${formatMetaMoneyWhole(t.cpc_target)}`);
     } else {
       cpcH = 'bad';
       failures.push(TIP_CPC_BAD);
@@ -151,7 +151,7 @@ export function evaluateInsightAgainstTargets(
   if (t.roas_target != null && Number.isFinite(t.roas_target)) {
     if (m.roas >= t.roas_target) {
       roasH = 'good';
-      passes.push(`ROAS ≥ ${t.roas_target.toFixed(2)}×`);
+      passes.push(`ROAS ≥ ${Math.round(t.roas_target)}×`);
     } else {
       roasH = 'bad';
       failures.push(TIP_ROAS_BAD);
@@ -164,7 +164,7 @@ export function evaluateInsightAgainstTargets(
       cpaH = 'neutral';
     } else if (m.cpa <= t.cpa_target) {
       cpaH = 'good';
-      passes.push(`CPA ≤ ${formatMetaMoney(t.cpa_target)}`);
+      passes.push(`CPA ≤ ${formatMetaMoneyWhole(t.cpa_target)}`);
     } else {
       cpaH = 'bad';
       failures.push(TIP_CPA_BAD);
