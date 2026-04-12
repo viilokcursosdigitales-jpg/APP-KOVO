@@ -89,9 +89,17 @@ export default function CanalesPage() {
       const res = await apiFetch(`/api/shopify/auth?shop=${encodeURIComponent(trimmed)}`, {
         headers: { Accept: 'application/json' },
       });
-      const data = (await res.json().catch(() => ({}))) as { authorizeUrl?: string; error?: string };
+      const data = (await res.json().catch(() => ({}))) as {
+        authorizeUrl?: string;
+        error?: string;
+        hint?: string;
+        missingEnvKeys?: string[];
+      };
       if (!res.ok) {
-        setShopifyFormError(typeof data.error === 'string' ? data.error : 'No se pudo iniciar la conexión');
+        let err = typeof data.error === 'string' ? data.error : 'No se pudo iniciar la conexión';
+        if (data.hint) err = `${err}\n\n${data.hint}`;
+        if (data.missingEnvKeys?.length) err = `${err}\n\nFaltan en el servidor: ${data.missingEnvKeys.join(', ')}.`;
+        setShopifyFormError(err);
         return;
       }
       if (data.authorizeUrl) {
@@ -326,7 +334,17 @@ export default function CanalesPage() {
                 }}
               />
               {shopifyFormError ? (
-                <div style={{ fontSize: 12, color: ds.dangerText, marginBottom: 8 }}>{shopifyFormError}</div>
+                <div
+                  style={{
+                    fontSize: 12,
+                    color: ds.dangerText,
+                    marginBottom: 8,
+                    lineHeight: 1.45,
+                    whiteSpace: 'pre-line',
+                  }}
+                >
+                  {shopifyFormError}
+                </div>
               ) : null}
               <button
                 type="button"

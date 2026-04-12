@@ -1351,10 +1351,26 @@ function shopifyConfigured() {
   return Boolean(SHOPIFY_API_KEY && SHOPIFY_API_SECRET && SHOPIFY_REDIRECT_URI);
 }
 
+function shopifyMissingEnvKeys() {
+  const missing = [];
+  if (!SHOPIFY_API_KEY) missing.push('SHOPIFY_API_KEY');
+  if (!SHOPIFY_API_SECRET) missing.push('SHOPIFY_API_SECRET');
+  if (!SHOPIFY_REDIRECT_URI) missing.push('SHOPIFY_REDIRECT_URI o SHOPIFY_APP_URL');
+  return missing;
+}
+
 app.get('/api/shopify/auth', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     if (!shopifyConfigured()) {
-      return res.status(503).json({ error: 'Shopify OAuth no está configurado en el servidor' });
+      const missingEnvKeys = shopifyMissingEnvKeys();
+      console.warn('[shopify] OAuth no configurado. Faltan variables:', missingEnvKeys.join(', '));
+      return res.status(503).json({
+        error: 'Shopify OAuth no está configurado en el servidor',
+        code: 'shopify_oauth_env',
+        hint:
+          'En el servicio que ejecuta el backend (Render, VPS, etc.) define SHOPIFY_API_KEY, SHOPIFY_API_SECRET y SHOPIFY_APP_URL=https://kovo.services. Si no pones SHOPIFY_REDIRECT_URI, debe poder deducirse de SHOPIFY_APP_URL.',
+        missingEnvKeys,
+      });
     }
     const shop = sanitizeShopDomain(req.query.shop);
     if (!shop) {
