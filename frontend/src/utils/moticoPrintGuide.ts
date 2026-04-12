@@ -151,7 +151,16 @@ export function buildMoticoGuideLabelData(opts: {
   };
 }
 
-function buildBatchPrintDocument(logoDataUrl: string | null, labels: MoticoGuideLabelData[]): string {
+type BuildBatchPrintOptions = {
+  /** Barra en pantalla con botón Imprimir; oculta al imprimir. */
+  screenPreviewToolbar?: boolean;
+};
+
+function buildBatchPrintDocument(
+  logoDataUrl: string | null,
+  labels: MoticoGuideLabelData[],
+  options?: BuildBatchPrintOptions,
+): string {
   const pages = chunk(labels, GUIAS_POR_HOJA);
   const pagesHtml = pages
     .map((pageRows) => {
@@ -159,6 +168,54 @@ function buildBatchPrintDocument(logoDataUrl: string | null, labels: MoticoGuide
       return `<section class="print-page">${strips}</section>`;
     })
     .join('\n');
+
+  const previewCss = options?.screenPreviewToolbar
+    ? `
+    @media screen {
+      body { padding-top: 52px; }
+    }
+    .motico-preview-toolbar {
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      padding: 10px 16px;
+      background: #0f172a;
+      color: #f8fafc;
+      font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+      font-size: 14px;
+      box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2);
+    }
+    .motico-preview-toolbar span { font-weight: 600; }
+    .motico-preview-toolbar button {
+      padding: 8px 18px;
+      border-radius: 8px;
+      border: none;
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      background: #3b82f6;
+      color: #fff;
+    }
+    .motico-preview-toolbar button:hover { background: #2563eb; }
+    @media print {
+      .motico-preview-toolbar { display: none !important; }
+    }
+    `
+    : '';
+
+  const previewBar = options?.screenPreviewToolbar
+    ? `<div class="motico-preview-toolbar" role="toolbar" aria-label="Vista previa de guías">
+  <span>Vista previa · Guías Motico</span>
+  <button type="button" onclick="window.print()">Imprimir</button>
+</div>`
+    : '';
 
   return `<!DOCTYPE html>
 <html lang="es">
@@ -250,110 +307,37 @@ function buildBatchPrintDocument(logoDataUrl: string | null, labels: MoticoGuide
     .guide-table td {
       width: 72%;
     }
+    ${previewCss}
   </style>
 </head>
 <body>
+${previewBar}
 ${pagesHtml}
 </body>
 </html>`;
 }
 
-const PDF_REVOKE_MS = 120_000;
+const PREVIEW_BLOB_REVOKE_MS = 120_000;
 
 /**
- * Genera un PDF con las guías (máx. ${GUIAS_POR_HOJA} por hoja carta), abre una pestaña con vista previa
- * y dispara la descarga del archivo.
+ * Abre una pestaña con vista previa HTML de las guías (máx. ${GUIAS_POR_HOJA} por hoja carta).
+ * El usuario imprime desde el botón "Imprimir" o el menú del navegador; no se abre el diálogo de impresión solo.
  */
-export async function openMoticoGuidesBatchPrint(
-  logoDataUrl: string | null,
-  labels: MoticoGuideLabelData[],
-): Promise<boolean> {
+export function openMoticoGuidesBatchPrint(logoDataUrl: string | null, labels: MoticoGuideLabelData[]): boolean {
   if (!labels.length) return false;
-
-  const html = buildBatchPrintDocument(logoDataUrl, labels);
-  let iframe: HTMLIFrameElement | null = null;
-
   try {
-    const [{ jsPDF }, { default: html2canvas }] = await Promise.all([import('jspdf'), import('html2canvas')]);
-
-    iframe = document.createElement('iframe');
-    iframe.setAttribute('aria-hidden', 'true');
-    iframe.title = 'Motico guías PDF';
-    iframe.style.cssText =
-      'position:fixed;left:-10000px;top:0;width:8.5in;min-height:11in;height:auto;max-height:none;visibility:hidden;border:0;margin:0;padding:0';
-    document.body.appendChild(iframe);
-
-    const idoc = iframe.contentDocument;
-    if (!idoc) return false;
-
-    idoc.open();
-    idoc.write(html);
-    idoc.close();
-
-    await new Promise<void>((resolve) => {
-      const finish = () => resolve();
-      if (iframe!.contentDocument?.readyState === 'complete') {
-        requestAnimationFrame(() => requestAnimationFrame(finish));
-      } else {
-        iframe!.onload = finish;
-      }
-    });
-    await new Promise((r) => setTimeout(r, 200));
-
-    const pageEls = Array.from(idoc.querySelectorAll<HTMLElement>('.print-page'));
-    if (!pageEls.length) return false;
-
-    const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-    const m = GUIDE_PAGE_MARGIN_PT;
-    const innerW = pageW - 2 * m;
-    const innerH = pageH - 2 * m;
-
-    for (let i = 0; i < pageEls.length; i++) {
-      const el = pageEls[i];
-      const canvas = await html2canvas(el, {
-        scale: 2,
-        useCORS: true,
-        logging: false,
-        backgroundColor: '#ffffff',
-        windowWidth: el.scrollWidth,
-        windowHeight: el.scrollHeight,
-      });
-      const imgData = canvas.toDataURL('image/jpeg', 0.92);
-      let imgW = innerW;
-      let imgH = (canvas.height * imgW) / canvas.width;
-      if (imgH > innerH) {
-        imgH = innerH;
-        imgW = (canvas.width * innerH) / canvas.height;
-      }
-      const x = m + (innerW - imgW) / 2;
-      const y = m + (innerH - imgH) / 2;
-      if (i > 0) pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', x, y, imgW, imgH);
-    }
-
-    const stamp = new Date().toISOString().slice(0, 10);
-    const fileName = `guias-motico-${stamp}.pdf`;
-    const blob = pdf.output('blob');
+    const html = buildBatchPrintDocument(logoDataUrl, labels, { screenPreviewToolbar: true });
+    const blob = new Blob([html], { type: 'text/html;charset=utf-8' });
     const url = URL.createObjectURL(blob);
-
-    window.open(url, '_blank', 'noopener,noreferrer');
-
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = fileName;
-    a.rel = 'noopener';
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-
-    setTimeout(() => URL.revokeObjectURL(url), PDF_REVOKE_MS);
+    const w = window.open(url, '_blank');
+    if (!w) {
+      URL.revokeObjectURL(url);
+      return false;
+    }
+    setTimeout(() => URL.revokeObjectURL(url), PREVIEW_BLOB_REVOKE_MS);
     return true;
   } catch (e) {
     console.error('openMoticoGuidesBatchPrint', e);
     return false;
-  } finally {
-    if (iframe?.parentNode) iframe.parentNode.removeChild(iframe);
   }
 }

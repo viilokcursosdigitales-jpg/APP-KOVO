@@ -2238,8 +2238,10 @@ const SHOPIFY_MENSAJEROS = new Set(['motico', 'dropi', 'effix']);
 const SHOPIFY_MOTICO_STATUSES = new Set([
   'confirmado',
   'imprimir_guia',
-  'pagado',
+  'despachado',
   'cancelado',
+  'pagado',
+  'pendiente_pago',
   'devolucion',
 ]);
 

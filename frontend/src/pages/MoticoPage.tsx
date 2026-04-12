@@ -23,7 +23,7 @@ const MAX_LOGO_BYTES = 400_000;
 const MOTICO_STATUS_OPTIONS = [
   {
     value: 'confirmado',
-    label: 'Confirmado para envío',
+    label: 'Confirmado',
     rowColor: '#16a34a',
     chipBg: '#dcfce7',
     chipFg: '#14532d',
@@ -31,24 +31,40 @@ const MOTICO_STATUS_OPTIONS = [
   },
   {
     value: 'imprimir_guia',
-    label: 'Pendiente de imprimir guía de envío',
+    label: 'Imprimir guía',
     rowColor: '#4f46e5',
     chipBg: '#e0e7ff',
     chipFg: '#312e81',
     chipBorder: '#a5b4fc',
   },
   {
+    value: 'despachado',
+    label: 'Despachado',
+    rowColor: '#0d9488',
+    chipBg: '#ccfbf1',
+    chipFg: '#134e4a',
+    chipBorder: '#5eead4',
+  },
+  { value: 'cancelado', label: 'Cancelado', rowColor: '#dc2626', chipBg: '#fee2e2', chipFg: '#7f1d1d', chipBorder: '#fca5a5' },
+  {
     value: 'pagado',
-    label: 'Pagado al mensajero',
+    label: 'Pagado',
     rowColor: '#2563eb',
     chipBg: '#dbeafe',
     chipFg: '#1e3a8a',
     chipBorder: '#93c5fd',
   },
-  { value: 'cancelado', label: 'Cancelado', rowColor: '#dc2626', chipBg: '#fee2e2', chipFg: '#7f1d1d', chipBorder: '#fca5a5' },
+  {
+    value: 'pendiente_pago',
+    label: 'Pendiente de pago',
+    rowColor: '#ca8a04',
+    chipBg: '#fef9c3',
+    chipFg: '#713f12',
+    chipBorder: '#fde047',
+  },
   {
     value: 'devolucion',
-    label: 'En devolución',
+    label: 'Devolución',
     rowColor: '#d97706',
     chipBg: '#fef3c7',
     chipFg: '#78350f',
@@ -145,10 +161,15 @@ const moticoEstadoSelectStyle: CSSProperties = {
   boxSizing: 'border-box',
 };
 
-const moticoMensajeroThTd: CSSProperties = {
-  minWidth: 128,
-  width: 148,
-  verticalAlign: 'middle',
+/** Primera columna (checkbox): fija al hacer scroll horizontal. */
+const moticoStickySelectCol: CSSProperties = {
+  position: 'sticky',
+  left: 0,
+  width: 52,
+  minWidth: 52,
+  maxWidth: 52,
+  boxSizing: 'border-box',
+  boxShadow: '6px 0 12px -8px rgba(15, 23, 42, 0.25)',
 };
 
 const modalFieldStyle: CSSProperties = {
@@ -512,13 +533,10 @@ export default function MoticoPage() {
       return;
     }
     const labels = list.map(buildLabelFromOrder);
-    void openMoticoGuidesBatchPrint(logoDataUrl, labels).then((ok) => {
-      if (!ok) {
-        setGuideHint(
-          'No se pudo generar el PDF. Permite ventanas emergentes para la vista previa o revisa la consola del navegador.',
-        );
-      }
-    });
+    const ok = openMoticoGuidesBatchPrint(logoDataUrl, labels);
+    if (!ok) {
+      setGuideHint('Permite ventanas emergentes para abrir la vista previa de las guías.');
+    }
   }, [logoDataUrl, orders, selectedIds, buildLabelFromOrder]);
 
   const onMoticoStatusChange = useCallback(
@@ -1057,10 +1075,25 @@ export default function MoticoPage() {
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ ...tableBase, minWidth: 1910 }}>
+            <table
+              style={{
+                ...tableBase,
+                borderCollapse: 'separate',
+                borderSpacing: 0,
+                minWidth: 1760,
+              }}
+            >
               <thead>
                 <tr>
-                  <Th style={moticoThPad}>
+                  <Th
+                    style={{
+                      ...moticoThPad,
+                      ...moticoStickySelectCol,
+                      zIndex: 8,
+                      background: ds.bgApp,
+                      borderRight: `1px solid ${ds.borderCard}`,
+                    }}
+                  >
                     <input
                       ref={headerSelectRef}
                       type="checkbox"
@@ -1082,7 +1115,6 @@ export default function MoticoPage() {
                   <Th style={moticoThPad}>Pago</Th>
                   <Th style={moticoThPad}>Productos</Th>
                   <Th style={{ ...moticoThPad, ...moticoEstadoThTd }}>Estado</Th>
-                  <Th style={{ ...moticoThPad, ...moticoMensajeroThTd }}>Mensajero</Th>
                 </tr>
               </thead>
               <tbody>
@@ -1103,7 +1135,16 @@ export default function MoticoPage() {
                         background: `${meta.chipBg}22`,
                       }}
                     >
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                      <Td
+                        isLast={i === arr.length - 1}
+                        style={{
+                          ...moticoTdPad,
+                          ...moticoStickySelectCol,
+                          zIndex: 5,
+                          background: `${meta.chipBg}22`,
+                          borderRight: `1px solid ${ds.borderRow}`,
+                        }}
+                      >
                         <input
                           type="checkbox"
                           checked={selectedSet.has(o.id)}
@@ -1217,11 +1258,6 @@ export default function MoticoPage() {
                             </a>
                           ) : null}
                         </div>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={{ ...moticoTdPad, ...moticoMensajeroThTd }}>
-                        <span style={{ fontSize: 12, color: ds.textSecondary, wordBreak: 'break-word' }}>
-                          {o.mensajero?.trim() || '—'}
-                        </span>
                       </Td>
                     </tr>
                   );
