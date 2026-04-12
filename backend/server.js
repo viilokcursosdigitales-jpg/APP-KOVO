@@ -45,7 +45,7 @@ const RESET_TOKEN_HOURS = 1;
 const INVITE_DAYS = 7;
 
 const PLAN_LIMITS = {
-  free: { users: 1, metaConnections: 1 },
+  free: { users: 5, metaConnections: 1 },
   pro: { users: 10, metaConnections: 5 },
   enterprise: { users: Infinity, metaConnections: Infinity },
 };
@@ -180,7 +180,7 @@ async function checkPlanLimit(organizationId, feature) {
         ok: false,
         message:
           plan === 'free'
-            ? 'El plan gratuito permite solo 1 usuario. Mejora tu plan para invitar al equipo.'
+            ? `El plan gratuito permite hasta ${lim.users} usuarios (activos e invitaciones pendientes). Mejora tu plan para ampliar el equipo.`
             : `Has alcanzado el límite de ${lim.users} usuarios de tu plan ${plan}.`,
       };
     }
