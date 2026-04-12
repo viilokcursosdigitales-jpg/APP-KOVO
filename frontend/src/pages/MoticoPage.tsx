@@ -18,15 +18,42 @@ import {
 } from '../utils/moticoPrintGuide';
 
 const POLL_MS = 25_000;
-const SAVE_DEBOUNCE_MS = 500;
 const MAX_LOGO_BYTES = 400_000;
 
 const MOTICO_STATUS_OPTIONS = [
-  { value: 'confirmado', label: 'Confirmado', rowColor: '#16a34a', chipBg: '#dcfce7', chipFg: '#14532d', chipBorder: '#86efac' },
-  { value: 'imprimir_guia', label: 'Imprimir guía', rowColor: '#4f46e5', chipBg: '#e0e7ff', chipFg: '#312e81', chipBorder: '#a5b4fc' },
-  { value: 'pagado', label: 'Pagado', rowColor: '#2563eb', chipBg: '#dbeafe', chipFg: '#1e3a8a', chipBorder: '#93c5fd' },
+  {
+    value: 'confirmado',
+    label: 'Confirmado para envío',
+    rowColor: '#16a34a',
+    chipBg: '#dcfce7',
+    chipFg: '#14532d',
+    chipBorder: '#86efac',
+  },
+  {
+    value: 'imprimir_guia',
+    label: 'Pendiente de imprimir guía de envío',
+    rowColor: '#4f46e5',
+    chipBg: '#e0e7ff',
+    chipFg: '#312e81',
+    chipBorder: '#a5b4fc',
+  },
+  {
+    value: 'pagado',
+    label: 'Pagado al mensajero',
+    rowColor: '#2563eb',
+    chipBg: '#dbeafe',
+    chipFg: '#1e3a8a',
+    chipBorder: '#93c5fd',
+  },
   { value: 'cancelado', label: 'Cancelado', rowColor: '#dc2626', chipBg: '#fee2e2', chipFg: '#7f1d1d', chipBorder: '#fca5a5' },
-  { value: 'devolucion', label: 'Devolución', rowColor: '#d97706', chipBg: '#fef3c7', chipFg: '#78350f', chipBorder: '#fcd34d' },
+  {
+    value: 'devolucion',
+    label: 'En devolución',
+    rowColor: '#d97706',
+    chipBg: '#fef3c7',
+    chipFg: '#78350f',
+    chipBorder: '#fcd34d',
+  },
 ] as const;
 
 const STATUS_META = Object.fromEntries(MOTICO_STATUS_OPTIONS.map((o) => [o.value, o])) as Record<
@@ -73,24 +100,14 @@ const filterCtl: CSSProperties = {
 
 const selectStyle: CSSProperties = {
   width: '100%',
-  maxWidth: 210,
+  minWidth: 260,
+  maxWidth: 340,
   padding: '6px 8px',
   borderRadius: 8,
   border: `1px solid ${ds.borderCard}`,
-  color: ds.textPrimary,
-  fontSize: 11,
-  fontWeight: 600,
-};
-
-const inputStyle: CSSProperties = {
-  width: '100%',
-  maxWidth: 96,
-  padding: '6px 8px',
-  borderRadius: 8,
-  border: `1px solid ${ds.borderCard}`,
-  background: ds.bgCard,
   color: ds.textPrimary,
   fontSize: 12,
+  fontWeight: 600,
 };
 
 const modalFieldStyle: CSSProperties = {
@@ -106,30 +123,42 @@ const modalFieldStyle: CSSProperties = {
   marginTop: 8,
 };
 
-type ShippingAddressDraft = {
+/** Borrador del modal (dirección sin CP en formulario; precio/cantidad sincronizan con Shopify). */
+type MoticoEditorDraft = {
   province: string;
   city: string;
   address1: string;
   address2: string;
-  zip: string;
   country: string;
   phone: string;
+  price: string;
+  quantity: string;
 };
 
-function emptyShippingDraft(): ShippingAddressDraft {
-  return { province: '', city: '', address1: '', address2: '', zip: '', country: '', phone: '' };
+function emptyEditorDraft(): MoticoEditorDraft {
+  return {
+    province: '',
+    city: '',
+    address1: '',
+    address2: '',
+    country: '',
+    phone: '',
+    price: '',
+    quantity: '',
+  };
 }
 
-function draftFromShipping(sa: MoticoShippingAddress | null): ShippingAddressDraft {
-  if (!sa) return emptyShippingDraft();
+function draftFromOrder(o: MoticoOrderRow): MoticoEditorDraft {
+  const sa = o.shippingAddress;
   return {
-    province: sa.province || '',
-    city: sa.city || '',
-    address1: sa.address1 || '',
-    address2: sa.address2 || '',
-    zip: sa.zip || '',
-    country: sa.country || '',
-    phone: sa.phone || '',
+    province: sa?.province || '',
+    city: sa?.city || '',
+    address1: sa?.address1 || '',
+    address2: sa?.address2 || '',
+    country: sa?.country || '',
+    phone: sa?.phone || '',
+    price: String(o.price_override ?? o.shopifyTotal ?? ''),
+    quantity: String(o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity ?? 0),
   };
 }
 
@@ -212,19 +241,9 @@ export default function MoticoPage() {
   const [logoSaving, setLogoSaving] = useState(false);
   const [logoMessage, setLogoMessage] = useState('');
 
-  const [addressModalOrder, setAddressModalOrder] = useState<MoticoOrderRow | null>(null);
-  const [addressDraft, setAddressDraft] = useState<ShippingAddressDraft>(() => emptyShippingDraft());
-  const [addressSaving, setAddressSaving] = useState(false);
-
-  const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
-  const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
-  const priceDraftRef = useRef(priceDraft);
-  const qtyDraftRef = useRef(qtyDraft);
-  priceDraftRef.current = priceDraft;
-  qtyDraftRef.current = qtyDraft;
-  const saveTimers = useRef<Map<number, number>>(new Map());
-  const ordersRef = useRef<MoticoOrderRow[]>([]);
-  ordersRef.current = orders;
+  const [editorOrder, setEditorOrder] = useState<MoticoOrderRow | null>(null);
+  const [editorDraft, setEditorDraft] = useState<MoticoEditorDraft>(() => emptyEditorDraft());
+  const [editorSaving, setEditorSaving] = useState(false);
 
   const dateQuery = useMemo(
     () => buildDateRange(datePreset, customFrom, customTo),
@@ -328,8 +347,6 @@ export default function MoticoPage() {
           setShopDomain(data.shop_domain || null);
           setFetchedAt(data.fetchedAt || null);
           setOrders(data.orders.map((o) => normalizeRow(o as MoticoOrderRow)));
-          setPriceDraft({});
-          setQtyDraft({});
         }
       } catch {
         setError('Error de red al cargar datos');
@@ -387,67 +404,6 @@ export default function MoticoPage() {
     }
     return true;
   }, []);
-
-  const flushPriceQtyToShopify = useCallback(async (orderId: number) => {
-      const o = ordersRef.current.find((x) => x.id === orderId);
-      if (!o) return;
-      const pd = priceDraftRef.current;
-      const qd = qtyDraftRef.current;
-      const pRaw =
-        pd[orderId] !== undefined ? pd[orderId]! : String(o.price_override ?? o.shopifyTotal ?? '');
-      const qRaw =
-        qd[orderId] !== undefined
-          ? qd[orderId]!
-          : String(o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity ?? 0);
-      const pt = pRaw.trim();
-      const qt = qRaw.trim();
-      if (pt === '') {
-        await patchLocalFields(orderId, { price_override: null, sync_to_shopify: false });
-        return;
-      }
-      if (qt === '') {
-        await patchLocalFields(orderId, { quantity_override: null, sync_to_shopify: false });
-        return;
-      }
-      const priceNum = Number.parseFloat(pt.replace(',', '.'));
-      const qNum = parseInt(qt, 10);
-      if (!Number.isFinite(priceNum) || priceNum < 0) return;
-      if (!Number.isFinite(qNum) || qNum < 1) {
-        setSyncError('La cantidad debe ser al menos 1 para sincronizar con Shopify');
-        return;
-      }
-      await patchLocalFields(orderId, {
-        price_override: priceNum,
-        quantity_override: qNum,
-        sync_to_shopify: true,
-      });
-  }, [patchLocalFields]);
-
-  const scheduleSaveOrder = useCallback(
-    (orderId: number) => {
-      const prev = saveTimers.current.get(orderId);
-      if (prev) window.clearTimeout(prev);
-      const t = window.setTimeout(() => {
-        saveTimers.current.delete(orderId);
-        void flushPriceQtyToShopify(orderId);
-      }, SAVE_DEBOUNCE_MS);
-      saveTimers.current.set(orderId, t);
-    },
-    [flushPriceQtyToShopify],
-  );
-
-  useEffect(() => {
-    return () => {
-      saveTimers.current.forEach((id) => window.clearTimeout(id));
-    };
-  }, []);
-
-  const displayPrice = (o: MoticoOrderRow) =>
-    priceDraft[o.id] !== undefined ? priceDraft[o.id]! : String(o.price_override ?? o.shopifyTotal ?? '');
-  const displayQty = (o: MoticoOrderRow) =>
-    qtyDraft[o.id] !== undefined
-      ? qtyDraft[o.id]!
-      : String(o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity ?? 0);
 
   const buildLabelFromOrder = useCallback(
     (o: MoticoOrderRow): MoticoGuideLabelData => {
@@ -527,34 +483,42 @@ export default function MoticoPage() {
     [patchLocalFields],
   );
 
-  const openShippingEditor = useCallback((o: MoticoOrderRow) => {
+  const openOrderEditor = useCallback((o: MoticoOrderRow) => {
     setSyncError('');
-    setAddressDraft(draftFromShipping(o.shippingAddress));
-    setAddressModalOrder(o);
+    setEditorDraft(draftFromOrder(o));
+    setEditorOrder(o);
   }, []);
 
-  const saveShippingAddress = useCallback(async () => {
-    if (!addressModalOrder) return;
-    setAddressSaving(true);
+  const saveOrderEditor = useCallback(async () => {
+    if (!editorOrder) return;
+    setEditorSaving(true);
     setSyncError('');
     try {
-      const res = await apiFetch(`/api/shopify/orders/${addressModalOrder.id}/shipping-address`, {
+      const addrBody = {
+        province: editorDraft.province,
+        city: editorDraft.city,
+        address1: editorDraft.address1,
+        address2: editorDraft.address2,
+        country: editorDraft.country,
+        phone: editorDraft.phone,
+      };
+      const resAddr = await apiFetch(`/api/shopify/orders/${editorOrder.id}/shipping-address`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(addressDraft),
+        body: JSON.stringify(addrBody),
       });
-      const data = (await res.json().catch(() => ({}))) as {
+      const dataAddr = (await resAddr.json().catch(() => ({}))) as {
         error?: string;
         shippingAddress?: MoticoShippingAddress | null;
       };
-      if (!res.ok) {
-        setSyncError(typeof data.error === 'string' ? data.error : 'No se pudo guardar la dirección');
+      if (!resAddr.ok) {
+        setSyncError(typeof dataAddr.error === 'string' ? dataAddr.error : 'No se pudo guardar la dirección');
         return;
       }
-      const nextSa = data.shippingAddress;
+      const nextSa = dataAddr.shippingAddress;
       setOrders((prev) =>
         prev.map((row) => {
-          if (row.id !== addressModalOrder.id) return row;
+          if (row.id !== editorOrder.id) return row;
           return normalizeRow({
             ...row,
             shippingAddress: nextSa
@@ -572,24 +536,58 @@ export default function MoticoPage() {
           });
         }),
       );
-      setAddressModalOrder(null);
-      setAddressDraft(emptyShippingDraft());
+
+      const pt = editorDraft.price.trim();
+      const qt = editorDraft.quantity.trim();
+      const patchBody: Record<string, unknown> = { sync_to_shopify: false };
+
+      if (pt === '') {
+        patchBody.price_override = null;
+      } else {
+        const priceNum = Number.parseFloat(pt.replace(',', '.'));
+        if (!Number.isFinite(priceNum) || priceNum < 0) {
+          setSyncError('Precio no válido');
+          return;
+        }
+        patchBody.price_override = priceNum;
+      }
+
+      if (qt === '') {
+        patchBody.quantity_override = null;
+      } else {
+        const qNum = parseInt(qt, 10);
+        if (!Number.isFinite(qNum) || qNum < 1) {
+          setSyncError('La cantidad debe ser al menos 1');
+          return;
+        }
+        patchBody.quantity_override = qNum;
+      }
+
+      if (pt !== '' && qt !== '') {
+        patchBody.sync_to_shopify = true;
+      }
+
+      const okLocal = await patchLocalFields(editorOrder.id, patchBody);
+      if (!okLocal) return;
+
+      setEditorOrder(null);
+      setEditorDraft(emptyEditorDraft());
     } finally {
-      setAddressSaving(false);
+      setEditorSaving(false);
     }
-  }, [addressModalOrder, addressDraft]);
+  }, [editorOrder, editorDraft, patchLocalFields]);
 
   useEffect(() => {
-    if (!addressModalOrder) return;
+    if (!editorOrder) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
-        setAddressModalOrder(null);
-        setAddressDraft(emptyShippingDraft());
+        setEditorOrder(null);
+        setEditorDraft(emptyEditorDraft());
       }
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [addressModalOrder]);
+  }, [editorOrder]);
 
   const onLogoFile = useCallback(
     (file: File | null) => {
@@ -1013,7 +1011,7 @@ export default function MoticoPage() {
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ ...tableBase, minWidth: 1520 }}>
+            <table style={{ ...tableBase, minWidth: 1680 }}>
               <thead>
                 <tr>
                   <Th>
@@ -1028,17 +1026,17 @@ export default function MoticoPage() {
                     />
                   </Th>
                   <Th>Pedido</Th>
+                  <Th>Fecha</Th>
                   <Th>Cliente</Th>
                   <Th>Departamento</Th>
                   <Th>Ciudad</Th>
                   <Th>Dirección</Th>
-                  <Th style={{ width: 52 }} aria-label="Editar dirección" />
-                  <Th>Fecha</Th>
                   <Th>Precio</Th>
                   <Th>Cant.</Th>
                   <Th>Pago</Th>
                   <Th>Productos</Th>
                   <Th>Estado</Th>
+                  <Th style={{ width: 52 }} aria-label="Editar pedido" />
                   <Th />
                 </tr>
               </thead>
@@ -1047,6 +1045,11 @@ export default function MoticoPage() {
                   const meta = STATUS_META[o.motico_status] || STATUS_META.confirmado;
                   const sa = o.shippingAddress;
                   const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
+                  const showPrice = formatMoneyFromString(
+                    String(o.price_override ?? o.shopifyTotal ?? ''),
+                    o.currency,
+                  );
+                  const showQty = o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity;
                   return (
                     <tr
                       key={o.id}
@@ -1068,6 +1071,7 @@ export default function MoticoPage() {
                         <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
                         <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
                       </Td>
+                      <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
                       <Td isLast={i === arr.length - 1}>{o.client}</Td>
                       <Td isLast={i === arr.length - 1}>
                         <span style={{ fontSize: 11 }}>{sa?.province?.trim() || '—'}</span>
@@ -1088,61 +1092,15 @@ export default function MoticoPage() {
                           {dirLine || '—'}
                         </div>
                       </Td>
-                      <Td isLast={i === arr.length - 1} style={{ textAlign: 'center', verticalAlign: 'middle' }}>
-                        <button
-                          type="button"
-                          aria-label={`Editar dirección de envío de ${o.orderName}`}
-                          onClick={() => openShippingEditor(o)}
-                          style={{
-                            padding: 6,
-                            borderRadius: 8,
-                            border: `1px solid ${ds.borderCard}`,
-                            background: ds.bgCard,
-                            color: ds.brand,
-                            cursor: 'pointer',
-                            display: 'inline-flex',
-                            alignItems: 'center',
-                            justifyContent: 'center',
-                            lineHeight: 0,
-                          }}
-                        >
-                          <IconPencil size={16} />
-                        </button>
-                      </Td>
-                      <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
                       <Td isLast={i === arr.length - 1}>
-                        <input
-                          type="text"
-                          inputMode="decimal"
-                          style={inputStyle}
-                          value={displayPrice(o)}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setPriceDraft((d) => ({ ...d, [o.id]: v }));
-                            scheduleSaveOrder(o.id);
-                          }}
-                          aria-label="Precio"
-                        />
+                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>{showPrice}</div>
                         <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
                           Shopify: {formatMoneyFromString(o.shopifyTotal, o.currency)}
                         </div>
                       </Td>
                       <Td isLast={i === arr.length - 1}>
-                        <input
-                          type="text"
-                          inputMode="numeric"
-                          style={inputStyle}
-                          value={displayQty(o)}
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setQtyDraft((d) => ({ ...d, [o.id]: v }));
-                            scheduleSaveOrder(o.id);
-                          }}
-                          aria-label="Cantidad"
-                        />
-                        <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
-                          Shopify: {o.shopifyQuantity}
-                        </div>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>{showQty}</div>
+                        <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>Shopify: {o.shopifyQuantity}</div>
                       </Td>
                       <Td isLast={i === arr.length - 1}>
                         <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
@@ -1170,6 +1128,27 @@ export default function MoticoPage() {
                             </option>
                           ))}
                         </select>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                        <button
+                          type="button"
+                          aria-label={`Editar pedido ${o.orderName}: dirección, precio y cantidad`}
+                          onClick={() => openOrderEditor(o)}
+                          style={{
+                            padding: 6,
+                            borderRadius: 8,
+                            border: `1px solid ${ds.borderCard}`,
+                            background: ds.bgCard,
+                            color: ds.brand,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            lineHeight: 0,
+                          }}
+                        >
+                          <IconPencil size={16} />
+                        </button>
                       </Td>
                       <Td isLast={i === arr.length - 1}>
                         {shopDomain ? (
@@ -1202,7 +1181,7 @@ export default function MoticoPage() {
         ) : null}
       </DataTable>
 
-      {addressModalOrder ? (
+      {editorOrder ? (
         <div
           style={{
             position: 'fixed',
@@ -1216,11 +1195,11 @@ export default function MoticoPage() {
           }}
           role="dialog"
           aria-modal
-          aria-labelledby="motico-addr-title"
+          aria-labelledby="motico-editor-title"
           onClick={(e) => {
             if (e.target === e.currentTarget) {
-              setAddressModalOrder(null);
-              setAddressDraft(emptyShippingDraft());
+              setEditorOrder(null);
+              setEditorDraft(emptyEditorDraft());
             }
           }}
         >
@@ -1230,7 +1209,7 @@ export default function MoticoPage() {
               borderRadius: 16,
               padding: 28,
               width: '100%',
-              maxWidth: 440,
+              maxWidth: 460,
               border: `1px solid ${ds.borderCard}`,
               maxHeight: '90vh',
               overflowY: 'auto',
@@ -1238,20 +1217,23 @@ export default function MoticoPage() {
             onClick={(e) => e.stopPropagation()}
           >
             <h3
-              id="motico-addr-title"
+              id="motico-editor-title"
               style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 700, color: ds.textPrimary }}
             >
-              Dirección de envío
+              Editar pedido
             </h3>
             <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted, lineHeight: 1.4 }}>
-              {addressModalOrder.orderName} · Se actualiza en Shopify.
+              {editorOrder.orderName} · Dirección, precio y cantidad se guardan en Shopify.
+            </p>
+            <p style={{ margin: '0 0 10px', fontSize: 11, fontWeight: 700, color: ds.textSecondary, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+              Dirección de envío
             </p>
             <label style={{ ...labelStyle, display: 'block' }}>
               Departamento / provincia
               <input
                 type="text"
-                value={addressDraft.province}
-                onChange={(e) => setAddressDraft((d) => ({ ...d, province: e.target.value }))}
+                value={editorDraft.province}
+                onChange={(e) => setEditorDraft((d) => ({ ...d, province: e.target.value }))}
                 style={modalFieldStyle}
                 autoComplete="address-level1"
               />
@@ -1260,8 +1242,8 @@ export default function MoticoPage() {
               Ciudad
               <input
                 type="text"
-                value={addressDraft.city}
-                onChange={(e) => setAddressDraft((d) => ({ ...d, city: e.target.value }))}
+                value={editorDraft.city}
+                onChange={(e) => setEditorDraft((d) => ({ ...d, city: e.target.value }))}
                 style={modalFieldStyle}
                 autoComplete="address-level2"
               />
@@ -1270,8 +1252,8 @@ export default function MoticoPage() {
               Dirección (línea 1)
               <input
                 type="text"
-                value={addressDraft.address1}
-                onChange={(e) => setAddressDraft((d) => ({ ...d, address1: e.target.value }))}
+                value={editorDraft.address1}
+                onChange={(e) => setEditorDraft((d) => ({ ...d, address1: e.target.value }))}
                 style={modalFieldStyle}
                 autoComplete="address-line1"
               />
@@ -1280,28 +1262,18 @@ export default function MoticoPage() {
               Dirección (línea 2, opcional)
               <input
                 type="text"
-                value={addressDraft.address2}
-                onChange={(e) => setAddressDraft((d) => ({ ...d, address2: e.target.value }))}
+                value={editorDraft.address2}
+                onChange={(e) => setEditorDraft((d) => ({ ...d, address2: e.target.value }))}
                 style={modalFieldStyle}
                 autoComplete="address-line2"
-              />
-            </label>
-            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
-              Código postal
-              <input
-                type="text"
-                value={addressDraft.zip}
-                onChange={(e) => setAddressDraft((d) => ({ ...d, zip: e.target.value }))}
-                style={modalFieldStyle}
-                autoComplete="postal-code"
               />
             </label>
             <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
               País
               <input
                 type="text"
-                value={addressDraft.country}
-                onChange={(e) => setAddressDraft((d) => ({ ...d, country: e.target.value }))}
+                value={editorDraft.country}
+                onChange={(e) => setEditorDraft((d) => ({ ...d, country: e.target.value }))}
                 style={modalFieldStyle}
                 autoComplete="country-name"
               />
@@ -1310,19 +1282,46 @@ export default function MoticoPage() {
               Teléfono
               <input
                 type="text"
-                value={addressDraft.phone}
-                onChange={(e) => setAddressDraft((d) => ({ ...d, phone: e.target.value }))}
+                value={editorDraft.phone}
+                onChange={(e) => setEditorDraft((d) => ({ ...d, phone: e.target.value }))}
                 style={modalFieldStyle}
                 autoComplete="tel"
+              />
+            </label>
+            <p style={{ margin: '20px 0 10px', fontSize: 11, fontWeight: 700, color: ds.textSecondary, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+              Precio y cantidad
+            </p>
+            <p style={{ margin: '0 0 12px', fontSize: 11, color: ds.textMuted, lineHeight: 1.4 }}>
+              Se aplican a la primera línea del pedido en Shopify. Deja vacío solo uno de los dos si quieres quitar el
+              valor local (sin sincronizar).
+            </p>
+            <label style={{ ...labelStyle, display: 'block' }}>
+              Precio total
+              <input
+                type="text"
+                inputMode="decimal"
+                value={editorDraft.price}
+                onChange={(e) => setEditorDraft((d) => ({ ...d, price: e.target.value }))}
+                style={modalFieldStyle}
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Cantidad
+              <input
+                type="text"
+                inputMode="numeric"
+                value={editorDraft.quantity}
+                onChange={(e) => setEditorDraft((d) => ({ ...d, quantity: e.target.value }))}
+                style={modalFieldStyle}
               />
             </label>
             <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
               <button
                 type="button"
-                disabled={addressSaving}
+                disabled={editorSaving}
                 onClick={() => {
-                  setAddressModalOrder(null);
-                  setAddressDraft(emptyShippingDraft());
+                  setEditorOrder(null);
+                  setEditorDraft(emptyEditorDraft());
                 }}
                 style={{
                   padding: '8px 16px',
@@ -1331,7 +1330,7 @@ export default function MoticoPage() {
                   background: ds.bgCard,
                   color: ds.textSecondary,
                   fontWeight: 600,
-                  cursor: addressSaving ? 'not-allowed' : 'pointer',
+                  cursor: editorSaving ? 'not-allowed' : 'pointer',
                   fontSize: 13,
                 }}
               >
@@ -1339,8 +1338,8 @@ export default function MoticoPage() {
               </button>
               <button
                 type="button"
-                disabled={addressSaving}
-                onClick={() => void saveShippingAddress()}
+                disabled={editorSaving}
+                onClick={() => void saveOrderEditor()}
                 style={{
                   padding: '8px 16px',
                   borderRadius: 8,
@@ -1348,12 +1347,12 @@ export default function MoticoPage() {
                   background: ds.brandBg,
                   color: ds.brand,
                   fontWeight: 600,
-                  cursor: addressSaving ? 'wait' : 'pointer',
+                  cursor: editorSaving ? 'wait' : 'pointer',
                   fontSize: 13,
-                  opacity: addressSaving ? 0.85 : 1,
+                  opacity: editorSaving ? 0.85 : 1,
                 }}
               >
-                {addressSaving ? 'Guardando…' : 'Guardar en Shopify'}
+                {editorSaving ? 'Guardando…' : 'Guardar en Shopify'}
               </button>
             </div>
           </div>
