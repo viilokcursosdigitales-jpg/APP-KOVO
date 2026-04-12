@@ -28,6 +28,9 @@ export type MoticoGuideLabelData = {
 
 export const GUIAS_POR_HOJA = 5;
 
+/** Margen delgado e igual en los cuatro lados (impresión @page y colocación en PDF). */
+const GUIDE_PAGE_MARGIN_PT = 14;
+
 function esc(s: string) {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -163,7 +166,7 @@ function buildBatchPrintDocument(logoDataUrl: string | null, labels: MoticoGuide
   <meta charset="utf-8"/>
   <title>Guías Motico</title>
   <style>
-    @page { size: letter; margin: 0.22in; }
+    @page { size: letter; margin: ${GUIDE_PAGE_MARGIN_PT}pt; }
     * { box-sizing: border-box; }
     html, body {
       margin: 0;
@@ -303,6 +306,9 @@ export async function openMoticoGuidesBatchPrint(
     const pdf = new jsPDF({ orientation: 'portrait', unit: 'pt', format: 'letter' });
     const pageW = pdf.internal.pageSize.getWidth();
     const pageH = pdf.internal.pageSize.getHeight();
+    const m = GUIDE_PAGE_MARGIN_PT;
+    const innerW = pageW - 2 * m;
+    const innerH = pageH - 2 * m;
 
     for (let i = 0; i < pageEls.length; i++) {
       const el = pageEls[i];
@@ -315,15 +321,16 @@ export async function openMoticoGuidesBatchPrint(
         windowHeight: el.scrollHeight,
       });
       const imgData = canvas.toDataURL('image/jpeg', 0.92);
-      let imgW = pageW;
+      let imgW = innerW;
       let imgH = (canvas.height * imgW) / canvas.width;
-      if (imgH > pageH) {
-        imgH = pageH;
-        imgW = (canvas.width * pageH) / canvas.height;
+      if (imgH > innerH) {
+        imgH = innerH;
+        imgW = (canvas.width * innerH) / canvas.height;
       }
-      const x = (pageW - imgW) / 2;
+      const x = m + (innerW - imgW) / 2;
+      const y = m + (innerH - imgH) / 2;
       if (i > 0) pdf.addPage();
-      pdf.addImage(imgData, 'JPEG', x, 0, imgW, imgH);
+      pdf.addImage(imgData, 'JPEG', x, y, imgW, imgH);
     }
 
     const stamp = new Date().toISOString().slice(0, 10);
