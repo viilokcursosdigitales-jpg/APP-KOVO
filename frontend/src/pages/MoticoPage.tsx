@@ -72,6 +72,9 @@ const MOTICO_STATUS_OPTIONS = [
   },
 ] as const;
 
+/** Solo pedidos en este estado pueden generar guías (vista previa / impresión). */
+const MOTICO_STATUS_FOR_GUIDE_PRINT = 'imprimir_guia';
+
 const STATUS_META = Object.fromEntries(MOTICO_STATUS_OPTIONS.map((o) => [o.value, o])) as Record<
   string,
   (typeof MOTICO_STATUS_OPTIONS)[number]
@@ -125,6 +128,9 @@ const selectStyle: CSSProperties = {
   fontSize: 12,
   fontWeight: 600,
 };
+
+/** Separación horizontal entre columnas de la tabla Motico. */
+const MOTICO_COL_GAP_PX = 10;
 
 /** Padding horizontal 18px (rango 16–20px pedido) en la tabla Pedidos Motico. */
 const MOTICO_CELL_H_PAD = 18;
@@ -335,6 +341,14 @@ export default function MoticoPage() {
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
+  const printableSelectedCount = useMemo(() => {
+    let n = 0;
+    for (const o of orders) {
+      if (selectedSet.has(o.id) && o.motico_status === MOTICO_STATUS_FOR_GUIDE_PRINT) n += 1;
+    }
+    return n;
+  }, [orders, selectedSet]);
+
   useEffect(() => {
     setSelectedIds((ids) => ids.filter((id) => orders.some((o) => o.id === id)));
   }, [orders]);
@@ -532,7 +546,22 @@ export default function MoticoPage() {
       setGuideHint('Marca los pedidos a imprimir con la casilla de la primera columna.');
       return;
     }
-    const labels = list.map(buildLabelFromOrder);
+    const eligible = list.filter((o) => o.motico_status === MOTICO_STATUS_FOR_GUIDE_PRINT);
+    if (!eligible.length) {
+      setGuideHint(
+        'Solo se pueden imprimir guías de pedidos en estado «Imprimir guía». Cambia el estado o marca solo esos pedidos.',
+      );
+      return;
+    }
+    const skipped = list.length - eligible.length;
+    if (skipped > 0) {
+      setGuideHint(
+        skipped === 1
+          ? 'Se omitió 1 pedido que no está en «Imprimir guía». Se abre la vista previa con el resto.'
+          : `Se omitieron ${skipped} pedidos que no están en «Imprimir guía». Vista previa con ${eligible.length}.`,
+      );
+    }
+    const labels = eligible.map(buildLabelFromOrder);
     const ok = openMoticoGuidesBatchPrint(logoDataUrl, labels);
     if (!ok) {
       setGuideHint('Permite ventanas emergentes para abrir la vista previa de las guías.');
@@ -788,7 +817,8 @@ export default function MoticoPage() {
               Logo para guías (carta)
             </div>
             <div style={{ fontSize: 12, color: ds.textSecondary, marginBottom: 8, lineHeight: 1.4 }}>
-              Sube PNG o JPEG. Marca los pedidos en la tabla e imprime: hasta {GUIAS_POR_HOJA} guías por hoja carta
+              Sube PNG o JPEG. Marca pedidos en estado «Imprimir guía» e imprime: hasta {GUIAS_POR_HOJA} guías por hoja
+              carta
               (Letter), diseño con logo y datos de envío.
             </div>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 10, cursor: logoSaving ? 'wait' : 'pointer' }}>
@@ -929,7 +959,14 @@ export default function MoticoPage() {
             <span style={{ width: 1, height: 24, background: ds.borderCard, margin: '0 4px' }} aria-hidden />
             <button
               type="button"
-              disabled={!selectedIds.length}
+              disabled={!printableSelectedCount}
+              title={
+                !selectedIds.length
+                  ? 'Marca pedidos con la casilla de la primera columna'
+                  : !printableSelectedCount
+                    ? 'Solo se imprimen pedidos en estado «Imprimir guía»'
+                    : 'Abrir vista previa para imprimir guías'
+              }
               onClick={handlePrintSelected}
               style={{
                 padding: '7px 14px',
@@ -939,11 +976,11 @@ export default function MoticoPage() {
                 color: '#fff',
                 fontSize: 12,
                 fontWeight: 700,
-                cursor: selectedIds.length ? 'pointer' : 'not-allowed',
-                opacity: selectedIds.length ? 1 : 0.5,
+                cursor: printableSelectedCount ? 'pointer' : 'not-allowed',
+                opacity: printableSelectedCount ? 1 : 0.5,
               }}
             >
-              Imprimir guías ({selectedIds.length}) · {GUIAS_POR_HOJA}/hoja
+              Imprimir guías ({printableSelectedCount}) · {GUIAS_POR_HOJA}/hoja
             </button>
             <button
               type="button"
@@ -1079,8 +1116,8 @@ export default function MoticoPage() {
               style={{
                 ...tableBase,
                 borderCollapse: 'separate',
-                borderSpacing: 0,
-                minWidth: 1760,
+                borderSpacing: `${MOTICO_COL_GAP_PX}px 0`,
+                minWidth: 1760 + 11 * MOTICO_COL_GAP_PX,
               }}
             >
               <thead>
