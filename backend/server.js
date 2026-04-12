@@ -1405,27 +1405,95 @@ app.get('/api/shopify/callback', async (req, res) => {
   const base = SHOPIFY_APP_URL || '';
   const redirectErr = () => res.redirect(302, `${base}/canales?shopify=error`);
   const redirectOk = () => res.redirect(302, `${base}/canales?shopify=connected`);
+
+  console.log('Shopify callback params:', {
+    shop: req.query.shop,
+    code: !!req.query.code,
+    state: req.query.state,
+    hmac: !!req.query.hmac,
+  });
+
   try {
     if (!SHOPIFY_API_SECRET || !SHOPIFY_API_KEY) {
+      console.log('[shopify callback] fail: falta SHOPIFY_API_KEY o SHOPIFY_API_SECRET');
       return redirectErr();
     }
+
+    console.log(
+      '[shopify callback] SHOPIFY_REDIRECT_URI efectivo (debe coincidir carácter a carácter con la URL en Shopify Partner):',
+      SHOPIFY_REDIRECT_URI || '(vacío)',
+    );
+
     const query = req.query;
     const code = query.code;
     const shop = sanitizeShopDomain(query.shop);
     const state = query.state;
-    if (!code || !shop || !state || !verifyShopifyOAuthHmac(query, SHOPIFY_API_SECRET)) {
+
+    if (!code || !shop || !state) {
+      console.log('[shopify callback] fail: falta code, shop normalizado o state', {
+        hasCode: Boolean(code),
+        shop,
+        hasState: Boolean(state),
+      });
       return redirectErr();
     }
-    const { rows } = await pool.query(
-      `SELECT organization_id, shop_domain FROM shopify_oauth_states WHERE state = $1 AND expires_at > now()`,
-      [state],
-    );
+
+    console.log('[shopify callback] antes de verificar HMAC');
+    const hmacOk = verifyShopifyOAuthHmac(query, SHOPIFY_API_SECRET);
+    if (!hmacOk) {
+      console.log('[shopify callback] fail: HMAC inválido o parámetro hmac ausente');
+      return redirectErr();
+    }
+
+    console.log('[shopify callback] antes de verificar state en BD');
+    let rows;
+    try {
+      const result = await pool.query(
+        `SELECT organization_id, shop_domain FROM shopify_oauth_states WHERE state = $1 AND expires_at > now()`,
+        [state],
+      );
+      rows = result.rows;
+    } catch (dbErr) {
+      console.error('[shopify callback] error en consulta shopify_oauth_states:', dbErr.code, dbErr.message);
+      if (dbErr.code === '42P01') {
+        console.error(
+          '[shopify callback] la tabla shopify_oauth_states no existe: aplica backend/db/schema.sql o reinicia el backend para que initDb la cree (IF NOT EXISTS).',
+        );
+      }
+      throw dbErr;
+    }
+
     const stateRow = rows[0];
-    if (!stateRow || sanitizeShopDomain(stateRow.shop_domain) !== shop) {
+    if (!stateRow) {
+      const stale = await pool.query(
+        `SELECT shop_domain, expires_at FROM shopify_oauth_states WHERE state = $1`,
+        [state],
+      );
+      if (stale.rows[0]) {
+        console.log('[shopify callback] fail: state caducado (>10 min) o reloj del servidor', {
+          expiresAt: stale.rows[0].expires_at,
+          nowIso: new Date().toISOString(),
+          ventanaMinutos: 10,
+        });
+      } else {
+        console.log(
+          '[shopify callback] fail: state no encontrado (otra instancia, limpieza, o flujo no iniciado en este servidor)',
+        );
+      }
       return redirectErr();
     }
+
+    if (sanitizeShopDomain(stateRow.shop_domain) !== shop) {
+      console.log('[shopify callback] fail: shop no coincide con el guardado al iniciar OAuth', {
+        desdeBd: stateRow.shop_domain,
+        desdeQuery: shop,
+      });
+      return redirectErr();
+    }
+
     await pool.query(`DELETE FROM shopify_oauth_states WHERE state = $1`, [state]);
 
+    console.log('[shopify callback] antes de intercambiar code por access_token', { shop });
     const tokenRes = await fetch(`https://${shop}/admin/oauth/access_token`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -1437,7 +1505,10 @@ app.get('/api/shopify/callback', async (req, res) => {
     });
     const tokenBody = await tokenRes.json().catch(() => ({}));
     if (!tokenRes.ok || !tokenBody.access_token) {
-      console.error('[shopify] oauth access_token error', tokenBody);
+      console.error('[shopify callback] fail: respuesta access_token', {
+        httpStatus: tokenRes.status,
+        body: tokenBody,
+      });
       return redirectErr();
     }
     const scopeStr =
@@ -1454,9 +1525,10 @@ app.get('/api/shopify/callback', async (req, res) => {
       [stateRow.organization_id, shop, tokenBody.access_token, scopeStr],
     );
     await registerUninstallWebhook(shop, tokenBody.access_token);
+    console.log('[shopify callback] OAuth OK, redirigiendo a canales?shopify=connected');
     return redirectOk();
   } catch (e) {
-    console.error(e);
+    console.error('[shopify callback] error no capturado antes del redirect:', e);
     return redirectErr();
   }
 });
@@ -1676,6 +1748,28 @@ async function start() {
     logDbStartupError(err);
     throw err;
   }
+
+  const oauthTableCheck = await pool.query(
+    `SELECT EXISTS (
+       SELECT 1 FROM information_schema.tables
+       WHERE table_schema = 'public' AND table_name = 'shopify_oauth_states'
+     ) AS ok`,
+  );
+  if (!oauthTableCheck.rows[0].ok) {
+    console.error(
+      '[shopify] La tabla public.shopify_oauth_states no existe tras initDb. Ejecuta el SQL de backend/db/schema.sql en la BD de producción o despliega la versión actual del backend y reinicia.',
+    );
+  }
+
+  if (shopifyConfigured()) {
+    console.log(
+      '[shopify] OAuth configurado. SHOPIFY_REDIRECT_URI debe ser exactamente la URL permitida en Partner Dashboard (ej. https://kovo.services/api/shopify/callback):',
+      SHOPIFY_REDIRECT_URI,
+    );
+  } else {
+    console.warn('[shopify] OAuth no configurado. Faltan:', shopifyMissingEnvKeys().join(', '));
+  }
+
   const cronTz = process.env.CRON_TZ || 'Europe/Madrid';
   cron.schedule(
     '0 9 * * *',
