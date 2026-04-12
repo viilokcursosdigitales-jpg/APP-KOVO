@@ -16,6 +16,12 @@ const {
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
 } = require('./metaMarketingApi');
+const cron = require('node-cron');
+const {
+  ensureValidMetaTokenForOrg,
+  exchangeAndPersistLongLivedForConnection,
+  runEvaluatorTokenRefreshCron,
+} = require('./metaTokenService');
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
 const hasFrontendDist = fs.existsSync(staticDir);
 
@@ -351,17 +357,6 @@ function parseAdAccountIdsFromDb(val) {
     }
   }
   return [];
-}
-
-async function getMetaConnectionForOrg(organizationId) {
-  const { rows } = await pool.query(
-    `SELECT * FROM meta_connections
-     WHERE organization_id = $1 AND status = 'connected'
-     ORDER BY id DESC
-     LIMIT 1`,
-    [organizationId],
-  );
-  return rows[0] || null;
 }
 
 /** @param {string | undefined} queryAdAccountId */
@@ -864,6 +859,7 @@ app.get('/api/meta/connections', verifyToken, scopeToOrganization, async (req, r
     const rows = (
       await pool.query(
         `SELECT id, app_id, status, connected_at, account_name, selected_ad_account_ids,
+                token_type, disconnect_reason,
                 (access_token IS NOT NULL AND length(trim(access_token)) > 0) AS has_access_token
          FROM meta_connections WHERE organization_id = $1 ORDER BY id DESC`,
         [req.organizationId],
@@ -883,6 +879,8 @@ app.get('/api/meta/connections', verifyToken, scopeToOrganization, async (req, r
         account_name: r.account_name,
         selected_ad_account_ids: selectedIds,
         insights_ready: insightsReady,
+        token_type: r.token_type || 'evaluator',
+        disconnect_reason: r.disconnect_reason || null,
       };
     });
     res.json({ connections: list, limits: await getUsageSnapshot(req.organizationId) });
@@ -937,7 +935,7 @@ app.post('/api/meta/preview-ad-accounts', verifyToken, scopeToOrganization, asyn
 
 app.get('/api/meta/ad-accounts', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const row = await getMetaConnectionForOrg(req.organizationId);
+    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
     if (!row || !String(row.access_token || '').trim()) {
       return res.status(400).json({
         error: 'No hay token de usuario guardado. Vuelve a conectar Meta con un access token.',
@@ -964,7 +962,7 @@ app.get('/api/meta/ad-accounts', verifyToken, scopeToOrganization, async (req, r
 
 app.get('/api/meta/selected-ad-accounts', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const row = await getMetaConnectionForOrg(req.organizationId);
+    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
     if (!row || !String(row.access_token || '').trim()) {
       return res.status(400).json({ error: 'No hay token de usuario en la conexión Meta.', code: 'no_token' });
     }
@@ -997,6 +995,7 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
     const appId = String(req.body?.appId || '').trim();
     const appSecret = String(req.body?.appSecret || '').trim();
     const accessToken = req.body?.accessToken ? String(req.body.accessToken).trim() : '';
+    const tokenType = req.body?.tokenType === 'system_user' ? 'system_user' : 'evaluator';
     const rawSelected = req.body?.selectedAdAccountIds;
     const selectedInput = Array.isArray(rawSelected) ? rawSelected.map((x) => String(x)) : [];
 
@@ -1044,8 +1043,8 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
 
     const ins = await pool.query(
       `INSERT INTO meta_connections
-       (organization_id, created_by, app_id, app_secret, access_token, status, connected_at, account_name, selected_ad_account_ids)
-       VALUES ($1, $2, $3, $4, $5, 'connected', now(), $6, $7::jsonb) RETURNING id, connected_at`,
+       (organization_id, created_by, app_id, app_secret, access_token, status, connected_at, account_name, selected_ad_account_ids, token_type, token_expires_at, disconnect_reason)
+       VALUES ($1, $2, $3, $4, $5, 'connected', now(), $6, $7::jsonb, $8, $9, $10) RETURNING id, connected_at`,
       [
         req.organizationId,
         req.user.userId,
@@ -1054,8 +1053,20 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
         accessToken || null,
         verified.accountName,
         selectedJson,
+        tokenType,
+        null,
+        null,
       ],
     );
+
+    if (accessToken && tokenType === 'evaluator') {
+      await exchangeAndPersistLongLivedForConnection(
+        pool,
+        META_GRAPH_VERSION,
+        ins.rows[0].id,
+        req.organizationId,
+      );
+    }
 
     const selectedIds = parseAdAccountIdsFromDb(JSON.parse(selectedJson));
     const insightsReady = Boolean(accessToken && selectedIds.length > 0);
@@ -1085,6 +1096,7 @@ app.put('/api/meta/connections/:id/ad-accounts', verifyToken, scopeToOrganizatio
     const id = parseInt(req.params.id, 10);
     const raw = req.body?.adAccountIds;
     const selectedInput = Array.isArray(raw) ? raw.map((x) => String(x)) : [];
+    await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
     const { rows } = await pool.query(
       'SELECT id, access_token FROM meta_connections WHERE id = $1 AND organization_id = $2',
       [id, req.organizationId],
@@ -1130,7 +1142,7 @@ app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res)
     const period = String(req.query.period || '7d');
     const datePreset = datePresetFromDashboardPeriod(period);
 
-    const row = await getMetaConnectionForOrg(req.organizationId);
+    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
     if (!row || !String(row.access_token || '').trim()) {
       return res.status(400).json({
         error: 'Falta token de usuario en la conexión Meta.',
@@ -1203,7 +1215,7 @@ app.get('/api/meta/funnel', verifyToken, scopeToOrganization, async (req, res) =
     const period = String(req.query.period || '7d');
     const datePreset = datePresetFromDashboardPeriod(period);
 
-    const row = await getMetaConnectionForOrg(req.organizationId);
+    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
     if (!row || !String(row.access_token || '').trim()) {
       return res.status(400).json({
         error: 'Falta token de usuario en la conexión Meta.',
@@ -1369,6 +1381,18 @@ async function start() {
     logDbStartupError(err);
     throw err;
   }
+  const cronTz = process.env.CRON_TZ || 'Europe/Madrid';
+  cron.schedule(
+    '0 9 * * *',
+    () => {
+      runEvaluatorTokenRefreshCron(pool, META_GRAPH_VERSION).catch((e) =>
+        console.error('[meta-token-cron]', e),
+      );
+    },
+    { timezone: cronTz },
+  );
+  console.log(`[meta-token-cron] renovación diaria 09:00 (${cronTz}, tokens tipo evaluator)`);
+
   app.listen(PORT, HOST, () => {
     const where = HOST === '0.0.0.0' ? 'todas las interfaces' : HOST;
     console.log(`Servidor en http://${HOST === '0.0.0.0' ? 'localhost' : HOST}:${PORT} (${where})`);

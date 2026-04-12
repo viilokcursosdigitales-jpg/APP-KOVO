@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
 import { apiFetch } from './auth/api';
 import { useAuth } from './auth/AuthContext';
 import { alpha, ds } from './design-system/ds';
@@ -254,6 +255,7 @@ export default function ConexionMetaADS() {
   const [adAccounts, setAdAccounts] = useState<AdAccountOption[]>([]);
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [previewError, setPreviewError] = useState<string | null>(null);
+  const [showTokenReconnectBanner, setShowTokenReconnectBanner] = useState(false);
 
   const metaAtLimit =
     limits != null &&
@@ -276,10 +278,16 @@ export default function ConexionMetaADS() {
             app_id_hint: string;
             selected_ad_account_ids?: string[];
             insights_ready?: boolean;
+            disconnect_reason?: string | null;
+            token_type?: string;
           }>;
         };
+        const hasConnected = data.connections.some((x) => x.status === 'connected');
+        const tokenFail = data.connections.some((x) => x.disconnect_reason === 'token_refresh_failed');
+        setShowTokenReconnectBanner(tokenFail && !hasConnected);
         const c = data.connections.find((x) => x.status === 'connected');
         if (c) {
+          setShowTokenReconnectBanner(false);
           const sel = Array.isArray(c.selected_ad_account_ids) ? c.selected_ad_account_ids.map(String) : [];
           setSaved({
             connectionId: c.id,
@@ -388,6 +396,7 @@ export default function ConexionMetaADS() {
       setAccessToken('');
       setAdAccounts([]);
       setSelectedAccountIds([]);
+      setShowTokenReconnectBanner(false);
       setStep('success');
       await refreshUser();
       notifyMetaDashboardRefresh();
@@ -478,6 +487,7 @@ export default function ConexionMetaADS() {
               }
             : prev,
         );
+        setShowTokenReconnectBanner(false);
         setStep('success');
         await refreshUser();
         notifyMetaDashboardRefresh();
@@ -546,6 +556,7 @@ export default function ConexionMetaADS() {
       setAccessToken('');
       setAdAccounts([]);
       setSelectedAccountIds([]);
+      setShowTokenReconnectBanner(false);
       setStep('success');
       await refreshUser();
       notifyMetaDashboardRefresh();
@@ -637,6 +648,42 @@ export default function ConexionMetaADS() {
         @keyframes conexionMetaPop { from { transform: scale(0.6); opacity: 0; } to { transform: scale(1); opacity: 1; } }
         @keyframes conexionMetaDraw { to { stroke-dashoffset: 0; } }
       `}</style>
+      {showTokenReconnectBanner ? (
+        <div
+          style={{
+            marginBottom: 20,
+            padding: '16px 18px',
+            borderRadius: 14,
+            border: `1px solid ${ds.borderCard}`,
+            background: ds.warningBg,
+          }}
+        >
+          <div style={{ fontWeight: 700, fontSize: 15, marginBottom: 8, color: ds.textPrimary }}>
+            Tu conexión con Meta expiró
+          </div>
+          <p style={{ margin: 0, fontSize: 13, color: ds.textSecondary, lineHeight: 1.5 }}>
+            No pudimos renovar el access token automáticamente (revocado, caducado o permisos retirados). Vuelve a
+            conectar con un token nuevo; el resto de KOVO sigue funcionando con normalidad.
+          </p>
+          <Link
+            to="/meta-ads?tab=conexion"
+            onClick={() => setStep('guide')}
+            style={{
+              display: 'inline-flex',
+              marginTop: 12,
+              padding: '8px 18px',
+              borderRadius: 8,
+              background: ds.brand,
+              color: '#ffffff',
+              fontSize: 13,
+              fontWeight: 600,
+              textDecoration: 'none',
+            }}
+          >
+            Reconectar
+          </Link>
+        </div>
+      ) : null}
       {children}
     </div>
   );

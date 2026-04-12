@@ -56,6 +56,19 @@ async function initDb(pool) {
     ADD COLUMN IF NOT EXISTS selected_ad_account_ids JSONB NOT NULL DEFAULT '[]'::jsonb
   `);
 
+  await pool.query(`
+    ALTER TABLE meta_connections
+    ADD COLUMN IF NOT EXISTS token_expires_at TIMESTAMPTZ
+  `);
+  await pool.query(`
+    ALTER TABLE meta_connections
+    ADD COLUMN IF NOT EXISTS token_type TEXT DEFAULT 'evaluator'
+  `);
+  await pool.query(`
+    ALTER TABLE meta_connections
+    ADD COLUMN IF NOT EXISTS disconnect_reason TEXT
+  `);
+
   const { rows: orphans } = await pool.query(
     'SELECT * FROM users WHERE organization_id IS NULL',
   );
