@@ -78,6 +78,13 @@ Postgres **local** sin TLS: añade `DB_SSL=false`. Supabase casi siempre requier
 - Sustituye `tudominio.com` por tu dominio real (con `https://`, sin barra final).
 - Si solo usas un host (sin www), pon solo ese en `CORS_ORIGINS`.
 
+**Correo (invitaciones y “olvidé mi contraseña”):** sin configuración extra, la invitación se guarda en base de datos y la app puede mostrar el enlace para copiarlo, pero **no llega email**. Para enviar correos, elige una opción en `backend/.env` (ver `backend/.env.example`):
+
+- **Resend** (recomendado): `RESEND_API_KEY` y `RESEND_FROM` (dominio verificado; para pruebas rápidas existe `onboarding@resend.dev` con límites de Resend).
+- **SMTP**: `SMTP_HOST`, `SMTP_USER`, `SMTP_PASS`, etc.
+
+Además **`PUBLIC_APP_URL`** debe ser la URL pública del frontend (mismo dominio que usan los usuarios), para que los enlaces de los correos apunten bien.
+
 ### Arranque del backend
 
 Desde la **raíz del proyecto** (donde está el `package.json` que ejecuta el backend):

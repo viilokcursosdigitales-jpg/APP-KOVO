@@ -97,6 +97,7 @@ export default function Settings() {
   /** Si el correo no se envió por SMTP, el invitador puede copiar el enlace. */
   const [inviteManualLink, setInviteManualLink] = useState('');
   const [resendingInvitationId, setResendingInvitationId] = useState<number | null>(null);
+  const [mailTransport, setMailTransport] = useState<{ configured: boolean; transport: string } | null>(null);
 
   const [customRoles, setCustomRoles] = useState<CustomRoleRow[]>([]);
   const [newRoleLabel, setNewRoleLabel] = useState('');
@@ -138,11 +139,20 @@ export default function Settings() {
       invitations: InviteRow[];
       custom_roles?: CustomRoleRow[];
       limits: Limits;
+      mail?: { configured?: boolean; transport?: string };
     };
     setMembers(data.members);
     setInvitations(data.invitations);
     setCustomRoles(Array.isArray(data.custom_roles) ? data.custom_roles : []);
     setLocalLimits(data.limits);
+    if (data.mail && typeof data.mail.configured === 'boolean') {
+      setMailTransport({
+        configured: data.mail.configured,
+        transport: typeof data.mail.transport === 'string' ? data.mail.transport : 'none',
+      });
+    } else {
+      setMailTransport(null);
+    }
   }, []);
 
   useEffect(() => {
@@ -190,6 +200,7 @@ export default function Settings() {
     setInviteOkMsg('');
     setInviteManualLink('');
     setInviteLoading(true);
+    let inviteSucceeded = false;
     try {
       const invitedEmail = inviteEmail.trim();
       const res = await apiFetch('/api/organization/invite', {
@@ -206,6 +217,7 @@ export default function Settings() {
         setInviteErr(typeof d.error === 'string' ? d.error : 'No se pudo enviar');
         return;
       }
+      inviteSucceeded = true;
       const serverMsg = typeof d.message === 'string' ? d.message : '';
       setInviteOkMsg(
         serverMsg ||
@@ -217,10 +229,15 @@ export default function Settings() {
       }
       setInviteEmail('');
       setInviteOpen(false);
-      await loadTeam();
-      await refreshUser();
+    } catch {
+      setInviteErr('No se pudo conectar. Comprueba tu red o inténtalo en unos segundos.');
     } finally {
       setInviteLoading(false);
+    }
+    if (inviteSucceeded) {
+      void Promise.all([loadTeam(), refreshUser()]).catch(() => {
+        /* La invitación ya se creó; el listado se actualizará al recargar o al volver a abrir ajustes. */
+      });
     }
   }
 
@@ -783,6 +800,28 @@ export default function Settings() {
               Invitar miembro
             </button>
           </div>
+
+          {canManageOrg && mailTransport && !mailTransport.configured ? (
+            <div
+              style={{
+                marginBottom: 14,
+                padding: '12px 14px',
+                borderRadius: 10,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.warningBg,
+                color: ds.warningText,
+                fontSize: 12,
+                lineHeight: 1.45,
+              }}
+            >
+              <strong>Correo no configurado en el servidor.</strong> Las invitaciones se guardan, pero el invitado no
+              recibirá el email hasta que añadas <code style={{ fontSize: 11 }}>RESEND_API_KEY</code> (Resend) o{' '}
+              <code style={{ fontSize: 11 }}>SMTP_HOST</code>, <code style={{ fontSize: 11 }}>SMTP_USER</code> y{' '}
+              <code style={{ fontSize: 11 }}>SMTP_PASS</code> en el <code style={{ fontSize: 11 }}>.env</code> del
+              backend y reinicies el proceso. Consulta <code style={{ fontSize: 11 }}>backend/.env.example</code> y
+              comprueba que <code style={{ fontSize: 11 }}>PUBLIC_APP_URL</code> sea la URL pública de la app.
+            </div>
+          ) : null}
 
           <div style={{ overflowX: 'auto' }}>
             <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, tableLayout: 'fixed' }}>

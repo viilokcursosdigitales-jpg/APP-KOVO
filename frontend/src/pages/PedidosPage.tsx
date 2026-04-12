@@ -25,6 +25,8 @@ const INTERNAL_OPTIONS = [
   { value: 'cancelado', label: 'CANCELADO' },
 ] as const;
 
+type InternalStatusValue = (typeof INTERNAL_OPTIONS)[number]['value'];
+
 const MENSAJERO_OPTIONS = [
   { value: '', label: '—' },
   { value: 'motico', label: 'Motico' },
@@ -221,6 +223,9 @@ export default function PedidosPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCityKeys, setSelectedCityKeys] = useState<string[]>([]);
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<number>>(() => new Set());
+  const [bulkInternalStatus, setBulkInternalStatus] = useState<InternalStatusValue>('sin_confirmar');
+  const [bulkStatusApplying, setBulkStatusApplying] = useState(false);
+  const [bulkStatusFeedback, setBulkStatusFeedback] = useState('');
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
 
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
@@ -303,7 +308,7 @@ export default function PedidosPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) return;
+    if (!res.ok) return false;
     const data = (await res.json().catch(() => ({}))) as {
       internal_status?: string;
       price_override?: number | null;
@@ -337,7 +342,28 @@ export default function PedidosPage() {
       delete n[orderId];
       return n;
     });
+    return true;
   }, []);
+
+  const applyBulkInternalStatus = useCallback(async () => {
+    const ids = [...selectedOrderIds];
+    if (ids.length === 0) return;
+    setBulkStatusApplying(true);
+    setBulkStatusFeedback('');
+    try {
+      const results = await Promise.all(ids.map((id) => patchLocalFields(id, { internal_status: bulkInternalStatus })));
+      const ok = results.filter(Boolean).length;
+      const fail = ids.length - ok;
+      if (fail > 0) {
+        setBulkStatusFeedback(`${ok} actualizado(s), ${fail} error(es). Revisa la conexión o vuelve a intentar.`);
+      } else {
+        setBulkStatusFeedback(`${ok} pedido${ok === 1 ? '' : 's'} con estado ${INTERNAL_OPTIONS.find((o) => o.value === bulkInternalStatus)?.label ?? bulkInternalStatus}.`);
+      }
+      window.setTimeout(() => setBulkStatusFeedback(''), 6000);
+    } finally {
+      setBulkStatusApplying(false);
+    }
+  }, [selectedOrderIds, bulkInternalStatus, patchLocalFields]);
 
   const schedulePriceSave = useCallback(
     (orderId: number, raw: string) => {
@@ -804,33 +830,104 @@ export default function PedidosPage() {
             <div
               style={{
                 display: 'flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
-                gap: 10,
-                fontSize: 12,
-                color: ds.textSecondary,
+                flexDirection: 'column',
+                alignItems: 'flex-end',
+                gap: 8,
+                maxWidth: '100%',
               }}
             >
-              <span style={{ fontWeight: 600, color: ds.textPrimary }}>
-                {selectedOrderIds.size} pedido{selectedOrderIds.size === 1 ? '' : 's'} seleccionado
-                {selectedOrderIds.size === 1 ? '' : 's'}
-              </span>
-              <button
-                type="button"
-                onClick={clearOrderSelection}
+              <div
                 style={{
-                  padding: '6px 12px',
-                  borderRadius: 8,
-                  border: `1px solid ${ds.borderCard}`,
-                  background: ds.bgSubtle,
-                  color: ds.brand,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  cursor: 'pointer',
+                  display: 'flex',
+                  flexWrap: 'wrap',
+                  alignItems: 'center',
+                  justifyContent: 'flex-end',
+                  gap: 10,
+                  fontSize: 12,
+                  color: ds.textSecondary,
                 }}
               >
-                Quitar selección
-              </button>
+                <span style={{ fontWeight: 600, color: ds.textPrimary }}>
+                  {selectedOrderIds.size} pedido{selectedOrderIds.size === 1 ? '' : 's'} seleccionado
+                  {selectedOrderIds.size === 1 ? '' : 's'}
+                </span>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: ds.textMuted,
+                  }}
+                >
+                  Estado
+                  <select
+                    value={bulkInternalStatus}
+                    onChange={(e) => setBulkInternalStatus(e.target.value as InternalStatusValue)}
+                    disabled={bulkStatusApplying}
+                    style={{
+                      ...selectStyle,
+                      ...estadoSelectStyle(bulkInternalStatus),
+                      maxWidth: 200,
+                    }}
+                    aria-label="Estado a aplicar en masa"
+                  >
+                    {INTERNAL_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value} style={estadoOptionStyle(opt.value)}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  disabled={bulkStatusApplying}
+                  onClick={() => void applyBulkInternalStatus()}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.brand}`,
+                    background: ds.brandBg,
+                    color: ds.brand,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: bulkStatusApplying ? 'wait' : 'pointer',
+                    opacity: bulkStatusApplying ? 0.75 : 1,
+                  }}
+                >
+                  {bulkStatusApplying ? 'Aplicando…' : 'Aplicar estado'}
+                </button>
+                <button
+                  type="button"
+                  onClick={clearOrderSelection}
+                  disabled={bulkStatusApplying}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    background: ds.bgSubtle,
+                    color: ds.brand,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: bulkStatusApplying ? 'not-allowed' : 'pointer',
+                  }}
+                >
+                  Quitar selección
+                </button>
+              </div>
+              {bulkStatusFeedback ? (
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: bulkStatusFeedback.includes('error') ? ds.dangerText : ds.textSecondary,
+                    textAlign: 'right',
+                    lineHeight: 1.35,
+                  }}
+                >
+                  {bulkStatusFeedback}
+                </div>
+              ) : null}
             </div>
           ) : undefined
         }

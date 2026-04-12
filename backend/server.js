@@ -35,7 +35,13 @@ const {
   normalizeShopifyOrdersForApp,
   mapFinancialToBadge,
 } = require('./shopifyService');
-const { getPublicAppUrl, sendInvitationEmail, isMailConfigured } = require('./mailService');
+const {
+  getPublicAppUrl,
+  sendInvitationEmail,
+  isMailConfigured,
+  sendPasswordResetEmail,
+  getMailTransportInfo,
+} = require('./mailService');
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
 const hasFrontendDist = fs.existsSync(staticDir);
 
@@ -390,7 +396,7 @@ async function sendInvitationNotification(organizationId, email, role, token, in
 
 function logInvitationSmtp(email, acceptUrl, sendRes) {
   if (!isMailConfigured()) {
-    console.warn(`[invite] SMTP no configurado. Enlace invitación ${email}: ${acceptUrl}`);
+    console.warn(`[invite] Correo no configurado (Resend/SMTP). Enlace invitación ${email}: ${acceptUrl}`);
   } else if (!sendRes.ok && !sendRes.skipped) {
     console.error(`[invite] Fallo SMTP para ${email}:`, sendRes.error);
   } else if (process.env.NODE_ENV !== 'production' && sendRes.ok) {
@@ -850,10 +856,13 @@ app.post('/api/auth/forgot-password', async (req, res) => {
         row.id,
       ]);
 
+      const resetUrl = `${getPublicAppUrl()}/reset-password?token=${encodeURIComponent(token)}`;
+      const sendRes = await sendPasswordResetEmail({ to: em, resetUrl });
+      if (!sendRes.ok && !sendRes.skipped) {
+        console.error('[auth] No se pudo enviar correo de recuperación:', sendRes.error);
+      }
       if (process.env.NODE_ENV !== 'production') {
-        console.log(
-          `[dev] Recuperación contraseña para ${em}: token=${token}. URL: http://localhost:5173/reset-password?token=${token}`,
-        );
+        console.log(`[dev] Recuperación contraseña ${em}: ${resetUrl}`);
       }
     }
 
@@ -1234,11 +1243,13 @@ app.get(
         if (crErr && crErr.code !== '42P01') throw crErr;
       }
 
+      const mail = getMailTransportInfo();
       res.json({
         members,
         invitations,
         custom_roles,
         limits: await getUsageSnapshot(req.organizationId),
+        mail: { configured: mail.configured, transport: mail.transport },
       });
     } catch (e) {
       console.error(e);
@@ -3176,6 +3187,17 @@ async function start() {
     { timezone: cronTz },
   );
   console.log(`[meta-token-cron] renovación diaria 09:00 (${cronTz}, tokens tipo evaluator)`);
+
+  const mailInfo = getMailTransportInfo();
+  if (mailInfo.configured) {
+    console.log(
+      `[mail] Envío activo (${mailInfo.transport}). Invitaciones y “olvidé mi contraseña” usan correo si PUBLIC_APP_URL apunta al front.`,
+    );
+  } else {
+    console.warn(
+      '[mail] Sin RESEND_API_KEY ni SMTP_HOST/SMTP_USER/SMTP_PASS: no se envían correos. Añade una de las dos opciones (ver backend/.env.example).',
+    );
+  }
 
   app.listen(PORT, HOST, () => {
     const where = HOST === '0.0.0.0' ? 'todas las interfaces' : HOST;
