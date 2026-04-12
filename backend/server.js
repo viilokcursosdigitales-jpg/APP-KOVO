@@ -99,8 +99,8 @@ app.use(
   }),
 );
 
-const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY || '';
-const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET || '';
+const SHOPIFY_API_KEY = String(process.env.SHOPIFY_API_KEY || '').trim();
+const SHOPIFY_API_SECRET = String(process.env.SHOPIFY_API_SECRET || '').trim();
 const SHOPIFY_APP_URL = String(process.env.SHOPIFY_APP_URL || '').replace(/\/$/, '');
 const SHOPIFY_REDIRECT_URI =
   String(process.env.SHOPIFY_REDIRECT_URI || '').trim() ||
@@ -1398,6 +1398,7 @@ async function buildShopifyAuthorizeUrlForOrg(organizationId, shop) {
     `INSERT INTO shopify_oauth_states (state, organization_id, shop_domain, expires_at) VALUES ($1, $2, $3, $4)`,
     [state, organizationId, shop, expiresAt],
   );
+  console.log('State guardado en BD:', { state, shop, expiresAt });
   const params = new URLSearchParams({
     client_id: SHOPIFY_API_KEY,
     scope: SHOPIFY_SCOPES,
@@ -1531,6 +1532,7 @@ app.get('/api/shopify/callback', async (req, res) => {
       return redirectErr();
     }
 
+    console.log('Raw callback query:', JSON.stringify(req.query));
     console.log('[shopify callback] antes de verificar HMAC');
     const hmacOk = verifyShopifyOAuthHmac(query, SHOPIFY_API_SECRET);
     if (!hmacOk) {
@@ -1853,6 +1855,16 @@ async function start() {
       '[shopify] La tabla public.shopify_oauth_states no existe tras initDb. Ejecuta el SQL de backend/db/schema.sql en la BD de producción o despliega la versión actual del backend y reinicia.',
     );
   }
+
+  const rawShopifySecretEnv = process.env.SHOPIFY_API_SECRET;
+  console.log(
+    'SHOPIFY_API_SECRET length:',
+    rawShopifySecretEnv != null ? String(rawShopifySecretEnv).trim().length : '(env no definida)',
+  );
+  console.log(
+    'SHOPIFY_API_SECRET has spaces:',
+    rawShopifySecretEnv != null && String(rawShopifySecretEnv).includes(' '),
+  );
 
   if (shopifyConfigured()) {
     console.log(

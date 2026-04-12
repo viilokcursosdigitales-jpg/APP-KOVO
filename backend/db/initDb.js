@@ -97,6 +97,14 @@ async function initDb(pool) {
     `CREATE INDEX IF NOT EXISTS idx_shopify_oauth_states_expires ON shopify_oauth_states (expires_at)`,
   );
 
+  const tableCheck = await pool.query(`
+    SELECT EXISTS (
+      SELECT 1 FROM information_schema.tables
+      WHERE table_schema = 'public' AND table_name = 'shopify_oauth_states'
+    ) AS table_exists
+  `);
+  console.log('shopify_oauth_states existe:', tableCheck.rows[0].table_exists);
+
   const { rows: orphans } = await pool.query(
     'SELECT * FROM users WHERE organization_id IS NULL',
   );
