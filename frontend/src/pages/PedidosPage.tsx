@@ -220,6 +220,8 @@ export default function PedidosPage() {
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCityKeys, setSelectedCityKeys] = useState<string[]>([]);
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<number>>(() => new Set());
+  const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
 
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
@@ -446,6 +448,54 @@ export default function PedidosPage() {
       ),
     [shopifyOrders, filter, selectedCityKeys],
   );
+
+  const filteredShopifyIds = useMemo(() => filteredShopify.map((r) => r.id), [filteredShopify]);
+
+  useEffect(() => {
+    const valid = new Set(shopifyOrders.map((o) => o.id));
+    setSelectedOrderIds((prev) => {
+      const next = new Set([...prev].filter((id) => valid.has(id)));
+      if (next.size === prev.size && [...prev].every((id) => next.has(id))) return prev;
+      return next;
+    });
+  }, [shopifyOrders]);
+
+  useEffect(() => {
+    const el = selectAllCheckboxRef.current;
+    if (!el) return;
+    const n = filteredShopifyIds.filter((id) => selectedOrderIds.has(id)).length;
+    el.indeterminate = filteredShopifyIds.length > 0 && n > 0 && n < filteredShopifyIds.length;
+  }, [filteredShopifyIds, selectedOrderIds]);
+
+  const allFilteredSelected =
+    filteredShopifyIds.length > 0 && filteredShopifyIds.every((id) => selectedOrderIds.has(id));
+
+  const toggleOrderSelected = useCallback((id: number) => {
+    setSelectedOrderIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAllFiltered = useCallback(() => {
+    setSelectedOrderIds((prev) => {
+      const next = new Set(prev);
+      const allOn =
+        filteredShopifyIds.length > 0 && filteredShopifyIds.every((id) => next.has(id));
+      if (allOn) {
+        for (const id of filteredShopifyIds) next.delete(id);
+      } else {
+        for (const id of filteredShopifyIds) next.add(id);
+      }
+      return next;
+    });
+  }, [filteredShopifyIds]);
+
+  const clearOrderSelection = useCallback(() => {
+    setSelectedOrderIds(new Set());
+  }, []);
 
   const filteredDemo = useMemo(
     () =>
@@ -749,14 +799,62 @@ export default function PedidosPage() {
               }`
             : `Mostrando ${filteredDemo.length} resultados · demo`
         }
+        action={
+          useLive && selectedOrderIds.size > 0 ? (
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: 10,
+                fontSize: 12,
+                color: ds.textSecondary,
+              }}
+            >
+              <span style={{ fontWeight: 600, color: ds.textPrimary }}>
+                {selectedOrderIds.size} pedido{selectedOrderIds.size === 1 ? '' : 's'} seleccionado
+                {selectedOrderIds.size === 1 ? '' : 's'}
+              </span>
+              <button
+                type="button"
+                onClick={clearOrderSelection}
+                style={{
+                  padding: '6px 12px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgSubtle,
+                  color: ds.brand,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Quitar selección
+              </button>
+            </div>
+          ) : undefined
+        }
       >
         {useLive && shopifyLoading && shopifyOrders.length === 0 ? (
           <div style={{ padding: 24, color: ds.textMuted, fontSize: 13 }}>Cargando pedidos de Shopify…</div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ ...tableBase, minWidth: useLive ? 1420 : 1080 }}>
+            <table style={{ ...tableBase, minWidth: useLive ? 1464 : 1080 }}>
               <thead>
                 <tr>
+                  {useLive ? (
+                    <Th style={{ width: 44, textAlign: 'center', paddingLeft: 12, paddingRight: 8 }}>
+                      <input
+                        ref={selectAllCheckboxRef}
+                        type="checkbox"
+                        checked={allFilteredSelected}
+                        onChange={toggleSelectAllFiltered}
+                        disabled={filteredShopifyIds.length === 0}
+                        aria-label="Seleccionar todos los pedidos visibles en la tabla"
+                        style={{ accentColor: ds.brand, width: 16, height: 16, cursor: 'pointer' }}
+                      />
+                    </Th>
+                  ) : null}
                   <Th>Pedido</Th>
                   <Th>Cliente</Th>
                   {useLive ? (
@@ -780,6 +878,18 @@ export default function PedidosPage() {
                   ? filteredShopify.map((o, i, arr) => {
                       return (
                         <tr key={o.id}>
+                          <Td
+                            isLast={i === arr.length - 1}
+                            style={{ textAlign: 'center', verticalAlign: 'middle' }}
+                          >
+                            <input
+                              type="checkbox"
+                              checked={selectedOrderIds.has(o.id)}
+                              onChange={() => toggleOrderSelected(o.id)}
+                              aria-label={`Seleccionar pedido ${o.orderName}`}
+                              style={{ accentColor: ds.brand, width: 16, height: 16, cursor: 'pointer' }}
+                            />
+                          </Td>
                           <Td isLast={i === arr.length - 1}>
                             <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
                             <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
