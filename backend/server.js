@@ -30,6 +30,7 @@ const {
   verifyShopifyOAuthHmac,
   verifyShopifyWebhookHmac,
   shopifyRequest,
+  shopifySyncFirstLineItemQuantityAndPrice,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
   mapFinancialToBadge,
@@ -1602,7 +1603,7 @@ const SHOPIFY_MOTICO_STATUSES = new Set([
 ]);
 
 const SHOPIFY_ORDER_LIST_FIELDS =
-  'id,name,email,created_at,total_price,currency,financial_status,fulfillment_status,customer,order_number,line_items';
+  'id,name,email,created_at,total_price,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address';
 
 async function loadLocalFieldsMap(organizationId, orderIds) {
   if (!orderIds.length) return new Map();
@@ -2037,8 +2038,8 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       }
       motico_status = ms;
     }
-    await pool.query(
-      `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status)
+
+    const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status)
        VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (organization_id, shopify_order_id) DO UPDATE SET
          internal_status = EXCLUDED.internal_status,
@@ -2046,9 +2047,60 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
          quantity_override = EXCLUDED.quantity_override,
          mensajero = EXCLUDED.mensajero,
          motico_status = EXCLUDED.motico_status,
-         updated_at = now()`,
-      [req.organizationId, orderId, internal_status, price_override, quantity_override, mensajero, motico_status],
-    );
+         updated_at = now()`;
+    const insertParams = [
+      req.organizationId,
+      orderId,
+      internal_status,
+      price_override,
+      quantity_override,
+      mensajero,
+      motico_status,
+    ];
+
+    const syncToShopify = body.sync_to_shopify === true;
+    if (syncToShopify) {
+      if (price_override == null || quantity_override == null) {
+        return res.status(400).json({
+          error: 'Para sincronizar con Shopify envía precio y cantidad explícitos (no vacíos).',
+        });
+      }
+      const unit = Number(price_override) / Number(quantity_override);
+      if (!Number.isFinite(unit) || unit < 0) {
+        return res.status(400).json({ error: 'Precio o cantidad no válidos para calcular precio unitario' });
+      }
+      const dbClient = await pool.connect();
+      try {
+        await dbClient.query('BEGIN');
+        await dbClient.query(insertSql, insertParams);
+        const syncRes = await shopifySyncFirstLineItemQuantityAndPrice(
+          conn.shop_domain,
+          conn.access_token,
+          orderId,
+          quantity_override,
+          unit,
+        );
+        if (!syncRes.ok) {
+          await dbClient.query('ROLLBACK');
+          return res.status(422).json({
+            error: syncRes.error || 'Shopify rechazó la actualización del pedido',
+          });
+        }
+        await dbClient.query('COMMIT');
+      } catch (txErr) {
+        try {
+          await dbClient.query('ROLLBACK');
+        } catch {
+          /* noop */
+        }
+        throw txErr;
+      } finally {
+        dbClient.release();
+      }
+    } else {
+      await pool.query(insertSql, insertParams);
+    }
+
     res.json({
       ok: true,
       internal_status,
@@ -2060,6 +2112,66 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al guardar campos del pedido' });
+  }
+});
+
+app.get('/api/motico/settings', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT logo_data_url, updated_at FROM motico_org_settings WHERE organization_id = $1`,
+      [req.organizationId],
+    );
+    res.json({
+      logo_data_url: rows[0]?.logo_data_url || null,
+      updated_at: rows[0]?.updated_at || null,
+    });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Falta la tabla motico_org_settings. Reinicia el backend para ejecutar initDb.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    res.status(500).json({ error: 'Error al leer ajustes Motico' });
+  }
+});
+
+app.put('/api/motico/settings', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    if (!Object.prototype.hasOwnProperty.call(body, 'logo_data_url')) {
+      return res.status(400).json({ error: 'logo_data_url requerido (o null para quitar)' });
+    }
+    const raw = body.logo_data_url;
+    let logo = null;
+    if (raw !== null && raw !== '') {
+      if (typeof raw !== 'string' || raw.length > 600000) {
+        return res.status(400).json({ error: 'Logo demasiado grande (máx. ~450 KB en base64)' });
+      }
+      if (!/^data:image\/(png|jpeg|jpg);base64,/i.test(raw)) {
+        return res.status(400).json({ error: 'Formato no válido: usa PNG o JPEG en base64 (data:image/...)' });
+      }
+      logo = raw;
+    }
+    await pool.query(
+      `INSERT INTO motico_org_settings (organization_id, logo_data_url, updated_at)
+       VALUES ($1, $2, now())
+       ON CONFLICT (organization_id) DO UPDATE SET
+         logo_data_url = EXCLUDED.logo_data_url,
+         updated_at = now()`,
+      [req.organizationId, logo],
+    );
+    res.json({ ok: true, logo_data_url: logo });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Falta la tabla motico_org_settings. Reinicia el backend para ejecutar initDb.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    res.status(500).json({ error: 'Error al guardar logo Motico' });
   }
 });
 

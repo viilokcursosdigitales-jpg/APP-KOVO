@@ -85,6 +85,114 @@ async function shopifyRequest(shop, accessToken, endpoint, apiVersion = DEFAULT_
 }
 
 /**
+ * GET/PUT/PATCH a la Admin API (JSON).
+ * @param {string} shop
+ * @param {string} accessToken
+ * @param {'GET'|'PUT'|'POST'|'DELETE'} method
+ * @param {string} endpoint path relativo, ej. orders/123.json?fields=line_items
+ * @param {object | null} body objeto serializado a JSON (omitir en GET)
+ */
+async function shopifyJsonRequest(shop, accessToken, method, endpoint, body = null, apiVersion = DEFAULT_API_VERSION) {
+  const domain = sanitizeShopDomain(shop);
+  if (!domain || !accessToken) {
+    return { ok: false, status: 400, error: 'shop_or_token_invalid', data: null };
+  }
+  const path = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
+  const url = `https://${domain}/admin/api/${apiVersion}/${path}`;
+  let res;
+  try {
+    res = await fetch(url, {
+      method,
+      headers: {
+        'X-Shopify-Access-Token': accessToken,
+        'Content-Type': 'application/json',
+      },
+      body: body != null && method !== 'GET' ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    return { ok: false, status: 503, error: e.message || 'network', data: null };
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    return {
+      ok: false,
+      status: res.status,
+      error: (data.errors && JSON.stringify(data.errors)) || data.error || res.statusText,
+      data,
+    };
+  }
+  return { ok: true, status: res.status, data };
+}
+
+/**
+ * Actualiza la primera línea del pedido con cantidad y precio unitario (REST Admin).
+ * Pedidos con varias líneas: solo se modifica la primera; el resto mantiene cantidad.
+ * @returns {Promise<{ ok: boolean, error?: string, data?: object }>}
+ */
+async function shopifySyncFirstLineItemQuantityAndPrice(shop, accessToken, orderId, quantity, unitPrice) {
+  const oid = Number(orderId);
+  if (!Number.isFinite(oid) || oid <= 0) {
+    return { ok: false, error: 'ID de pedido inválido' };
+  }
+  const q = parseInt(String(quantity), 10);
+  if (!Number.isFinite(q) || q < 1) {
+    return { ok: false, error: 'La cantidad debe ser al menos 1 para sincronizar con Shopify' };
+  }
+  const unit = Number(unitPrice);
+  if (!Number.isFinite(unit) || unit < 0) {
+    return { ok: false, error: 'Precio unitario no válido' };
+  }
+  const priceStr = unit.toFixed(2);
+  const getRes = await shopifyJsonRequest(
+    shop,
+    accessToken,
+    'GET',
+    `orders/${oid}.json?fields=id,line_items`,
+  );
+  if (!getRes.ok || !getRes.data || !getRes.data.order) {
+    return { ok: false, error: getRes.error || 'No se pudo leer el pedido en Shopify' };
+  }
+  const lineItems = getRes.data.order.line_items || [];
+  if (!lineItems.length) {
+    return { ok: false, error: 'El pedido no tiene líneas en Shopify' };
+  }
+  const line_items = lineItems.map((li, idx) => {
+    if (idx === 0) {
+      return { id: li.id, quantity: q, price: priceStr };
+    }
+    const qKeep = parseInt(String(li.quantity), 10);
+    return { id: li.id, quantity: Number.isFinite(qKeep) && qKeep >= 0 ? qKeep : 1 };
+  });
+  const putRes = await shopifyJsonRequest(shop, accessToken, 'PUT', `orders/${oid}.json`, {
+    order: { id: oid, line_items },
+  });
+  if (!putRes.ok) {
+    return { ok: false, error: putRes.error || 'Shopify rechazó la actualización del pedido' };
+  }
+  return { ok: true, data: putRes.data };
+}
+
+function pickShippingAddress(o) {
+  const s = o.shipping_address;
+  if (!s || typeof s !== 'object') return null;
+  const name = [s.first_name, s.last_name].filter(Boolean).join(' ').trim();
+  const lines = [s.address1, s.address2].filter(Boolean).map(String);
+  const cityLine = [s.city, s.province, s.zip].filter(Boolean).join(', ');
+  return {
+    name: name || '—',
+    address1: s.address1 || '',
+    address2: s.address2 || '',
+    city: s.city || '',
+    province: s.province || '',
+    zip: s.zip || '',
+    country: s.country || '',
+    phone: s.phone || '',
+    lines,
+    cityLine,
+  };
+}
+
+/**
  * Registra el webhook app/uninstalled en la tienda (tras OAuth).
  * La URL debe ser HTTPS pública y coincidir con la app en Partners.
  */
@@ -157,6 +265,12 @@ function normalizeShopifyOrdersForApp(apiData) {
           .filter((n) => Number.isFinite(n)),
       ),
     ];
+    const lineItemsDetail = lineItems.map((li) => ({
+      id: li.id,
+      title: String(li.title || li.name || '').trim() || 'Producto',
+      quantity: parseInt(String(li.quantity), 10) || 0,
+      price: li.price != null ? String(li.price) : '',
+    }));
     return {
       id: o.id,
       orderName,
@@ -171,6 +285,8 @@ function normalizeShopifyOrdersForApp(apiData) {
       badgeVariant: b.variant,
       defaultQuantity,
       productIds,
+      shippingAddress: pickShippingAddress(o),
+      lineItemsDetail,
     };
   });
 }
@@ -192,6 +308,8 @@ module.exports = {
   verifyShopifyOAuthHmac,
   verifyShopifyWebhookHmac,
   shopifyRequest,
+  shopifyJsonRequest,
+  shopifySyncFirstLineItemQuantityAndPrice,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
   mapFinancialToBadge,

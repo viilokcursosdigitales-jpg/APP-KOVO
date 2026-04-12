@@ -126,3 +126,9 @@ CREATE TABLE IF NOT EXISTS shopify_product_marketing_targets (
 );
 
 CREATE INDEX IF NOT EXISTS idx_shopify_mkt_targets_org ON shopify_product_marketing_targets (organization_id);
+
+CREATE TABLE IF NOT EXISTS motico_org_settings (
+  organization_id INTEGER PRIMARY KEY REFERENCES organizations (id) ON DELETE CASCADE,
+  logo_data_url TEXT,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);

@@ -153,6 +153,14 @@ async function initDb(pool) {
     `CREATE INDEX IF NOT EXISTS idx_shopify_mkt_targets_org ON shopify_product_marketing_targets (organization_id)`,
   );
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS motico_org_settings (
+      organization_id INTEGER PRIMARY KEY REFERENCES organizations (id) ON DELETE CASCADE,
+      logo_data_url TEXT,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    )
+  `);
+
   const tableCheck = await pool.query(`
     SELECT EXISTS (
       SELECT 1 FROM information_schema.tables
