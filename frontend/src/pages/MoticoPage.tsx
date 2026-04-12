@@ -3,10 +3,11 @@ import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
-import { IconTruck } from '../design-system/icons';
+import { IconPencil, IconTruck } from '../design-system/icons';
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
+import { labelStyle } from './authStyles';
 import {
   buildMoticoGuideLabelData,
   GUIAS_POR_HOJA,
@@ -92,6 +93,46 @@ const inputStyle: CSSProperties = {
   fontSize: 12,
 };
 
+const modalFieldStyle: CSSProperties = {
+  width: '100%',
+  maxWidth: '100%',
+  boxSizing: 'border-box',
+  padding: '8px 10px',
+  borderRadius: 8,
+  border: `1px solid ${ds.borderCard}`,
+  background: ds.bgCard,
+  color: ds.textPrimary,
+  fontSize: 13,
+  marginTop: 8,
+};
+
+type ShippingAddressDraft = {
+  province: string;
+  city: string;
+  address1: string;
+  address2: string;
+  zip: string;
+  country: string;
+  phone: string;
+};
+
+function emptyShippingDraft(): ShippingAddressDraft {
+  return { province: '', city: '', address1: '', address2: '', zip: '', country: '', phone: '' };
+}
+
+function draftFromShipping(sa: MoticoShippingAddress | null): ShippingAddressDraft {
+  if (!sa) return emptyShippingDraft();
+  return {
+    province: sa.province || '',
+    city: sa.city || '',
+    address1: sa.address1 || '',
+    address2: sa.address2 || '',
+    zip: sa.zip || '',
+    country: sa.country || '',
+    phone: sa.phone || '',
+  };
+}
+
 function formatMoneyAmount(n: number, currency: string) {
   const cur = currency && currency.length === 3 ? currency : 'EUR';
   try {
@@ -170,6 +211,10 @@ export default function MoticoPage() {
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [logoSaving, setLogoSaving] = useState(false);
   const [logoMessage, setLogoMessage] = useState('');
+
+  const [addressModalOrder, setAddressModalOrder] = useState<MoticoOrderRow | null>(null);
+  const [addressDraft, setAddressDraft] = useState<ShippingAddressDraft>(() => emptyShippingDraft());
+  const [addressSaving, setAddressSaving] = useState(false);
 
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
@@ -481,6 +526,70 @@ export default function MoticoPage() {
     },
     [patchLocalFields],
   );
+
+  const openShippingEditor = useCallback((o: MoticoOrderRow) => {
+    setSyncError('');
+    setAddressDraft(draftFromShipping(o.shippingAddress));
+    setAddressModalOrder(o);
+  }, []);
+
+  const saveShippingAddress = useCallback(async () => {
+    if (!addressModalOrder) return;
+    setAddressSaving(true);
+    setSyncError('');
+    try {
+      const res = await apiFetch(`/api/shopify/orders/${addressModalOrder.id}/shipping-address`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(addressDraft),
+      });
+      const data = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        shippingAddress?: MoticoShippingAddress | null;
+      };
+      if (!res.ok) {
+        setSyncError(typeof data.error === 'string' ? data.error : 'No se pudo guardar la dirección');
+        return;
+      }
+      const nextSa = data.shippingAddress;
+      setOrders((prev) =>
+        prev.map((row) => {
+          if (row.id !== addressModalOrder.id) return row;
+          return normalizeRow({
+            ...row,
+            shippingAddress: nextSa
+              ? {
+                  name: nextSa.name || row.shippingAddress?.name || '',
+                  address1: nextSa.address1 || '',
+                  address2: nextSa.address2 || '',
+                  city: nextSa.city || '',
+                  province: nextSa.province || '',
+                  zip: nextSa.zip || '',
+                  country: nextSa.country || '',
+                  phone: nextSa.phone || '',
+                }
+              : null,
+          });
+        }),
+      );
+      setAddressModalOrder(null);
+      setAddressDraft(emptyShippingDraft());
+    } finally {
+      setAddressSaving(false);
+    }
+  }, [addressModalOrder, addressDraft]);
+
+  useEffect(() => {
+    if (!addressModalOrder) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setAddressModalOrder(null);
+        setAddressDraft(emptyShippingDraft());
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [addressModalOrder]);
 
   const onLogoFile = useCallback(
     (file: File | null) => {
@@ -904,7 +1013,7 @@ export default function MoticoPage() {
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ ...tableBase, minWidth: 1180 }}>
+            <table style={{ ...tableBase, minWidth: 1520 }}>
               <thead>
                 <tr>
                   <Th>
@@ -920,6 +1029,10 @@ export default function MoticoPage() {
                   </Th>
                   <Th>Pedido</Th>
                   <Th>Cliente</Th>
+                  <Th>Departamento</Th>
+                  <Th>Ciudad</Th>
+                  <Th>Dirección</Th>
+                  <Th style={{ width: 52 }} aria-label="Editar dirección" />
                   <Th>Fecha</Th>
                   <Th>Precio</Th>
                   <Th>Cant.</Th>
@@ -932,6 +1045,8 @@ export default function MoticoPage() {
               <tbody>
                 {filteredOrders.map((o, i, arr) => {
                   const meta = STATUS_META[o.motico_status] || STATUS_META.confirmado;
+                  const sa = o.shippingAddress;
+                  const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
                   return (
                     <tr
                       key={o.id}
@@ -954,6 +1069,46 @@ export default function MoticoPage() {
                         <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
                       </Td>
                       <Td isLast={i === arr.length - 1}>{o.client}</Td>
+                      <Td isLast={i === arr.length - 1}>
+                        <span style={{ fontSize: 11 }}>{sa?.province?.trim() || '—'}</span>
+                      </Td>
+                      <Td isLast={i === arr.length - 1}>
+                        <span style={{ fontSize: 11 }}>{sa?.city?.trim() || '—'}</span>
+                      </Td>
+                      <Td isLast={i === arr.length - 1}>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            maxWidth: 220,
+                            wordBreak: 'break-word',
+                            lineHeight: 1.35,
+                            color: ds.textSecondary,
+                          }}
+                        >
+                          {dirLine || '—'}
+                        </div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={{ textAlign: 'center', verticalAlign: 'middle' }}>
+                        <button
+                          type="button"
+                          aria-label={`Editar dirección de envío de ${o.orderName}`}
+                          onClick={() => openShippingEditor(o)}
+                          style={{
+                            padding: 6,
+                            borderRadius: 8,
+                            border: `1px solid ${ds.borderCard}`,
+                            background: ds.bgCard,
+                            color: ds.brand,
+                            cursor: 'pointer',
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            lineHeight: 0,
+                          }}
+                        >
+                          <IconPencil size={16} />
+                        </button>
+                      </Td>
                       <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
                       <Td isLast={i === arr.length - 1}>
                         <input
@@ -1046,6 +1201,164 @@ export default function MoticoPage() {
           </div>
         ) : null}
       </DataTable>
+
+      {addressModalOrder ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.18)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+            zIndex: 100,
+          }}
+          role="dialog"
+          aria-modal
+          aria-labelledby="motico-addr-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setAddressModalOrder(null);
+              setAddressDraft(emptyShippingDraft());
+            }
+          }}
+        >
+          <div
+            style={{
+              background: ds.bgCard,
+              borderRadius: 16,
+              padding: 28,
+              width: '100%',
+              maxWidth: 440,
+              border: `1px solid ${ds.borderCard}`,
+              maxHeight: '90vh',
+              overflowY: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              id="motico-addr-title"
+              style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 700, color: ds.textPrimary }}
+            >
+              Dirección de envío
+            </h3>
+            <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted, lineHeight: 1.4 }}>
+              {addressModalOrder.orderName} · Se actualiza en Shopify.
+            </p>
+            <label style={{ ...labelStyle, display: 'block' }}>
+              Departamento / provincia
+              <input
+                type="text"
+                value={addressDraft.province}
+                onChange={(e) => setAddressDraft((d) => ({ ...d, province: e.target.value }))}
+                style={modalFieldStyle}
+                autoComplete="address-level1"
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Ciudad
+              <input
+                type="text"
+                value={addressDraft.city}
+                onChange={(e) => setAddressDraft((d) => ({ ...d, city: e.target.value }))}
+                style={modalFieldStyle}
+                autoComplete="address-level2"
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Dirección (línea 1)
+              <input
+                type="text"
+                value={addressDraft.address1}
+                onChange={(e) => setAddressDraft((d) => ({ ...d, address1: e.target.value }))}
+                style={modalFieldStyle}
+                autoComplete="address-line1"
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Dirección (línea 2, opcional)
+              <input
+                type="text"
+                value={addressDraft.address2}
+                onChange={(e) => setAddressDraft((d) => ({ ...d, address2: e.target.value }))}
+                style={modalFieldStyle}
+                autoComplete="address-line2"
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Código postal
+              <input
+                type="text"
+                value={addressDraft.zip}
+                onChange={(e) => setAddressDraft((d) => ({ ...d, zip: e.target.value }))}
+                style={modalFieldStyle}
+                autoComplete="postal-code"
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              País
+              <input
+                type="text"
+                value={addressDraft.country}
+                onChange={(e) => setAddressDraft((d) => ({ ...d, country: e.target.value }))}
+                style={modalFieldStyle}
+                autoComplete="country-name"
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Teléfono
+              <input
+                type="text"
+                value={addressDraft.phone}
+                onChange={(e) => setAddressDraft((d) => ({ ...d, phone: e.target.value }))}
+                style={modalFieldStyle}
+                autoComplete="tel"
+              />
+            </label>
+            <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                disabled={addressSaving}
+                onClick={() => {
+                  setAddressModalOrder(null);
+                  setAddressDraft(emptyShippingDraft());
+                }}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textSecondary,
+                  fontWeight: 600,
+                  cursor: addressSaving ? 'not-allowed' : 'pointer',
+                  fontSize: 13,
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={addressSaving}
+                onClick={() => void saveShippingAddress()}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.brand}`,
+                  background: ds.brandBg,
+                  color: ds.brand,
+                  fontWeight: 600,
+                  cursor: addressSaving ? 'wait' : 'pointer',
+                  fontSize: 13,
+                  opacity: addressSaving ? 0.85 : 1,
+                }}
+              >
+                {addressSaving ? 'Guardando…' : 'Guardar en Shopify'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </>
   );
 }

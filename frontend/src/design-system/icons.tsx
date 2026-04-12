@@ -130,6 +130,16 @@ export function IconRefresh({ size = 13 }: { size?: number }) {
   );
 }
 
+export function IconPencil({ size = 16 }: { size?: number }) {
+  return strokeSvg(
+    <>
+      <path d="M12 20h9" />
+      <path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4L16.5 3.5z" />
+    </>,
+    size,
+  );
+}
+
 export function IconEmpty({ size = 40 }: { size?: number }) {
   return (
     <svg

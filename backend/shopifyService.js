@@ -173,6 +173,65 @@ async function shopifySyncFirstLineItemQuantityAndPrice(shop, accessToken, order
   return { ok: true, data: putRes.data };
 }
 
+/**
+ * Actualiza la dirección de envío del pedido en Shopify (REST Admin).
+ * Conserva nombre y códigos de país/provincia si no se envían en updates.
+ * @param {Record<string, string>} updates province, city, address1, address2, zip, country, phone (opcionales por clave)
+ * @returns {Promise<{ ok: boolean, error?: string, shippingAddress?: object }>}
+ */
+async function shopifyUpdateOrderShippingAddress(shop, accessToken, orderId, updates) {
+  const oid = Number(orderId);
+  if (!Number.isFinite(oid) || oid <= 0) {
+    return { ok: false, error: 'ID de pedido inválido' };
+  }
+  const patch = updates && typeof updates === 'object' ? updates : {};
+  const getRes = await shopifyJsonRequest(
+    shop,
+    accessToken,
+    'GET',
+    `orders/${oid}.json?fields=id,shipping_address,customer`,
+  );
+  if (!getRes.ok || !getRes.data || !getRes.data.order) {
+    return { ok: false, error: getRes.error || 'No se pudo leer el pedido en Shopify' };
+  }
+  const ord = getRes.data.order;
+  const cur = ord.shipping_address && typeof ord.shipping_address === 'object' ? ord.shipping_address : {};
+  const customer = ord.customer && typeof ord.customer === 'object' ? ord.customer : {};
+  const field = (k, curVal) => {
+    if (Object.prototype.hasOwnProperty.call(patch, k)) {
+      return patch[k] == null ? '' : String(patch[k]).trim();
+    }
+    return String(curVal ?? '').trim();
+  };
+
+  const shipping_address = {
+    first_name: cur.first_name || customer.first_name || '',
+    last_name: cur.last_name || customer.last_name || '',
+    address1: field('address1', cur.address1),
+    address2: field('address2', cur.address2),
+    city: field('city', cur.city),
+    province: field('province', cur.province),
+    zip: field('zip', cur.zip),
+    country: field('country', cur.country),
+    phone: field('phone', cur.phone),
+  };
+  if (cur.country_code) shipping_address.country_code = cur.country_code;
+  if (cur.province_code) shipping_address.province_code = cur.province_code;
+
+  const putRes = await shopifyJsonRequest(shop, accessToken, 'PUT', `orders/${oid}.json`, {
+    order: { id: oid, shipping_address },
+  });
+  if (!putRes.ok) {
+    return { ok: false, error: putRes.error || 'Shopify rechazó la actualización de la dirección' };
+  }
+  const outOrd = putRes.data && putRes.data.order;
+  const sa = outOrd && outOrd.shipping_address;
+  const normalized = sa
+    ? pickShippingAddress({ shipping_address: sa, billing_address: null })
+    : pickShippingAddress(ord);
+  return { ok: true, shippingAddress: normalized };
+}
+
 function resolveOrderAddress(o) {
   const candidates = [o.shipping_address, o.billing_address];
   for (const raw of candidates) {
@@ -328,6 +387,7 @@ module.exports = {
   shopifyRequest,
   shopifyJsonRequest,
   shopifySyncFirstLineItemQuantityAndPrice,
+  shopifyUpdateOrderShippingAddress,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
   mapFinancialToBadge,

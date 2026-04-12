@@ -31,6 +31,7 @@ const {
   verifyShopifyWebhookHmac,
   shopifyRequest,
   shopifySyncFirstLineItemQuantityAndPrice,
+  shopifyUpdateOrderShippingAddress,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
   mapFinancialToBadge,
@@ -2754,6 +2755,58 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
     res.status(500).json({ error: 'Error al guardar campos del pedido' });
   }
 });
+
+app.put(
+  '/api/shopify/orders/:orderId/shipping-address',
+  verifyToken,
+  scopeToOrganization,
+  async (req, res) => {
+    try {
+      const orderId = parseInt(String(req.params.orderId), 10);
+      if (!Number.isFinite(orderId) || orderId <= 0) {
+        return res.status(400).json({ error: 'ID de pedido inválido' });
+      }
+      const conn = await getActiveShopifyConnection(req.organizationId);
+      if (!conn) {
+        return res.status(400).json({ error: 'No hay tienda conectada', code: 'not_connected' });
+      }
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const allowed = ['province', 'city', 'address1', 'address2', 'zip', 'country', 'phone'];
+      const updates = {};
+      for (const k of allowed) {
+        if (Object.prototype.hasOwnProperty.call(body, k)) {
+          updates[k] = body[k] == null ? '' : String(body[k]);
+        }
+      }
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: 'Envía al menos un campo de dirección (province, city, address1, …)' });
+      }
+      const r = await shopifyUpdateOrderShippingAddress(conn.shop_domain, conn.access_token, orderId, updates);
+      if (!r.ok) {
+        return res.status(422).json({ error: r.error || 'No se pudo actualizar la dirección en Shopify' });
+      }
+      const s = r.shippingAddress;
+      res.json({
+        ok: true,
+        shippingAddress: s
+          ? {
+              name: String(s.name || ''),
+              address1: String(s.address1 || ''),
+              address2: String(s.address2 || ''),
+              city: String(s.city || ''),
+              province: String(s.province || ''),
+              zip: String(s.zip || ''),
+              country: String(s.country || ''),
+              phone: String(s.phone || ''),
+            }
+          : null,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al actualizar la dirección de envío' });
+    }
+  },
+);
 
 app.get('/api/motico/settings', verifyToken, scopeToOrganization, async (req, res) => {
   try {
