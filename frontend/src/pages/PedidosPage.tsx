@@ -580,62 +580,88 @@ export default function PedidosPage() {
                 borderTop: `1px solid ${ds.borderCard}`,
                 display: 'flex',
                 flexWrap: 'wrap',
-                gap: 8,
-                alignItems: 'center',
+                gap: 10,
+                alignItems: 'flex-start',
               }}
             >
-              <span style={{ fontSize: 11, fontWeight: 700, color: ds.textSecondary }}>Ciudad</span>
-              {selectedCityKeys.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setSelectedCityKeys([])}
+              <details className="kovo-city-filter" style={{ flex: '1 1 240px', maxWidth: 380 }}>
+                <summary
                   style={{
-                    padding: '4px 10px',
+                    padding: '7px 14px',
                     borderRadius: 8,
-                    border: `1px solid ${ds.borderCard}`,
-                    background: ds.bgCard,
-                    color: ds.brand,
-                    fontSize: 11,
+                    border: `1px solid ${selectedCityKeys.length ? ds.brand : ds.borderCard}`,
+                    background: selectedCityKeys.length ? ds.brandBg : ds.bgCard,
+                    color: selectedCityKeys.length ? ds.brand : ds.textSecondary,
+                    fontSize: 12,
                     fontWeight: 600,
                     cursor: 'pointer',
+                    userSelect: 'none',
                   }}
                 >
-                  Todas
-                </button>
-              ) : null}
-              {cityOptions.map((c) => {
-                const on = selectedCityKeys.includes(c.value);
-                return (
-                  <label
-                    key={c.value}
+                  Ciudad
+                  {selectedCityKeys.length > 0
+                    ? ` · ${selectedCityKeys.length} seleccionada(s)`
+                    : ' · todas'}{' '}
+                  ▾
+                </summary>
+                <div
+                  style={{
+                    marginTop: 8,
+                    padding: 12,
+                    borderRadius: 10,
+                    border: `1px solid ${ds.borderCard}`,
+                    background: ds.bgCard,
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: 10,
+                  }}
+                >
+                  <select
+                    multiple
+                    size={Math.min(8, Math.max(3, cityOptions.length))}
+                    value={selectedCityKeys}
+                    onChange={(e) =>
+                      setSelectedCityKeys(Array.from(e.target.selectedOptions, (o) => o.value))
+                    }
+                    aria-label="Filtrar por ciudad"
                     style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 6,
-                      padding: '4px 10px',
+                      width: '100%',
+                      padding: 8,
                       borderRadius: 8,
-                      border: `1px solid ${on ? ds.brand : ds.borderCard}`,
-                      background: on ? ds.brandBg : ds.bgCard,
+                      border: `1px solid ${ds.borderCard}`,
+                      background: ds.bgSubtle,
+                      color: ds.textPrimary,
+                      fontSize: 12,
+                    }}
+                  >
+                    {cityOptions.map((c) => (
+                      <option key={c.value} value={c.value}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                  <p style={{ margin: 0, fontSize: 10, color: ds.textMuted, lineHeight: 1.4 }}>
+                    Mantén Ctrl (Windows) o ⌘ (Mac) y haz clic para elegir varias ciudades.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedCityKeys([])}
+                    style={{
+                      alignSelf: 'flex-start',
+                      padding: '6px 12px',
+                      borderRadius: 8,
+                      border: `1px solid ${ds.borderCard}`,
+                      background: ds.bgSubtle,
+                      color: ds.brand,
                       fontSize: 11,
-                      fontWeight: on ? 600 : 500,
-                      color: on ? ds.brand : ds.textSecondary,
+                      fontWeight: 600,
                       cursor: 'pointer',
                     }}
                   >
-                    <input
-                      type="checkbox"
-                      checked={on}
-                      onChange={() =>
-                        setSelectedCityKeys((prev) =>
-                          prev.includes(c.value) ? prev.filter((x) => x !== c.value) : [...prev, c.value],
-                        )
-                      }
-                      style={{ accentColor: ds.brand }}
-                    />
-                    {c.label}
-                  </label>
-                );
-              })}
+                    Mostrar todas las ciudades
+                  </button>
+                </div>
+              </details>
             </div>
           ) : useLive && shopifyOrders.length > 0 && !shopifyLoading ? (
             <div style={{ width: '100%', flexBasis: '100%', marginTop: 6, fontSize: 11, color: ds.textMuted }}>

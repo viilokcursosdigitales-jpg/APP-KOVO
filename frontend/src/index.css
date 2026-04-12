@@ -34,3 +34,11 @@ body {
   box-sizing: border-box;
   background: var(--color-bg-app);
 }
+
+/* Pedidos: filtro de ciudades (details + select multiple) */
+details.kovo-city-filter > summary {
+  list-style: none;
+}
+details.kovo-city-filter > summary::-webkit-details-marker {
+  display: none;
+}
