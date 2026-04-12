@@ -97,6 +97,23 @@ async function initDb(pool) {
     `CREATE INDEX IF NOT EXISTS idx_shopify_oauth_states_expires ON shopify_oauth_states (expires_at)`,
   );
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS shopify_order_local_fields (
+      id SERIAL PRIMARY KEY,
+      organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+      shopify_order_id BIGINT NOT NULL,
+      internal_status VARCHAR(32) NOT NULL DEFAULT 'sin_confirmar',
+      price_override NUMERIC(14, 4),
+      quantity_override INTEGER,
+      mensajero VARCHAR(32),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (organization_id, shopify_order_id)
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_shopify_order_local_org ON shopify_order_local_fields (organization_id)`,
+  );
+
   const tableCheck = await pool.query(`
     SELECT EXISTS (
       SELECT 1 FROM information_schema.tables

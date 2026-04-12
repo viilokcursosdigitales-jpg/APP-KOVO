@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
@@ -7,6 +7,7 @@ import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
 
 const POLL_MS = 25_000;
+const SAVE_DEBOUNCE_MS = 450;
 
 const DEMO = [
   { id: '#4821', client: 'María G.', email: 'maria@mail.com', date: '11 abr 2026', total: '€ 124,90', st: 'success' as const, lb: 'Completado' },
@@ -15,6 +16,75 @@ const DEMO = [
   { id: '#4818', client: 'Luis M.', email: 'luis@mail.com', date: '10 abr 2026', total: '€ 45,00', st: 'paused' as const, lb: 'Pendiente' },
   { id: '#4817', client: 'Elena S.', email: 'elena@mail.com', date: '09 abr 2026', total: '€ 312,00', st: 'error' as const, lb: 'Cancelado' },
 ];
+
+type DatePreset = 'hoy' | 'ayer' | 'este_mes' | 'mes_anterior' | 'este_ano' | 'personalizado';
+
+const DATE_PRESETS: { id: DatePreset; label: string }[] = [
+  { id: 'hoy', label: 'Hoy' },
+  { id: 'ayer', label: 'Ayer' },
+  { id: 'este_mes', label: 'Este mes' },
+  { id: 'mes_anterior', label: 'Mes anterior' },
+  { id: 'este_ano', label: 'Este año' },
+  { id: 'personalizado', label: 'Personalizado' },
+];
+
+const INTERNAL_OPTIONS = [
+  { value: 'sin_confirmar', label: 'SIN CONFIRMAR' },
+  { value: 'confirmado', label: 'CONFIRMADO' },
+  { value: 'despachado', label: 'DESPACHADO' },
+  { value: 'cancelado', label: 'CANCELADO' },
+] as const;
+
+const MENSAJERO_OPTIONS = [
+  { value: '', label: '—' },
+  { value: 'motico', label: 'Motico' },
+  { value: 'dropi', label: 'Dropi' },
+  { value: 'effix', label: 'Effix' },
+] as const;
+
+function buildDateRange(
+  preset: DatePreset,
+  customFrom: string,
+  customTo: string,
+): { min: string | null; max: string | null } {
+  const now = new Date();
+  const isoDay = (d: Date) => {
+    const s = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    const e = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+    return { min: s.toISOString(), max: e.toISOString() };
+  };
+  if (preset === 'hoy') return isoDay(now);
+  if (preset === 'ayer') {
+    const y = new Date(now);
+    y.setDate(y.getDate() - 1);
+    return isoDay(y);
+  }
+  if (preset === 'este_mes') {
+    const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    return { min: start.toISOString(), max: end.toISOString() };
+  }
+  if (preset === 'mes_anterior') {
+    const first = new Date(now.getFullYear(), now.getMonth() - 1, 1, 0, 0, 0, 0);
+    const lastDay = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999);
+    return { min: first.toISOString(), max: lastDay.toISOString() };
+  }
+  if (preset === 'este_ano') {
+    const start = new Date(now.getFullYear(), 0, 1, 0, 0, 0, 0);
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    return { min: start.toISOString(), max: end.toISOString() };
+  }
+  if (preset === 'personalizado' && customFrom && customTo) {
+    const [fy, fm, fd] = customFrom.split('-').map(Number);
+    const [ty, tm, td] = customTo.split('-').map(Number);
+    const start = new Date(fy, fm - 1, fd, 0, 0, 0, 0);
+    const end = new Date(ty, tm - 1, td, 23, 59, 59, 999);
+    if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return { min: null, max: null };
+    if (start > end) return { min: end.toISOString(), max: start.toISOString() };
+    return { min: start.toISOString(), max: end.toISOString() };
+  }
+  return { min: null, max: null };
+}
 
 type ShopifyOrderRow = {
   id: number;
@@ -27,6 +97,13 @@ type ShopifyOrderRow = {
   financialStatus: string;
   label: string;
   badgeVariant: StatusBadgeVariant;
+  defaultQuantity: number;
+  internal_status: string;
+  price_override: number | null;
+  quantity_override: number | null;
+  mensajero: string | null;
+  shopifyTotal: string;
+  shopifyQuantity: number;
 };
 
 type ShopifyOrdersPayload = {
@@ -36,15 +113,19 @@ type ShopifyOrdersPayload = {
   orders: ShopifyOrderRow[];
 };
 
-function formatMoney(total: string, currency: string) {
-  const n = Number.parseFloat(String(total));
-  if (Number.isNaN(n)) return String(total);
+function formatMoneyAmount(n: number, currency: string) {
   const cur = currency && currency.length === 3 ? currency : 'EUR';
   try {
     return new Intl.NumberFormat('es-ES', { style: 'currency', currency: cur }).format(n);
   } catch {
     return `${n} ${currency}`;
   }
+}
+
+function formatMoneyFromString(total: string, currency: string) {
+  const n = Number.parseFloat(String(total));
+  if (Number.isNaN(n)) return String(total);
+  return formatMoneyAmount(n, currency);
 }
 
 function formatDate(iso: string) {
@@ -62,8 +143,35 @@ function orderMatchesFilter(row: ShopifyOrderRow, filter: 'all' | 'active' | 'do
   return f !== 'paid' && f !== 'refunded' && f !== 'voided';
 }
 
+const selectStyle: CSSProperties = {
+  width: '100%',
+  maxWidth: 160,
+  padding: '6px 8px',
+  borderRadius: 8,
+  border: `1px solid ${ds.borderCard}`,
+  background: ds.bgCard,
+  color: ds.textPrimary,
+  fontSize: 11,
+  fontWeight: 600,
+};
+
+const inputStyle: CSSProperties = {
+  width: '100%',
+  maxWidth: 96,
+  padding: '6px 8px',
+  borderRadius: 8,
+  border: `1px solid ${ds.borderCard}`,
+  background: ds.bgCard,
+  color: ds.textPrimary,
+  fontSize: 12,
+};
+
 export default function PedidosPage() {
   const [filter, setFilter] = useState<'all' | 'active' | 'done'>('all');
+  const [datePreset, setDatePreset] = useState<DatePreset>('este_mes');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
+
   const [shopifyConnected, setShopifyConnected] = useState(false);
   const [shopDomain, setShopDomain] = useState<string | null>(null);
   const [shopifyOrders, setShopifyOrders] = useState<ShopifyOrderRow[]>([]);
@@ -72,44 +180,160 @@ export default function PedidosPage() {
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
 
-  const loadShopifyOrders = useCallback(async (opts?: { silent?: boolean }) => {
-    const silent = Boolean(opts?.silent);
-    if (!silent) setShopifyLoading(true);
-    else setRefreshing(true);
-    setShopifyError('');
-    try {
-      const res = await apiFetch('/api/shopify/orders?limit=100');
-      const data = (await res.json().catch(() => ({}))) as ShopifyOrdersPayload & { error?: string; code?: string };
-      if (!res.ok) {
-        if (data.code === 'not_connected') {
-          setShopifyConnected(false);
-          setShopDomain(null);
-          setShopifyOrders([]);
-          setFetchedAt(null);
+  const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
+  const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
+  const priceTimers = useRef<Map<number, number>>(new Map());
+  const qtyTimers = useRef<Map<number, number>>(new Map());
+
+  const dateQuery = useMemo(
+    () => buildDateRange(datePreset, customFrom, customTo),
+    [datePreset, customFrom, customTo],
+  );
+
+  const normalizeRow = useCallback((o: ShopifyOrderRow): ShopifyOrderRow => {
+    const bv = o.badgeVariant;
+    const safeBv = (['success', 'paused', 'error', 'info', 'warning'].includes(bv) ? bv : 'info') as StatusBadgeVariant;
+    return {
+      ...o,
+      badgeVariant: safeBv,
+      defaultQuantity: Number(o.defaultQuantity) || 0,
+      shopifyQuantity: Number(o.shopifyQuantity ?? o.defaultQuantity) || 0,
+      internal_status: o.internal_status || 'sin_confirmar',
+      price_override: o.price_override != null ? Number(o.price_override) : null,
+      quantity_override: o.quantity_override != null ? Number(o.quantity_override) : null,
+      mensajero: o.mensajero || null,
+    };
+  }, []);
+
+  const loadShopifyOrders = useCallback(
+    async (opts?: { silent?: boolean }) => {
+      const silent = Boolean(opts?.silent);
+      if (!silent) setShopifyLoading(true);
+      else setRefreshing(true);
+      setShopifyError('');
+      try {
+        const qs = new URLSearchParams({ limit: '250' });
+        if (dateQuery.min) qs.set('created_at_min', dateQuery.min);
+        if (dateQuery.max) qs.set('created_at_max', dateQuery.max);
+        const res = await apiFetch(`/api/shopify/orders?${qs.toString()}`);
+        const data = (await res.json().catch(() => ({}))) as ShopifyOrdersPayload & {
+          error?: string;
+          code?: string;
+        };
+        if (!res.ok) {
+          if (data.code === 'not_connected') {
+            setShopifyConnected(false);
+            setShopDomain(null);
+            setShopifyOrders([]);
+            setFetchedAt(null);
+            return;
+          }
+          setShopifyError(typeof data.error === 'string' ? data.error : 'No se pudieron cargar los pedidos');
           return;
         }
-        setShopifyError(typeof data.error === 'string' ? data.error : 'No se pudieron cargar los pedidos');
-        return;
+        if (data.source === 'shopify' && Array.isArray(data.orders)) {
+          setShopifyConnected(true);
+          setShopDomain(data.shop_domain || null);
+          setFetchedAt(data.fetchedAt || null);
+          setShopifyOrders(data.orders.map(normalizeRow));
+          setPriceDraft({});
+          setQtyDraft({});
+        }
+      } catch {
+        setShopifyError('Error de red al cargar pedidos de Shopify');
+      } finally {
+        if (!silent) setShopifyLoading(false);
+        setRefreshing(false);
       }
-      if (data.source === 'shopify' && Array.isArray(data.orders)) {
-        setShopifyConnected(true);
-        setShopDomain(data.shop_domain || null);
-        setFetchedAt(data.fetchedAt || null);
-        setShopifyOrders(
-          data.orders.map((o) => ({
-            ...o,
-            badgeVariant: (['success', 'paused', 'error', 'info', 'warning'].includes(o.badgeVariant)
-              ? o.badgeVariant
-              : 'info') as StatusBadgeVariant,
-          })),
-        );
-      }
-    } catch {
-      setShopifyError('Error de red al cargar pedidos de Shopify');
-    } finally {
-      if (!silent) setShopifyLoading(false);
-      setRefreshing(false);
-    }
+    },
+    [dateQuery.min, dateQuery.max, normalizeRow],
+  );
+
+  const patchLocalFields = useCallback(async (orderId: number, body: Record<string, unknown>) => {
+    const res = await apiFetch(`/api/shopify/orders/${orderId}/local-fields`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) return;
+    const data = (await res.json().catch(() => ({}))) as {
+      internal_status?: string;
+      price_override?: number | null;
+      quantity_override?: number | null;
+      mensajero?: string | null;
+    };
+    setShopifyOrders((prev) =>
+      prev.map((o) =>
+        o.id === orderId
+          ? {
+              ...o,
+              internal_status: data.internal_status ?? o.internal_status,
+              price_override:
+                data.price_override !== undefined ? data.price_override : o.price_override,
+              quantity_override:
+                data.quantity_override !== undefined ? data.quantity_override : o.quantity_override,
+              mensajero: data.mensajero !== undefined ? data.mensajero : o.mensajero,
+            }
+          : o,
+      ),
+    );
+    setPriceDraft((d) => {
+      const n = { ...d };
+      delete n[orderId];
+      return n;
+    });
+    setQtyDraft((d) => {
+      const n = { ...d };
+      delete n[orderId];
+      return n;
+    });
+  }, []);
+
+  const schedulePriceSave = useCallback(
+    (orderId: number, raw: string) => {
+      const prevT = priceTimers.current.get(orderId);
+      if (prevT) window.clearTimeout(prevT);
+      const t = window.setTimeout(() => {
+        priceTimers.current.delete(orderId);
+        const trimmed = raw.trim();
+        if (trimmed === '') {
+          void patchLocalFields(orderId, { price_override: null });
+          return;
+        }
+        const n = Number.parseFloat(trimmed.replace(',', '.'));
+        if (!Number.isFinite(n) || n < 0) return;
+        void patchLocalFields(orderId, { price_override: n });
+      }, SAVE_DEBOUNCE_MS);
+      priceTimers.current.set(orderId, t);
+    },
+    [patchLocalFields],
+  );
+
+  const scheduleQtySave = useCallback(
+    (orderId: number, raw: string) => {
+      const prevT = qtyTimers.current.get(orderId);
+      if (prevT) window.clearTimeout(prevT);
+      const t = window.setTimeout(() => {
+        qtyTimers.current.delete(orderId);
+        const trimmed = raw.trim();
+        if (trimmed === '') {
+          void patchLocalFields(orderId, { quantity_override: null });
+          return;
+        }
+        const q = parseInt(trimmed, 10);
+        if (!Number.isFinite(q) || q < 0) return;
+        void patchLocalFields(orderId, { quantity_override: q });
+      }, SAVE_DEBOUNCE_MS);
+      qtyTimers.current.set(orderId, t);
+    },
+    [patchLocalFields],
+  );
+
+  useEffect(() => {
+    return () => {
+      priceTimers.current.forEach((id) => window.clearTimeout(id));
+      qtyTimers.current.forEach((id) => window.clearTimeout(id));
+    };
   }, []);
 
   useEffect(() => {
@@ -126,7 +350,6 @@ export default function PedidosPage() {
         const ok = row.status === 'connected' && Boolean(row.shop_domain);
         setShopifyConnected(ok);
         setShopDomain(ok ? row.shop_domain || null : null);
-        if (ok) await loadShopifyOrders();
       } catch {
         if (!cancelled) setShopifyConnected(false);
       }
@@ -134,7 +357,12 @@ export default function PedidosPage() {
     return () => {
       cancelled = true;
     };
-  }, [loadShopifyOrders]);
+  }, []);
+
+  useEffect(() => {
+    if (!shopifyConnected) return;
+    void loadShopifyOrders();
+  }, [dateQuery.min, dateQuery.max, shopifyConnected, loadShopifyOrders]);
 
   useEffect(() => {
     if (!shopifyConnected) return;
@@ -160,13 +388,21 @@ export default function PedidosPage() {
 
   const useLive = shopifyConnected && shopDomain;
 
+  const displayPrice = (o: ShopifyOrderRow) =>
+    priceDraft[o.id] !== undefined ? priceDraft[o.id]! : String(o.price_override ?? o.shopifyTotal ?? '');
+
+  const displayQty = (o: ShopifyOrderRow) =>
+    qtyDraft[o.id] !== undefined
+      ? qtyDraft[o.id]!
+      : String(o.quantity_override ?? o.shopifyQuantity ?? o.defaultQuantity ?? 0);
+
   return (
     <>
       <PageHeader
         title="Pedidos"
         subtitle={
           useLive
-            ? `Tienda Shopify · ${shopDomain}. Se actualiza solo cada ${POLL_MS / 1000} s mientras esta página está abierta.`
+            ? `Tienda Shopify · ${shopDomain}. Sincronización cada ${POLL_MS / 1000} s. Los cambios en estado, precio, cantidad y mensajero se guardan solos.`
             : 'Conecta Shopify en Canales para ver pedidos reales. Mientras tanto, datos de demostración.'
         }
         right={
@@ -219,18 +455,59 @@ export default function PedidosPage() {
         }
       />
 
-      {useLive && fetchedAt ? (
+      {useLive ? (
         <div
           style={{
             marginBottom: 14,
-            fontSize: 12,
-            color: ds.textMuted,
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 8,
+            alignItems: 'center',
           }}
         >
+          {DATE_PRESETS.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              onClick={() => setDatePreset(p.id)}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 8,
+                border: `1px solid ${ds.borderCard}`,
+                background: datePreset === p.id ? ds.brandBg : ds.bgCard,
+                color: datePreset === p.id ? ds.brand : ds.textSecondary,
+                fontSize: 11,
+                fontWeight: datePreset === p.id ? 600 : 500,
+                cursor: 'pointer',
+              }}
+            >
+              {p.label}
+            </button>
+          ))}
+          {datePreset === 'personalizado' ? (
+            <>
+              <input
+                type="date"
+                value={customFrom}
+                onChange={(e) => setCustomFrom(e.target.value)}
+                style={{ ...inputStyle, maxWidth: 140 }}
+              />
+              <span style={{ fontSize: 12, color: ds.textMuted }}>a</span>
+              <input
+                type="date"
+                value={customTo}
+                onChange={(e) => setCustomTo(e.target.value)}
+                style={{ ...inputStyle, maxWidth: 140 }}
+              />
+            </>
+          ) : null}
+        </div>
+      ) : null}
+
+      {useLive && fetchedAt ? (
+        <div style={{ marginBottom: 14, fontSize: 12, color: ds.textMuted }}>
           Última sincronización con Shopify:{' '}
-          <span style={{ color: ds.textSecondary, fontWeight: 600 }}>
-            {formatDate(fetchedAt)}
-          </span>
+          <span style={{ color: ds.textSecondary, fontWeight: 600 }}>{formatDate(fetchedAt)}</span>
         </div>
       ) : null}
 
@@ -273,68 +550,141 @@ export default function PedidosPage() {
         title={useLive ? 'Pedidos en Shopify' : 'Todos los pedidos'}
         subtitle={
           useLive
-            ? `Mostrando ${filteredShopify.length} de ${shopifyOrders.length} pedidos recientes · sincronización periódica`
+            ? `Mostrando ${filteredShopify.length} de ${shopifyOrders.length} pedidos · rango según filtro de fechas`
             : `Mostrando ${filteredDemo.length} resultados · demo`
         }
       >
         {useLive && shopifyLoading && shopifyOrders.length === 0 ? (
           <div style={{ padding: 24, color: ds.textMuted, fontSize: 13 }}>Cargando pedidos de Shopify…</div>
         ) : (
-          <table style={{ ...tableBase, minWidth: 640 }}>
-            <thead>
-              <tr>
-                <Th>Pedido</Th>
-                <Th>Cliente</Th>
-                <Th>Fecha</Th>
-                <Th>Total</Th>
-                <Th>Estado</Th>
-                {useLive ? <Th /> : null}
-              </tr>
-            </thead>
-            <tbody>
-              {useLive
-                ? filteredShopify.map((o, i, arr) => (
-                    <tr key={o.id}>
-                      <Td isLast={i === arr.length - 1}>
-                        <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
-                        <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
-                      </Td>
-                      <Td isLast={i === arr.length - 1}>{o.client}</Td>
-                      <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
-                      <Td isLast={i === arr.length - 1}>{formatMoney(o.total, o.currency)}</Td>
-                      <Td isLast={i === arr.length - 1}>
-                        <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
-                      </Td>
-                      <Td isLast={i === arr.length - 1}>
-                        {shopDomain ? (
-                          <a
-                            href={`https://${shopDomain}/admin/orders/${o.id}`}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            style={{ fontSize: 11, color: ds.brand, fontWeight: 600 }}
-                          >
-                            Ver en Shopify
-                          </a>
-                        ) : null}
-                      </Td>
-                    </tr>
-                  ))
-                : filteredDemo.map((o, i, arr) => (
-                    <tr key={o.id}>
-                      <Td isLast={i === arr.length - 1}>
-                        <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.id}</div>
-                        <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
-                      </Td>
-                      <Td isLast={i === arr.length - 1}>{o.client}</Td>
-                      <Td isLast={i === arr.length - 1}>{o.date}</Td>
-                      <Td isLast={i === arr.length - 1}>{o.total}</Td>
-                      <Td isLast={i === arr.length - 1}>
-                        <StatusBadge variant={o.st}>{o.lb}</StatusBadge>
-                      </Td>
-                    </tr>
-                  ))}
-            </tbody>
-          </table>
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ ...tableBase, minWidth: 1080 }}>
+              <thead>
+                <tr>
+                  <Th>Pedido</Th>
+                  <Th>Cliente</Th>
+                  <Th>Fecha</Th>
+                  <Th>Precio</Th>
+                  <Th>Cant.</Th>
+                  <Th>Pago (Shopify)</Th>
+                  <Th>Estado</Th>
+                  <Th>Mensajero</Th>
+                  {useLive ? <Th /> : null}
+                </tr>
+              </thead>
+              <tbody>
+                {useLive
+                  ? filteredShopify.map((o, i, arr) => {
+                      return (
+                        <tr key={o.id}>
+                          <Td isLast={i === arr.length - 1}>
+                            <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
+                            <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
+                          </Td>
+                          <Td isLast={i === arr.length - 1}>{o.client}</Td>
+                          <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
+                          <Td isLast={i === arr.length - 1}>
+                            <input
+                              type="text"
+                              inputMode="decimal"
+                              style={inputStyle}
+                              value={displayPrice(o)}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setPriceDraft((d) => ({ ...d, [o.id]: v }));
+                                schedulePriceSave(o.id, v);
+                              }}
+                              aria-label="Precio manual"
+                            />
+                            <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
+                              Shopify: {formatMoneyFromString(o.shopifyTotal, o.currency)}
+                            </div>
+                          </Td>
+                          <Td isLast={i === arr.length - 1}>
+                            <input
+                              type="text"
+                              inputMode="numeric"
+                              style={inputStyle}
+                              value={displayQty(o)}
+                              onChange={(e) => {
+                                const v = e.target.value;
+                                setQtyDraft((d) => ({ ...d, [o.id]: v }));
+                                scheduleQtySave(o.id, v);
+                              }}
+                              aria-label="Cantidad manual"
+                            />
+                            <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
+                              Shopify: {o.shopifyQuantity}
+                            </div>
+                          </Td>
+                          <Td isLast={i === arr.length - 1}>
+                            <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
+                          </Td>
+                          <Td isLast={i === arr.length - 1}>
+                            <select
+                              style={selectStyle}
+                              value={o.internal_status}
+                              onChange={(e) => void patchLocalFields(o.id, { internal_status: e.target.value })}
+                            >
+                              {INTERNAL_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </Td>
+                          <Td isLast={i === arr.length - 1}>
+                            <select
+                              style={selectStyle}
+                              value={o.mensajero || ''}
+                              onChange={(e) =>
+                                void patchLocalFields(o.id, {
+                                  mensajero: e.target.value === '' ? null : e.target.value,
+                                })
+                              }
+                            >
+                              {MENSAJERO_OPTIONS.map((opt) => (
+                                <option key={opt.label} value={opt.value}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </Td>
+                          <Td isLast={i === arr.length - 1}>
+                            {shopDomain ? (
+                              <a
+                                href={`https://${shopDomain}/admin/orders/${o.id}`}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                style={{ fontSize: 11, color: ds.brand, fontWeight: 600 }}
+                              >
+                                Ver en Shopify
+                              </a>
+                            ) : null}
+                          </Td>
+                        </tr>
+                      );
+                    })
+                  : filteredDemo.map((o, i, arr) => (
+                      <tr key={o.id}>
+                        <Td isLast={i === arr.length - 1}>
+                          <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.id}</div>
+                          <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
+                        </Td>
+                        <Td isLast={i === arr.length - 1}>{o.client}</Td>
+                        <Td isLast={i === arr.length - 1}>{o.date}</Td>
+                        <Td isLast={i === arr.length - 1}>{o.total}</Td>
+                        <Td isLast={i === arr.length - 1}>—</Td>
+                        <Td isLast={i === arr.length - 1}>
+                          <StatusBadge variant={o.st}>{o.lb}</StatusBadge>
+                        </Td>
+                        <Td isLast={i === arr.length - 1}>—</Td>
+                        <Td isLast={i === arr.length - 1}>—</Td>
+                      </tr>
+                    ))}
+              </tbody>
+            </table>
+          </div>
         )}
         {useLive && !shopifyLoading && filteredShopify.length === 0 ? (
           <div style={{ padding: 16, fontSize: 13, color: ds.textMuted }}>No hay pedidos en este filtro.</div>

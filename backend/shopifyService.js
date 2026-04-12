@@ -145,6 +145,11 @@ function normalizeShopifyOrdersForApp(apiData) {
       [customer.first_name, customer.last_name].filter(Boolean).join(' ').trim() || 'Invitado';
     const email = o.email || customer.email || '—';
     const orderName = o.name || (o.order_number != null ? `#${o.order_number}` : `#${o.id}`);
+    const lineItems = o.line_items || [];
+    const defaultQuantity = lineItems.reduce(
+      (s, li) => s + (parseInt(String(li.quantity), 10) || 0),
+      0,
+    );
     return {
       id: o.id,
       orderName,
@@ -157,6 +162,7 @@ function normalizeShopifyOrdersForApp(apiData) {
       fulfillmentStatus: o.fulfillment_status || '',
       label: b.label,
       badgeVariant: b.variant,
+      defaultQuantity,
     };
   });
 }

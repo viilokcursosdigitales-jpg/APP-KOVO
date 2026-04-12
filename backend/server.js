@@ -1373,6 +1373,24 @@ async function getActiveShopifyConnection(organizationId) {
   return rows[0] || null;
 }
 
+const SHOPIFY_INTERNAL_STATUSES = new Set(['sin_confirmar', 'confirmado', 'despachado', 'cancelado']);
+const SHOPIFY_MENSAJEROS = new Set(['motico', 'dropi', 'effix']);
+
+const SHOPIFY_ORDER_LIST_FIELDS =
+  'id,name,email,created_at,total_price,currency,financial_status,fulfillment_status,customer,order_number,line_items';
+
+async function loadLocalFieldsMap(organizationId, orderIds) {
+  if (!orderIds.length) return new Map();
+  const { rows } = await pool.query(
+    `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero
+     FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = ANY($2::bigint[])`,
+    [organizationId, orderIds],
+  );
+  const m = new Map();
+  for (const r of rows) m.set(Number(r.shopify_order_id), r);
+  return m;
+}
+
 function shopifyConfigured() {
   return Boolean(SHOPIFY_API_KEY && SHOPIFY_API_SECRET && SHOPIFY_REDIRECT_URI);
 }
@@ -1656,23 +1674,138 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
     const limit = Math.min(250, Math.max(1, parseInt(String(req.query.limit || '100'), 10) || 100));
-    const r = await shopifyRequest(
-      row.shop_domain,
-      row.access_token,
-      `orders.json?limit=${limit}&status=any`,
-    );
+    const qs = new URLSearchParams();
+    qs.set('limit', String(limit));
+    qs.set('status', 'any');
+    qs.set('fields', SHOPIFY_ORDER_LIST_FIELDS);
+    const min = req.query.created_at_min;
+    const max = req.query.created_at_max;
+    if (typeof min === 'string' && min.trim()) qs.set('created_at_min', min.trim());
+    if (typeof max === 'string' && max.trim()) qs.set('created_at_max', max.trim());
+    const r = await shopifyRequest(row.shop_domain, row.access_token, `orders.json?${qs.toString()}`);
     if (!r.ok) {
       return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
     }
+    const normalized = normalizeShopifyOrdersForApp(r.data);
+    const ids = normalized.map((o) => o.id);
+    let localMap;
+    try {
+      localMap = await loadLocalFieldsMap(req.organizationId, ids);
+    } catch (dbErr) {
+      if (dbErr && dbErr.code === '42P01') {
+        return res.status(503).json({
+          error:
+            'Falta la tabla shopify_order_local_fields. Reinicia el backend para ejecutar initDb o aplica backend/db/schema.sql.',
+          code: 'schema_missing',
+        });
+      }
+      throw dbErr;
+    }
+    const orders = normalized.map((o) => {
+      const lf = localMap.get(Number(o.id));
+      return {
+        ...o,
+        internal_status: lf?.internal_status || 'sin_confirmar',
+        price_override:
+          lf?.price_override != null && lf.price_override !== '' ? Number(lf.price_override) : null,
+        quantity_override:
+          lf?.quantity_override != null && lf.quantity_override !== '' ? Number(lf.quantity_override) : null,
+        mensajero: lf?.mensajero || null,
+        shopifyTotal: o.total,
+        shopifyQuantity: o.defaultQuantity,
+      };
+    });
     res.json({
       source: 'shopify',
       shop_domain: row.shop_domain,
       fetchedAt: new Date().toISOString(),
-      orders: normalizeShopifyOrdersForApp(r.data),
+      orders,
     });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener pedidos' });
+  }
+});
+
+app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const orderId = parseInt(String(req.params.orderId), 10);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: 'ID de pedido inválido' });
+    }
+    const conn = await getActiveShopifyConnection(req.organizationId);
+    if (!conn) {
+      return res.status(400).json({ error: 'No hay tienda conectada', code: 'not_connected' });
+    }
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const { rows: existing } = await pool.query(
+      `SELECT internal_status, price_override, quantity_override, mensajero
+       FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = $2`,
+      [req.organizationId, orderId],
+    );
+    const cur = existing[0] || {};
+    let internal_status = cur.internal_status || 'sin_confirmar';
+    if (body.internal_status !== undefined) {
+      const s = String(body.internal_status);
+      if (!SHOPIFY_INTERNAL_STATUSES.has(s)) {
+        return res.status(400).json({ error: 'Estado interno no válido' });
+      }
+      internal_status = s;
+    }
+    let price_override = cur.price_override != null ? Number(cur.price_override) : null;
+    if (body.price_override !== undefined) {
+      if (body.price_override === null) price_override = null;
+      else {
+        const n = Number(body.price_override);
+        if (!Number.isFinite(n) || n < 0) {
+          return res.status(400).json({ error: 'Precio no válido' });
+        }
+        price_override = n;
+      }
+    }
+    let quantity_override = cur.quantity_override != null ? Number(cur.quantity_override) : null;
+    if (body.quantity_override !== undefined) {
+      if (body.quantity_override === null) quantity_override = null;
+      else {
+        const q = parseInt(String(body.quantity_override), 10);
+        if (!Number.isFinite(q) || q < 0) {
+          return res.status(400).json({ error: 'Cantidad no válida' });
+        }
+        quantity_override = q;
+      }
+    }
+    let mensajero = cur.mensajero || null;
+    if (body.mensajero !== undefined) {
+      if (body.mensajero === null || body.mensajero === '') mensajero = null;
+      else {
+        const m = String(body.mensajero).toLowerCase();
+        if (!SHOPIFY_MENSAJEROS.has(m)) {
+          return res.status(400).json({ error: 'Mensajero no válido' });
+        }
+        mensajero = m;
+      }
+    }
+    await pool.query(
+      `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (organization_id, shopify_order_id) DO UPDATE SET
+         internal_status = EXCLUDED.internal_status,
+         price_override = EXCLUDED.price_override,
+         quantity_override = EXCLUDED.quantity_override,
+         mensajero = EXCLUDED.mensajero,
+         updated_at = now()`,
+      [req.organizationId, orderId, internal_status, price_override, quantity_override, mensajero],
+    );
+    res.json({
+      ok: true,
+      internal_status,
+      price_override,
+      quantity_override,
+      mensajero,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al guardar campos del pedido' });
   }
 });
 
