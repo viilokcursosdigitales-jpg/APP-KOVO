@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
+import { MetaDataIssueCard, MetaFetchErrorPanel, MetaLiveDataStrip } from './MetaApiStatusBanner';
+import { resolveMetaDataIssue } from './metaDataIssues';
 
 export type MetaInsightPeriod = 'hoy' | '3d' | '7d' | '14d' | '30d' | 'custom';
 
@@ -173,28 +175,16 @@ export function MetaInsightsPanel({
     { id: 'ads', label: 'Anuncios' },
   ];
 
+  const dataIssue = useMemo(
+    () => resolveMetaDataIssue(partialErrors, error, code),
+    [partialErrors, error, code],
+  );
+
+  const tokenBlocked = dataIssue?.type === 'token_expired';
+
   return (
     <div>
-      <p
-        style={{
-          margin: '0 0 12px',
-          fontSize: 13,
-          color: ds.successText,
-          background: ds.successBg,
-          padding: '10px 14px',
-          borderRadius: 8,
-          border: `1px solid ${ds.borderCard}`,
-          maxWidth: 900,
-        }}
-      >
-        Métricas en vivo desde la API de Meta (Marketing API) para las cuentas publicitarias que elegiste al conectar. Los
-        datos dependen del período seleccionado y pueden tardar unos segundos en cargar.
-        {meta && (
-          <span style={{ display: 'block', marginTop: 6, fontSize: 12, color: ds.successText }}>
-            Actualizado: {new Date(meta.fetchedAt).toLocaleString('es-ES')} · preset Meta: {meta.datePreset}
-          </span>
-        )}
-      </p>
+      <MetaLiveDataStrip issue={dataIssue} meta={meta} variant="insights" />
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 14 }}>
         <div
@@ -305,47 +295,9 @@ export function MetaInsightsPanel({
         ))}
       </div>
 
-      {error && (
-        <div
-          style={{
-            marginBottom: 16,
-            padding: '12px 14px',
-            borderRadius: 8,
-            background: ds.dangerBg,
-            color: ds.dangerText,
-            fontSize: 13,
-          }}
-        >
-          {error}
-          {code === 'no_ad_accounts' && (
-            <div style={{ marginTop: 8, fontSize: 13 }}>
-              Ve a la pestaña <strong>Conexión Meta ADS</strong> y elige al menos una cuenta publicitaria (o vuelve a
-              conectar con token de usuario).
-            </div>
-          )}
-        </div>
-      )}
+      {error && <MetaFetchErrorPanel error={error} code={code} />}
 
-      {partialErrors.length > 0 && (
-        <div
-          style={{
-            marginBottom: 12,
-            fontSize: 13,
-            color: ds.warningText,
-            background: ds.warningBg,
-            padding: '10px 12px',
-            borderRadius: 8,
-            border: `1px solid ${ds.borderCard}`,
-          }}
-        >
-          Algunas cuentas no devolvieron datos:{' '}
-          {partialErrors.map((e) => (
-            <span key={e.adAccountId} style={{ display: 'block' }}>
-              {e.adAccountId}: {e.error}
-            </span>
-          ))}
-        </div>
-      )}
+      {dataIssue && !error && <MetaDataIssueCard issue={dataIssue} />}
 
       {loading && !totals ? (
         <p style={{ color: ds.textMuted }}>Cargando métricas desde Meta…</p>
@@ -424,8 +376,18 @@ export function MetaInsightsPanel({
                   colSpan={level === 'campaigns' ? 10 : 11}
                   style={{ padding: 24, color: ds.textMuted, textAlign: 'center', fontSize: 13 }}
                 >
-                  No hay filas con datos de insights en este período (puede que no haya entregas o que el token no tenga
-                  permisos).
+                  {tokenBlocked ? (
+                    <>
+                      Meta no devolvió filas porque el access token no es válido.{' '}
+                      <strong style={{ color: ds.textSecondary }}>Renueva el token</strong> en la pestaña Conexión Meta ADS
+                      y vuelve a actualizar.
+                    </>
+                  ) : (
+                    <>
+                      No hay filas con datos de insights en este período (puede que no haya entregas o que el token no
+                      tenga permisos).
+                    </>
+                  )}
                 </td>
               </tr>
             ) : (

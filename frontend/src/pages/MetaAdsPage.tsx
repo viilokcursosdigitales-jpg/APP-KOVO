@@ -1,11 +1,32 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
 import { MetaConnectionPanel, TabCreativo, TabEmbudo } from '../meta/MetaDemoTabs';
 import type { PeriodKey, ProductKey } from '../meta/demoMetrics';
 
+type MetaTabId = 'creativo' | 'embudo' | 'conexion';
+
+function tabFromSearch(tab: string | null): MetaTabId {
+  if (tab === 'conexion' || tab === 'creativo' || tab === 'embudo') return tab;
+  return 'creativo';
+}
+
 export default function MetaAdsPage() {
-  const [metaTab, setMetaTab] = useState<'creativo' | 'embudo' | 'conexion'>('creativo');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const [metaTab, setMetaTab] = useState<MetaTabId>(() => tabFromSearch(searchParams.get('tab')));
+
+  useEffect(() => {
+    setMetaTab(tabFromSearch(searchParams.get('tab')));
+  }, [searchParams]);
+
+  const setMetaTabInUrl = useCallback(
+    (id: MetaTabId) => {
+      setMetaTab(id);
+      setSearchParams({ tab: id }, { replace: true });
+    },
+    [setSearchParams],
+  );
   const [p1, setP1] = useState<PeriodKey>('7d');
   const [pr1, setPr1] = useState<ProductKey>('all');
   const [p2, setP2] = useState<PeriodKey>('7d');
@@ -41,7 +62,7 @@ export default function MetaAdsPage() {
           <button
             key={t.id}
             type="button"
-            onClick={() => setMetaTab(t.id)}
+            onClick={() => setMetaTabInUrl(t.id)}
             style={{
               padding: '12px 20px',
               border: 'none',

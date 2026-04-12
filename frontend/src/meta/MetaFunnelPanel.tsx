@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
+import { MetaDataIssueCard, MetaFetchErrorPanel, MetaLiveDataStrip } from './MetaApiStatusBanner';
+import { resolveMetaDataIssue } from './metaDataIssues';
 import { MetricPill } from '../design-system/MetricPill';
 import type { MetaInsightPeriod } from './MetaInsightsPanel';
 
@@ -157,28 +159,14 @@ export function MetaFunnelPanel({
     note: STAGE_NOTES[s.key] || '',
   }));
 
+  const dataIssue = useMemo(
+    () => resolveMetaDataIssue(partialErrors, error, code),
+    [partialErrors, error, code],
+  );
+
   return (
     <div>
-      <p
-        style={{
-          margin: '0 0 12px',
-          fontSize: 13,
-          color: ds.infoText,
-          background: ds.infoBg,
-          padding: '10px 14px',
-          borderRadius: 8,
-          border: `1px solid ${ds.borderCard}`,
-          maxWidth: 920,
-        }}
-      >
-        Embudo construido con los <strong>actions</strong> agregados que devuelve Meta por cuenta (insights a nivel
-        cuenta). Los nombres de eventos dependen de tu pixel / CAPI; si falta un paso, verás 0 en esa etapa.
-        {meta && (
-          <span style={{ display: 'block', marginTop: 6, fontSize: 12, color: ds.infoText }}>
-            Actualizado: {new Date(meta.fetchedAt).toLocaleString('es-ES')} · preset: {meta.datePreset}
-          </span>
-        )}
-      </p>
+      <MetaLiveDataStrip issue={dataIssue} meta={meta} variant="funnel" />
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 14 }}>
         <div
@@ -257,45 +245,9 @@ export function MetaFunnelPanel({
         </button>
       </div>
 
-      {error && (
-        <div
-          style={{
-            marginBottom: 16,
-            padding: '12px 14px',
-            borderRadius: 8,
-            background: ds.dangerBg,
-            color: ds.dangerText,
-            fontSize: 13,
-          }}
-        >
-          {error}
-          {code === 'no_ad_accounts' && (
-            <div style={{ marginTop: 8, fontSize: 13 }}>
-              Configura cuentas en <strong>Conexión Meta ADS</strong>.
-            </div>
-          )}
-        </div>
-      )}
+      {error && <MetaFetchErrorPanel error={error} code={code} />}
 
-      {partialErrors.length > 0 && (
-        <div
-          style={{
-            marginBottom: 12,
-            fontSize: 13,
-            color: ds.warningText,
-            background: ds.warningBg,
-            padding: '10px 12px',
-            borderRadius: 8,
-            border: `1px solid ${ds.borderCard}`,
-          }}
-        >
-          {partialErrors.map((e) => (
-            <span key={e.adAccountId} style={{ display: 'block' }}>
-              {e.adAccountId}: {e.error}
-            </span>
-          ))}
-        </div>
-      )}
+      {dataIssue && !error && <MetaDataIssueCard issue={dataIssue} />}
 
       {loading && stages.length === 0 ? (
         <p style={{ color: ds.textMuted }}>Cargando embudo…</p>
