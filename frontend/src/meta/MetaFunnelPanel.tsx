@@ -1,10 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../auth/api';
+import { ds } from '../design-system/ds';
+import { MetricPill } from '../design-system/MetricPill';
 import type { MetaInsightPeriod } from './MetaInsightsPanel';
-
-const META_BLUE = '#1877f2';
-const SHOPIFY_GREEN = '#96bf48';
-const CARD_BG = '#ffffff';
 
 const PERIOD_LABELS: Record<MetaInsightPeriod, string> = {
   hoy: 'Hoy',
@@ -165,25 +163,35 @@ export function MetaFunnelPanel({
         style={{
           margin: '0 0 12px',
           fontSize: 13,
-          color: '#1e40af',
-          background: 'rgba(59,130,246,0.1)',
+          color: ds.infoText,
+          background: ds.infoBg,
           padding: '10px 14px',
           borderRadius: 8,
-          border: '1px solid rgba(59,130,246,0.25)',
+          border: `1px solid ${ds.borderCard}`,
           maxWidth: 920,
         }}
       >
         Embudo construido con los <strong>actions</strong> agregados que devuelve Meta por cuenta (insights a nivel
         cuenta). Los nombres de eventos dependen de tu pixel / CAPI; si falta un paso, verás 0 en esa etapa.
         {meta && (
-          <span style={{ display: 'block', marginTop: 6, fontSize: 12, color: '#1d4ed8' }}>
+          <span style={{ display: 'block', marginTop: 6, fontSize: 12, color: ds.infoText }}>
             Actualizado: {new Date(meta.fetchedAt).toLocaleString('es-ES')} · preset: {meta.datePreset}
           </span>
         )}
       </p>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 14 }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 3,
+            padding: 3,
+            border: `1px solid ${ds.borderCard}`,
+            borderRadius: 24,
+            background: ds.bgCard,
+          }}
+        >
           {periods.map((key) => {
             const active = period === key;
             return (
@@ -195,11 +203,11 @@ export function MetaFunnelPanel({
                   border: 'none',
                   cursor: 'pointer',
                   padding: '6px 14px',
-                  borderRadius: 999,
-                  fontSize: 13,
-                  fontWeight: 600,
-                  background: active ? SHOPIFY_GREEN : '#e8eaef',
-                  color: active ? '#fff' : '#333',
+                  borderRadius: 21,
+                  fontSize: 12,
+                  fontWeight: active ? 600 : 500,
+                  background: active ? ds.brand : 'transparent',
+                  color: active ? '#ffffff' : ds.textMuted,
                 }}
               >
                 {PERIOD_LABELS[key]}
@@ -214,9 +222,11 @@ export function MetaFunnelPanel({
             style={{
               padding: '8px 12px',
               borderRadius: 8,
-              border: `1px solid ${META_BLUE}44`,
+              border: `1px solid ${ds.borderCard}`,
               fontSize: 13,
               maxWidth: 280,
+              background: ds.bgCard,
+              color: ds.textPrimary,
             }}
           >
             <option value="">Todas las cuentas</option>
@@ -233,14 +243,14 @@ export function MetaFunnelPanel({
           disabled={loading}
           style={{
             marginLeft: 'auto',
-            padding: '8px 16px',
+            padding: '7px 14px',
             borderRadius: 8,
-            border: `1px solid ${META_BLUE}55`,
-            background: CARD_BG,
-            color: META_BLUE,
-            fontWeight: 600,
+            border: `1px solid ${ds.borderCard}`,
+            background: ds.bgCard,
+            color: ds.textSecondary,
+            fontWeight: 500,
             cursor: loading ? 'wait' : 'pointer',
-            fontSize: 13,
+            fontSize: 12,
           }}
         >
           {loading ? 'Actualizando…' : 'Actualizar'}
@@ -252,10 +262,10 @@ export function MetaFunnelPanel({
           style={{
             marginBottom: 16,
             padding: '12px 14px',
-            borderRadius: 10,
-            background: 'rgba(220,80,80,0.1)',
-            color: '#991b1b',
-            fontSize: 14,
+            borderRadius: 8,
+            background: ds.dangerBg,
+            color: ds.dangerText,
+            fontSize: 13,
           }}
         >
           {error}
@@ -272,10 +282,11 @@ export function MetaFunnelPanel({
           style={{
             marginBottom: 12,
             fontSize: 13,
-            color: '#92400e',
-            background: 'rgba(234,179,8,0.12)',
+            color: ds.warningText,
+            background: ds.warningBg,
             padding: '10px 12px',
             borderRadius: 8,
+            border: `1px solid ${ds.borderCard}`,
           }}
         >
           {partialErrors.map((e) => (
@@ -287,7 +298,7 @@ export function MetaFunnelPanel({
       )}
 
       {loading && stages.length === 0 ? (
-        <p style={{ color: '#6b7280' }}>Cargando embudo…</p>
+        <p style={{ color: ds.textMuted }}>Cargando embudo…</p>
       ) : (
         <div
           style={{
@@ -305,12 +316,6 @@ export function MetaFunnelPanel({
               style={{ maxWidth: 420, display: 'block' }}
               aria-label="Embudo de conversión Meta"
             >
-              <defs>
-                <linearGradient id="metaFunnelGrad" x1="0%" y1="0%" x2="0%" y2="100%">
-                  <stop offset="0%" stopColor={META_BLUE} stopOpacity={0.95} />
-                  <stop offset="100%" stopColor="#0d4a9c" stopOpacity={0.9} />
-                </linearGradient>
-              </defs>
               {stages.map((st, i) => {
                 const y1 = 20 + i * (stageH + gap);
                 const y2 = y1 + stageH;
@@ -324,14 +329,20 @@ export function MetaFunnelPanel({
                 ]
                   .map((p) => p.join(','))
                   .join(' ');
+                const dark = i % 2 === 0;
                 return (
                   <g key={st.key}>
-                    <polygon points={pts} fill="url(#metaFunnelGrad)" stroke="#ffffff22" strokeWidth={1} />
+                    <polygon
+                      points={pts}
+                      fill={dark ? '#6c47ff' : '#e8e3ff'}
+                      stroke="#f0f0f0"
+                      strokeWidth={1}
+                    />
                     <text
                       x={cx}
                       y={y1 + stageH / 2 - 6}
                       textAnchor="middle"
-                      fill="#fff"
+                      fill={dark ? '#ffffff' : '#111111'}
                       fontSize={14}
                       fontWeight={700}
                     >
@@ -341,7 +352,7 @@ export function MetaFunnelPanel({
                       x={cx}
                       y={y1 + stageH / 2 + 10}
                       textAnchor="middle"
-                      fill="#ffffffcc"
+                      fill={dark ? '#f0f0f0' : '#555555'}
                       fontSize={10}
                       fontWeight={500}
                     >
@@ -358,7 +369,7 @@ export function MetaFunnelPanel({
                     key={`drop-${i}`}
                     x={cx + tw / 2 + 6}
                     y={y}
-                    fill="#dc2626"
+                    fill="#a32d2d"
                     fontSize={11}
                     fontWeight={700}
                   >
@@ -369,55 +380,58 @@ export function MetaFunnelPanel({
             </svg>
           </div>
 
-          <div style={{ flex: '1 1 280px', display: 'flex', flexDirection: 'column', gap: 12, minWidth: 260 }}>
+          <div style={{ flex: '1 1 280px', display: 'flex', flexDirection: 'column', gap: 14, minWidth: 260 }}>
             {cards.map((c) => (
               <div
                 key={c.title}
                 style={{
-                  background: CARD_BG,
-                  borderRadius: 12,
-                  padding: '14px 16px',
-                  border: '1px solid #e8eaef',
+                  background: ds.bgCard,
+                  borderRadius: 14,
+                  padding: '18px 20px',
+                  border: `1px solid ${ds.borderCard}`,
                   textAlign: 'left',
                 }}
               >
-                <div style={{ fontSize: 12, color: META_BLUE, fontWeight: 700, marginBottom: 4 }}>{c.title}</div>
-                <div style={{ fontSize: 22, fontWeight: 800, color: '#1a1a2e' }}>{formatNumber(c.people)} eventos</div>
-                <div style={{ fontSize: 14, color: '#374151', marginTop: 6 }}>
-                  {formatMoney2(c.cpu)} <span style={{ color: '#6b7280', fontWeight: 500 }}>/ evento (gasto total)</span>
+                <div style={{ fontSize: 12, color: ds.brand, fontWeight: 600, marginBottom: 4 }}>{c.title}</div>
+                <div style={{ fontSize: 22, fontWeight: 700, color: ds.textPrimary }}>{formatNumber(c.people)} eventos</div>
+                <div style={{ fontSize: 13, color: ds.textSecondary, marginTop: 6 }}>
+                  {formatMoney2(c.cpu)}{' '}
+                  <span style={{ color: ds.textMuted, fontWeight: 500 }}>/ evento (gasto total)</span>
                 </div>
-                <p style={{ margin: '10px 0 0', fontSize: 12, color: '#6b7280', lineHeight: 1.45 }}>{c.note}</p>
+                <p style={{ margin: '10px 0 0', fontSize: 11, color: ds.textMuted, lineHeight: 1.45 }}>{c.note}</p>
               </div>
             ))}
 
             <div
               style={{
-                background: `linear-gradient(135deg, ${SHOPIFY_GREEN}14, #fff)`,
-                borderRadius: 12,
-                padding: '16px 18px',
-                border: `2px solid ${SHOPIFY_GREEN}`,
+                background: ds.brandBg,
+                borderRadius: 14,
+                padding: '18px 20px',
+                border: `1px solid ${ds.brandPale}`,
                 textAlign: 'left',
               }}
             >
-              <div style={{ fontSize: 12, color: SHOPIFY_GREEN, fontWeight: 800, marginBottom: 4 }}>Compras (Meta)</div>
-              <div style={{ fontSize: 22, fontWeight: 800, color: '#1a1a2e' }}>{formatNumber(purchases)} eventos</div>
-              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6 }}>
-                <div style={{ fontSize: 14 }}>
-                  <span style={{ color: '#6b7280' }}>Gasto período: </span>
-                  <strong>{formatMoney2(spend)}</strong>
+              <div style={{ fontSize: 12, color: ds.brand, fontWeight: 600, marginBottom: 4 }}>Compras (Meta)</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: ds.textPrimary }}>{formatNumber(purchases)} eventos</div>
+              <div style={{ marginTop: 10, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 13 }}>
+                <div>
+                  <span style={{ color: ds.textMuted }}>Gasto período: </span>
+                  <strong style={{ fontWeight: 600, color: ds.textPrimary }}>{formatMoney2(spend)}</strong>
                 </div>
-                <div style={{ fontSize: 14 }}>
-                  <span style={{ color: '#6b7280' }}>CPA (gasto / compras): </span>
-                  <strong>{purchases > 0 ? formatMoney2(cpa) : '—'}</strong>
+                <div>
+                  <span style={{ color: ds.textMuted }}>CPA (gasto / compras): </span>
+                  <strong style={{ fontWeight: 600, color: ds.textPrimary }}>
+                    {purchases > 0 ? formatMoney2(cpa) : '—'}
+                  </strong>
                 </div>
-                <div style={{ fontSize: 14 }}>
-                  <span style={{ color: '#6b7280' }}>Clic → compra: </span>
-                  <strong>{formatPct(convRate, 2)}</strong>
-                  <span style={{ color: '#9ca3af', fontSize: 12 }}> ({formatNumber(linkClicks)} clics)</span>
+                <div>
+                  <span style={{ color: ds.textMuted }}>Clic → compra: </span>
+                  <strong style={{ fontWeight: 600, color: ds.textPrimary }}>{formatPct(convRate, 2)}</strong>
+                  <span style={{ color: ds.textHint, fontSize: 11 }}> ({formatNumber(linkClicks)} clics)</span>
                 </div>
-                <div style={{ fontSize: 14 }}>
-                  <span style={{ color: '#6b7280' }}>ROAS (valor compras / gasto): </span>
-                  <strong style={{ color: META_BLUE }}>{roas > 0 ? `${roas.toFixed(2)}×` : '—'}</strong>
+                <div>
+                  <span style={{ color: ds.textMuted }}>ROAS (valor compras / gasto): </span>
+                  {roas > 0 ? <MetricPill>{`${roas.toFixed(2)}×`}</MetricPill> : <strong>—</strong>}
                 </div>
               </div>
             </div>

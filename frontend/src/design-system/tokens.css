@@ -1,0 +1,99 @@
+/* KOVO Design System — tokens (approved) */
+
+:root {
+  --color-brand: #6c47ff;
+  --color-brand-soft: #9b80ff;
+  --color-brand-bg: #f3efff;
+  --color-brand-pale: #e8e3ff;
+
+  --color-bg-app: #fafafa;
+  --color-bg-card: #ffffff;
+  --color-bg-subtle: #f5f5f5;
+
+  --color-border-card: #eeeeee;
+  --color-border-side: #f0f0f0;
+  --color-border-row: #f9f9f9;
+
+  --color-text-primary: #111111;
+  --color-text-secondary: #555555;
+  --color-text-muted: #bbbbbb;
+  --color-text-hint: #cccccc;
+
+  --color-success-bg: #edfbf4;
+  --color-success-text: #1d9e75;
+  --color-info-bg: #e6f1fb;
+  --color-info-text: #185fa5;
+  --color-warning-bg: #faeeda;
+  --color-warning-text: #854f0b;
+  --color-danger-bg: #fcebeb;
+  --color-danger-text: #a32d2d;
+
+  --font-base: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
+
+  --kpi-sales-bg: #eaf3de;
+  --kpi-sales-icon: #3b6d11;
+  --kpi-traffic-bg: #e6f1fb;
+  --kpi-traffic-icon: #185fa5;
+  --kpi-spend-bg: #faeeda;
+  --kpi-spend-icon: #854f0b;
+  --kpi-conv-bg: #f3efff;
+  --kpi-conv-icon: #6c47ff;
+  --kpi-stock-bg: #f1efe8;
+  --kpi-stock-icon: #5f5e5a;
+  --kpi-alert-bg: #fcebeb;
+  --kpi-alert-icon: #a32d2d;
+
+  --sidebar-width: 210px;
+  --main-padding-x: 36px;
+  --main-padding-y: 32px;
+  --grid-gap: 14px;
+}
+
+.kovo-app {
+  font-family: var(--font-base);
+  color: var(--color-text-secondary);
+  background: var(--color-bg-app);
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+
+.kovo-app *,
+.kovo-app *::before,
+.kovo-app *::after {
+  box-sizing: border-box;
+}
+
+.kovo-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--grid-gap);
+  margin-top: 20px;
+}
+
+@media (min-width: 1200px) {
+  .kovo-kpi-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+}
+
+.kovo-kpi-grid-dash {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--grid-gap);
+}
+
+@media (min-width: 900px) {
+  .kovo-kpi-grid-dash {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+@media (max-width: 767px) {
+  .kovo-kpi-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+a.kovo-sidebar-link:hover:not([aria-current='page']) {
+  background: var(--color-bg-subtle) !important;
+}

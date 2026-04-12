@@ -2,7 +2,8 @@ import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth, type SessionPayload } from '../auth/AuthContext';
 import { apiUrl } from '../auth/api';
-import { CARD_BG, META_BLUE, PAGE_BG, SIDEBAR, inputStyle, labelStyle, linkStyle, primaryButton } from './authStyles';
+import { alpha, ds } from '../design-system/ds';
+import { CARD_BG, inputStyle, labelStyle, linkStyle, primaryButton } from './authStyles';
 
 function Spinner() {
   return (
@@ -69,31 +70,20 @@ export default function Login() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: PAGE_BG,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-        fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
-      }}
-    >
+    <div className="kovo-auth-root">
       <style>{`@keyframes kovoSpin { to { transform: rotate(360deg); } }`}</style>
       <div
         style={{
           width: '100%',
           maxWidth: 420,
           background: CARD_BG,
-          borderRadius: 16,
+          borderRadius: 14,
           padding: 'clamp(24px, 5vw, 40px)',
-          boxShadow: '0 8px 32px rgba(26,26,46,0.08)',
-          border: '1px solid #e8eaef',
+          border: `1px solid ${ds.borderCard}`,
         }}
       >
-        <h1 style={{ margin: '0 0 8px', fontSize: 24, color: SIDEBAR }}>Iniciar sesión</h1>
-        <p style={{ margin: '0 0 24px', color: '#6b7280', fontSize: 15 }}>
+        <h1 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: ds.textPrimary }}>Iniciar sesión</h1>
+        <p style={{ margin: '0 0 24px', color: ds.textSecondary, fontSize: 13 }}>
           Accede a tu panel de KOVO
         </p>
 
@@ -102,10 +92,11 @@ export default function Login() {
             style={{
               marginBottom: 20,
               padding: '12px 14px',
-              borderRadius: 10,
-              background: `${META_BLUE}12`,
-              color: '#1e40af',
-              fontSize: 14,
+              borderRadius: 8,
+              background: alpha.brand12,
+              color: ds.brand,
+              fontSize: 13,
+              border: `1px solid ${ds.borderCard}`,
             }}
           >
             Cuenta creada. Ya puedes entrar con tu email y contraseña.
@@ -117,10 +108,11 @@ export default function Login() {
             style={{
               marginBottom: 20,
               padding: '12px 14px',
-              borderRadius: 10,
-              background: 'rgba(220,80,80,0.1)',
-              color: '#b91c1c',
-              fontSize: 14,
+              borderRadius: 8,
+              background: ds.dangerBg,
+              color: ds.dangerText,
+              fontSize: 13,
+              border: `1px solid ${ds.borderCard}`,
             }}
           >
             {error}

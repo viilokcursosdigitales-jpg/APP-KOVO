@@ -1,9 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../auth/api';
-
-const META_BLUE = '#1877f2';
-const SHOPIFY_GREEN = '#96bf48';
-const CARD_BG = '#ffffff';
+import { ds } from '../design-system/ds';
 
 export type MetaInsightPeriod = 'hoy' | '3d' | '7d' | '14d' | '30d' | 'custom';
 
@@ -182,25 +179,35 @@ export function MetaInsightsPanel({
         style={{
           margin: '0 0 12px',
           fontSize: 13,
-          color: '#166534',
-          background: 'rgba(22,101,52,0.08)',
+          color: ds.successText,
+          background: ds.successBg,
           padding: '10px 14px',
           borderRadius: 8,
-          border: '1px solid rgba(22,101,52,0.2)',
+          border: `1px solid ${ds.borderCard}`,
           maxWidth: 900,
         }}
       >
         Métricas en vivo desde la API de Meta (Marketing API) para las cuentas publicitarias que elegiste al conectar. Los
         datos dependen del período seleccionado y pueden tardar unos segundos en cargar.
         {meta && (
-          <span style={{ display: 'block', marginTop: 6, fontSize: 12, color: '#15803d' }}>
+          <span style={{ display: 'block', marginTop: 6, fontSize: 12, color: ds.successText }}>
             Actualizado: {new Date(meta.fetchedAt).toLocaleString('es-ES')} · preset Meta: {meta.datePreset}
           </span>
         )}
       </p>
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', marginBottom: 14 }}>
-        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+        <div
+          style={{
+            display: 'flex',
+            flexWrap: 'wrap',
+            gap: 3,
+            padding: 3,
+            border: `1px solid ${ds.borderCard}`,
+            borderRadius: 24,
+            background: ds.bgCard,
+          }}
+        >
           {periods.map((key) => {
             const active = period === key;
             return (
@@ -212,12 +219,12 @@ export function MetaInsightsPanel({
                   border: 'none',
                   cursor: 'pointer',
                   padding: '6px 14px',
-                  borderRadius: 999,
-                  fontSize: 13,
-                  fontWeight: 600,
+                  borderRadius: 21,
+                  fontSize: 12,
+                  fontWeight: active ? 600 : 500,
                   whiteSpace: 'nowrap',
-                  background: active ? SHOPIFY_GREEN : '#e8eaef',
-                  color: active ? '#fff' : '#333',
+                  background: active ? ds.brand : 'transparent',
+                  color: active ? '#ffffff' : ds.textMuted,
                 }}
               >
                 {PERIOD_LABELS[key]}
@@ -232,9 +239,11 @@ export function MetaInsightsPanel({
             style={{
               padding: '8px 12px',
               borderRadius: 8,
-              border: `1px solid ${META_BLUE}44`,
+              border: `1px solid ${ds.borderCard}`,
               fontSize: 13,
               maxWidth: 280,
+              background: ds.bgCard,
+              color: ds.textPrimary,
             }}
           >
             <option value="">Todas las cuentas</option>
@@ -251,14 +260,14 @@ export function MetaInsightsPanel({
           disabled={loading}
           style={{
             marginLeft: 'auto',
-            padding: '8px 16px',
+            padding: '7px 14px',
             borderRadius: 8,
-            border: `1px solid ${META_BLUE}55`,
-            background: CARD_BG,
-            color: META_BLUE,
-            fontWeight: 600,
+            border: `1px solid ${ds.borderCard}`,
+            background: ds.bgCard,
+            color: ds.textSecondary,
+            fontWeight: 500,
             cursor: loading ? 'wait' : 'pointer',
-            fontSize: 13,
+            fontSize: 12,
           }}
         >
           {loading ? 'Actualizando…' : 'Actualizar datos'}
@@ -271,7 +280,7 @@ export function MetaInsightsPanel({
           flexWrap: 'wrap',
           gap: 0,
           marginBottom: 18,
-          borderBottom: '2px solid #e2e5eb',
+          borderBottom: `1px solid ${ds.borderCard}`,
         }}
       >
         {levelTabs.map((t) => (
@@ -284,11 +293,11 @@ export function MetaInsightsPanel({
               border: 'none',
               background: 'transparent',
               cursor: 'pointer',
-              fontSize: 14,
-              fontWeight: level === t.id ? 700 : 500,
-              color: level === t.id ? META_BLUE : '#6b7280',
-              borderBottom: level === t.id ? `3px solid ${SHOPIFY_GREEN}` : '3px solid transparent',
-              marginBottom: -2,
+              fontSize: 13,
+              fontWeight: level === t.id ? 600 : 500,
+              color: level === t.id ? ds.brand : ds.textMuted,
+              borderBottom: level === t.id ? `2px solid ${ds.brand}` : '2px solid transparent',
+              marginBottom: -1,
             }}
           >
             {t.label}
@@ -301,10 +310,10 @@ export function MetaInsightsPanel({
           style={{
             marginBottom: 16,
             padding: '12px 14px',
-            borderRadius: 10,
-            background: 'rgba(220,80,80,0.1)',
-            color: '#991b1b',
-            fontSize: 14,
+            borderRadius: 8,
+            background: ds.dangerBg,
+            color: ds.dangerText,
+            fontSize: 13,
           }}
         >
           {error}
@@ -322,10 +331,11 @@ export function MetaInsightsPanel({
           style={{
             marginBottom: 12,
             fontSize: 13,
-            color: '#92400e',
-            background: 'rgba(234,179,8,0.12)',
+            color: ds.warningText,
+            background: ds.warningBg,
             padding: '10px 12px',
             borderRadius: 8,
+            border: `1px solid ${ds.borderCard}`,
           }}
         >
           Algunas cuentas no devolvieron datos:{' '}
@@ -338,13 +348,13 @@ export function MetaInsightsPanel({
       )}
 
       {loading && !totals ? (
-        <p style={{ color: '#6b7280' }}>Cargando métricas desde Meta…</p>
+        <p style={{ color: ds.textMuted }}>Cargando métricas desde Meta…</p>
       ) : totals && metricCards.length > 0 ? (
         <div
           style={{
             display: 'grid',
             gridTemplateColumns: 'repeat(auto-fill, minmax(140px, 1fr))',
-            gap: 12,
+            gap: 14,
             marginBottom: 20,
           }}
         >
@@ -352,14 +362,14 @@ export function MetaInsightsPanel({
             <div
               key={m.label}
               style={{
-                background: CARD_BG,
-                borderRadius: 12,
-                padding: '12px 14px',
-                border: '1px solid #e8eaef',
+                background: ds.bgCard,
+                borderRadius: 14,
+                padding: '18px 20px',
+                border: `1px solid ${ds.borderCard}`,
               }}
             >
-              <div style={{ fontSize: 11, color: '#6b7280', marginBottom: 4 }}>{m.label}</div>
-              <div style={{ fontSize: 17, fontWeight: 700, color: '#111827' }}>{m.value}</div>
+              <div style={{ fontSize: 11, fontWeight: 500, color: ds.textMuted, marginBottom: 6 }}>{m.label}</div>
+              <div style={{ fontSize: 22, fontWeight: 700, color: ds.textPrimary }}>{m.value}</div>
             </div>
           ))}
         </div>
@@ -367,15 +377,15 @@ export function MetaInsightsPanel({
 
       <div
         style={{
-          background: CARD_BG,
-          borderRadius: 12,
-          border: '1px solid #e8eaef',
+          background: ds.bgCard,
+          borderRadius: 14,
+          border: `1px solid ${ds.borderCard}`,
           overflow: 'auto',
         }}
       >
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 960 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 960 }}>
           <thead>
-            <tr style={{ background: '#f8f9fb', textAlign: 'left' }}>
+            <tr style={{ background: ds.bgApp, textAlign: 'left' }}>
               {[
                 'Cuenta publicitaria',
                 level === 'campaigns' ? 'Campaña' : level === 'adsets' ? 'Conjunto' : 'Anuncio',
@@ -392,10 +402,13 @@ export function MetaInsightsPanel({
                 <th
                   key={h}
                   style={{
-                    padding: '10px 12px',
-                    fontWeight: 600,
-                    color: '#374151',
-                    borderBottom: '1px solid #e8eaef',
+                    padding: '11px 16px',
+                    fontWeight: 500,
+                    fontSize: 10.5,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.4px',
+                    color: ds.textHint,
+                    borderBottom: `1px solid ${ds.borderCard}`,
                     whiteSpace: 'nowrap',
                   }}
                 >
@@ -409,7 +422,7 @@ export function MetaInsightsPanel({
               <tr>
                 <td
                   colSpan={level === 'campaigns' ? 10 : 11}
-                  style={{ padding: 24, color: '#6b7280', textAlign: 'center' }}
+                  style={{ padding: 24, color: ds.textMuted, textAlign: 'center', fontSize: 13 }}
                 >
                   No hay filas con datos de insights en este período (puede que no haya entregas o que el token no tenga
                   permisos).
@@ -417,28 +430,28 @@ export function MetaInsightsPanel({
               </tr>
             ) : (
               rows.map((row) => (
-                <tr key={`${row.adAccountId}-${row.id}`} style={{ borderBottom: '1px solid #f0f1f4' }}>
-                  <td style={{ padding: '10px 12px', maxWidth: 160 }} title={row.adAccountId}>
-                    <div style={{ fontWeight: 600, color: '#1a1a2e' }}>{row.adAccountName}</div>
-                    <div style={{ fontSize: 11, color: '#9ca3af' }}>{row.adAccountId}</div>
+                <tr key={`${row.adAccountId}-${row.id}`} style={{ borderBottom: `1px solid ${ds.borderRow}` }}>
+                  <td style={{ padding: '12px 16px', maxWidth: 160 }} title={row.adAccountId}>
+                    <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{row.adAccountName}</div>
+                    <div style={{ fontSize: 10.5, color: ds.textHint }}>{row.adAccountId}</div>
                   </td>
-                  <td style={{ padding: '10px 12px', maxWidth: 220 }}>
-                    <div style={{ fontWeight: 600 }}>{row.name}</div>
-                    <div style={{ fontSize: 11, color: '#9ca3af' }}>id {row.id}</div>
+                  <td style={{ padding: '12px 16px', maxWidth: 220 }}>
+                    <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{row.name}</div>
+                    <div style={{ fontSize: 10.5, color: ds.textHint }}>id {row.id}</div>
                   </td>
-                  <td style={{ padding: '10px 12px' }}>{row.status || '—'}</td>
+                  <td style={{ padding: '12px 16px' }}>{row.status || '—'}</td>
                   {level !== 'campaigns' && (
-                    <td style={{ padding: '10px 12px', fontSize: 11, color: '#6b7280', maxWidth: 100 }}>
+                    <td style={{ padding: '12px 16px', fontSize: 11, color: ds.textMuted, maxWidth: 100 }}>
                       {level === 'adsets' ? row.campaignId : row.adsetId}
                     </td>
                   )}
-                  <td style={{ padding: '10px 12px' }}>{formatNumber(row.impressions)}</td>
-                  <td style={{ padding: '10px 12px' }}>{formatNumber(row.clicks)}</td>
-                  <td style={{ padding: '10px 12px' }}>{formatMoney2(row.spend)}</td>
-                  <td style={{ padding: '10px 12px' }}>{formatMoney2(row.cpm)}</td>
-                  <td style={{ padding: '10px 12px' }}>{formatPct(row.ctr)}</td>
-                  <td style={{ padding: '10px 12px' }}>{row.roas > 0 ? `${row.roas.toFixed(2)}×` : '—'}</td>
-                  <td style={{ padding: '10px 12px' }}>{row.purchases > 0 ? formatMoney2(row.cpa) : '—'}</td>
+                  <td style={{ padding: '12px 16px' }}>{formatNumber(row.impressions)}</td>
+                  <td style={{ padding: '12px 16px' }}>{formatNumber(row.clicks)}</td>
+                  <td style={{ padding: '12px 16px' }}>{formatMoney2(row.spend)}</td>
+                  <td style={{ padding: '12px 16px' }}>{formatMoney2(row.cpm)}</td>
+                  <td style={{ padding: '12px 16px' }}>{formatPct(row.ctr)}</td>
+                  <td style={{ padding: '12px 16px' }}>{row.roas > 0 ? `${row.roas.toFixed(2)}×` : '—'}</td>
+                  <td style={{ padding: '12px 16px' }}>{row.purchases > 0 ? formatMoney2(row.cpa) : '—'}</td>
                 </tr>
               ))
             )}

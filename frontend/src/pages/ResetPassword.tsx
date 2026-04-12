@@ -1,7 +1,8 @@
 import { useState, type FormEvent } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiUrl } from '../auth/api';
-import { CARD_BG, PAGE_BG, SIDEBAR, inputStyle, labelStyle, linkStyle, primaryButton } from './authStyles';
+import { ds } from '../design-system/ds';
+import { CARD_BG, inputStyle, labelStyle, linkStyle, primaryButton } from './authStyles';
 
 export default function ResetPassword() {
   const [params] = useSearchParams();
@@ -52,30 +53,19 @@ export default function ResetPassword() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: PAGE_BG,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-        fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
-      }}
-    >
+    <div className="kovo-auth-root">
       <div
         style={{
           width: '100%',
           maxWidth: 420,
           background: CARD_BG,
-          borderRadius: 16,
+          borderRadius: 14,
           padding: 'clamp(24px, 5vw, 40px)',
-          boxShadow: '0 8px 32px rgba(26,26,46,0.08)',
-          border: '1px solid #e8eaef',
+          border: `1px solid ${ds.borderCard}`,
         }}
       >
-        <h1 style={{ margin: '0 0 8px', fontSize: 24, color: SIDEBAR }}>Nueva contraseña</h1>
-        <p style={{ margin: '0 0 24px', color: '#6b7280', fontSize: 15 }}>
+        <h1 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: ds.textPrimary }}>Nueva contraseña</h1>
+        <p style={{ margin: '0 0 24px', color: ds.textSecondary, fontSize: 13 }}>
           Elige una contraseña segura para tu cuenta
         </p>
 

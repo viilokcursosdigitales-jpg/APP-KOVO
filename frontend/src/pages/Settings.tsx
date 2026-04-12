@@ -1,18 +1,9 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
-import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { useAuth, type OrgRole } from '../auth/AuthContext';
-import {
-  CARD_BG,
-  META_BLUE,
-  PAGE_BG,
-  SHOPIFY_GREEN,
-  SIDEBAR,
-  inputStyle,
-  labelStyle,
-  linkStyle,
-  primaryButton,
-} from './authStyles';
+import { ds } from '../design-system/ds';
+import { PageHeader } from '../design-system/PageHeader';
+import { inputStyle, labelStyle, primaryButton } from './authStyles';
 
 type MemberRow = {
   id: number;
@@ -43,7 +34,7 @@ function ProgressBar({ used, max }: { used: number; max: number | null }) {
       style={{
         height: 10,
         borderRadius: 5,
-        background: '#e8eaef',
+        background: ds.borderCard,
         overflow: 'hidden',
         marginTop: 8,
       }}
@@ -52,7 +43,7 @@ function ProgressBar({ used, max }: { used: number; max: number | null }) {
         style={{
           width: max == null ? '8%' : `${pct}%`,
           height: '100%',
-          background: max != null && used >= max ? '#f59e0b' : META_BLUE,
+          background: max != null && used >= max ? ds.warningText : ds.brand,
           transition: 'width 0.25s ease',
         }}
       />
@@ -175,33 +166,20 @@ export default function Settings() {
     organization.plan === 'free' ? 'Gratuito' : organization.plan === 'pro' ? 'Pro' : 'Enterprise';
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: PAGE_BG,
-        padding: 'clamp(20px, 4vw, 40px)',
-        fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
-      }}
-    >
-      <div style={{ maxWidth: 720, margin: '0 auto' }}>
-        <Link to="/dashboard" style={{ ...linkStyle, display: 'inline-block', marginBottom: 20 }}>
-          ← Volver al panel
-        </Link>
-
-        <h1 style={{ margin: '0 0 8px', fontSize: 28, color: SIDEBAR }}>Configuración</h1>
-        <p style={{ margin: '0 0 28px', color: '#6b7280' }}>Workspace: {organization.slug}</p>
+    <div style={{ maxWidth: 720 }}>
+      <PageHeader title="Configuración" subtitle={`Workspace: ${organization.slug}`} />
 
         {/* Mi organización */}
         <section
           style={{
-            background: CARD_BG,
-            borderRadius: 16,
-            padding: 24,
+            background: ds.bgCard,
+            borderRadius: 14,
+            padding: '18px 20px',
             marginBottom: 20,
-            border: '1px solid #e8eaef',
+            border: `1px solid ${ds.borderCard}`,
           }}
         >
-          <h2 style={{ margin: '0 0 16px', fontSize: 18, color: SIDEBAR }}>Mi organización</h2>
+          <h2 style={{ margin: '0 0 16px', fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Mi organización</h2>
           <form onSubmit={saveOrganization}>
             <label style={labelStyle}>
               Nombre de la empresa
@@ -214,7 +192,13 @@ export default function Settings() {
               />
             </label>
             {orgMsg && (
-              <p style={{ margin: '8px 0 0', fontSize: 14, color: orgMsg === 'Guardado' ? SHOPIFY_GREEN : '#dc2626' }}>
+              <p
+                style={{
+                  margin: '8px 0 0',
+                  fontSize: 13,
+                  color: orgMsg === 'Guardado' ? ds.successText : ds.dangerText,
+                }}
+              >
                 {orgMsg}
               </p>
             )}
@@ -237,15 +221,15 @@ export default function Settings() {
         {/* Equipo */}
         <section
           style={{
-            background: CARD_BG,
-            borderRadius: 16,
-            padding: 24,
+            background: ds.bgCard,
+            borderRadius: 14,
+            padding: '18px 20px',
             marginBottom: 20,
-            border: '1px solid #e8eaef',
+            border: `1px solid ${ds.borderCard}`,
           }}
         >
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
-            <h2 style={{ margin: 0, fontSize: 18, color: SIDEBAR }}>Equipo</h2>
+            <h2 style={{ margin: 0, fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Equipo</h2>
             <button
               type="button"
               onClick={() => {
@@ -253,14 +237,9 @@ export default function Settings() {
                 setInviteOpen(true);
               }}
               style={{
-                padding: '10px 18px',
-                borderRadius: 10,
-                border: 'none',
-                background: META_BLUE,
-                color: '#fff',
-                fontWeight: 600,
-                cursor: 'pointer',
-                fontSize: 14,
+                ...primaryButton,
+                width: 'auto',
+                padding: '8px 18px',
               }}
             >
               Invitar miembro
@@ -268,14 +247,62 @@ export default function Settings() {
           </div>
 
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 14 }}>
-              <thead>
-                <tr style={{ textAlign: 'left', color: '#6b7280' }}>
-                  <th style={{ padding: '10px 8px', borderBottom: '1px solid #e8eaef' }}>Miembro</th>
-                  <th style={{ padding: '10px 8px', borderBottom: '1px solid #e8eaef' }}>Rol</th>
-                  <th style={{ padding: '10px 8px', borderBottom: '1px solid #e8eaef' }}>Estado</th>
+            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, tableLayout: 'fixed' }}>
+              <thead style={{ background: ds.bgApp }}>
+                <tr style={{ textAlign: 'left' }}>
+                  <th
+                    style={{
+                      padding: '11px 16px',
+                      borderBottom: `1px solid ${ds.borderRow}`,
+                      fontSize: 10.5,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.4px',
+                      color: ds.textHint,
+                    }}
+                  >
+                    Miembro
+                  </th>
+                  <th
+                    style={{
+                      padding: '11px 16px',
+                      borderBottom: `1px solid ${ds.borderRow}`,
+                      fontSize: 10.5,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.4px',
+                      color: ds.textHint,
+                    }}
+                  >
+                    Rol
+                  </th>
+                  <th
+                    style={{
+                      padding: '11px 16px',
+                      borderBottom: `1px solid ${ds.borderRow}`,
+                      fontSize: 10.5,
+                      fontWeight: 600,
+                      textTransform: 'uppercase',
+                      letterSpacing: '0.4px',
+                      color: ds.textHint,
+                    }}
+                  >
+                    Estado
+                  </th>
                   {role === 'owner' ? (
-                    <th style={{ padding: '10px 8px', borderBottom: '1px solid #e8eaef' }}>Acciones</th>
+                    <th
+                      style={{
+                        padding: '11px 16px',
+                        borderBottom: `1px solid ${ds.borderRow}`,
+                        fontSize: 10.5,
+                        fontWeight: 600,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.4px',
+                        color: ds.textHint,
+                      }}
+                    >
+                      Acciones
+                    </th>
                   ) : null}
                 </tr>
               </thead>
@@ -288,17 +315,24 @@ export default function Settings() {
                     m.id !== user.id &&
                     (m.role !== 'owner' || activeOwners.length > 1);
                   return (
-                    <tr key={m.id} style={{ borderBottom: '1px solid #f3f4f6' }}>
-                      <td style={{ padding: '12px 8px' }}>
-                        <div style={{ fontWeight: 600, color: '#1a1a2e' }}>{m.name}</div>
-                        <div style={{ fontSize: 13, color: '#6b7280' }}>{m.email}</div>
+                    <tr key={m.id} style={{ borderBottom: `1px solid ${ds.borderRow}` }}>
+                      <td style={{ padding: '12px 16px' }}>
+                        <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{m.name}</div>
+                        <div style={{ fontSize: 10.5, color: ds.textHint }}>{m.email}</div>
                       </td>
-                      <td style={{ padding: '12px 8px' }}>
+                      <td style={{ padding: '12px 16px' }}>
                         {role === 'owner' ? (
                           <select
                             value={m.role}
                             onChange={(e) => void changeRole(m.id, e.target.value as OrgRole)}
-                            style={{ padding: '6px 10px', borderRadius: 8, border: '1px solid #d1d5db' }}
+                            style={{
+                              padding: '8px 12px',
+                              borderRadius: 8,
+                              border: `1px solid ${ds.borderCard}`,
+                              fontSize: 13,
+                              color: ds.textPrimary,
+                              background: ds.bgCard,
+                            }}
                           >
                             <option value="owner">owner</option>
                             <option value="admin">admin</option>
@@ -308,23 +342,33 @@ export default function Settings() {
                           <span style={{ textTransform: 'capitalize' }}>{m.role}</span>
                         )}
                       </td>
-                      <td style={{ padding: '12px 8px' }}>
+                      <td style={{ padding: '12px 16px' }}>
                         <span
                           style={{
-                            display: 'inline-block',
-                            padding: '4px 10px',
-                            borderRadius: 999,
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: 6,
+                            padding: '3px 9px',
+                            borderRadius: 20,
                             fontSize: 12,
-                            fontWeight: 600,
-                            background: m.is_active ? `${SHOPIFY_GREEN}22` : '#fee2e2',
-                            color: m.is_active ? '#3d5c1f' : '#b91c1c',
+                            fontWeight: 500,
+                            background: m.is_active ? ds.successBg : ds.dangerBg,
+                            color: m.is_active ? ds.successText : ds.dangerText,
                           }}
                         >
+                          <span
+                            style={{
+                              width: 6,
+                              height: 6,
+                              borderRadius: '50%',
+                              background: m.is_active ? ds.successText : ds.dangerText,
+                            }}
+                          />
                           {m.is_active ? 'Activo' : 'Inactivo'}
                         </span>
                       </td>
                       {role === 'owner' ? (
-                        <td style={{ padding: '12px 8px' }}>
+                        <td style={{ padding: '12px 16px' }}>
                           {canRemove ? (
                             <button
                               type="button"
@@ -332,7 +376,7 @@ export default function Settings() {
                               style={{
                                 border: 'none',
                                 background: 'none',
-                                color: '#dc2626',
+                                color: ds.dangerText,
                                 cursor: 'pointer',
                                 fontWeight: 600,
                                 fontSize: 13,
@@ -341,7 +385,7 @@ export default function Settings() {
                               Eliminar
                             </button>
                           ) : (
-                            <span style={{ color: '#9ca3af', fontSize: 13 }}>—</span>
+                            <span style={{ color: ds.textMuted, fontSize: 13 }}>—</span>
                           )}
                         </td>
                       ) : null}
@@ -349,27 +393,41 @@ export default function Settings() {
                   );
                 })}
                 {invitations.map((inv) => (
-                  <tr key={`inv-${inv.id}`} style={{ borderBottom: '1px solid #f3f4f6', background: '#fafafa' }}>
-                    <td style={{ padding: '12px 8px' }}>
-                      <div style={{ fontWeight: 600, color: '#6b7280' }}>{inv.email}</div>
-                      <div style={{ fontSize: 12, color: '#9ca3af' }}>Invitación pendiente</div>
+                  <tr
+                    key={`inv-${inv.id}`}
+                    style={{ borderBottom: `1px solid ${ds.borderRow}`, background: ds.bgSubtle }}
+                  >
+                    <td style={{ padding: '12px 16px' }}>
+                      <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{inv.email}</div>
+                      <div style={{ fontSize: 10.5, color: ds.textHint }}>Invitación pendiente</div>
                     </td>
-                    <td style={{ padding: '12px 8px', textTransform: 'capitalize' }}>{inv.role}</td>
-                    <td style={{ padding: '12px 8px' }}>
+                    <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>{inv.role}</td>
+                    <td style={{ padding: '12px 16px' }}>
                       <span
                         style={{
-                          padding: '4px 10px',
-                          borderRadius: 999,
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 6,
+                          padding: '3px 9px',
+                          borderRadius: 20,
                           fontSize: 12,
-                          fontWeight: 600,
-                          background: `${META_BLUE}18`,
-                          color: META_BLUE,
+                          fontWeight: 500,
+                          background: ds.infoBg,
+                          color: ds.infoText,
                         }}
                       >
+                        <span
+                          style={{
+                            width: 6,
+                            height: 6,
+                            borderRadius: '50%',
+                            background: ds.infoText,
+                          }}
+                        />
                         Pendiente
                       </span>
                     </td>
-                    {role === 'owner' ? <td style={{ padding: '12px 8px' }} /> : null}
+                    {role === 'owner' ? <td style={{ padding: '12px 16px' }} /> : null}
                   </tr>
                 ))}
               </tbody>
@@ -380,33 +438,39 @@ export default function Settings() {
         {/* Plan */}
         <section
           style={{
-            background: CARD_BG,
-            borderRadius: 16,
-            padding: 24,
-            border: '1px solid #e8eaef',
+            background: ds.bgCard,
+            borderRadius: 14,
+            padding: '18px 20px',
+            border: `1px solid ${ds.borderCard}`,
           }}
         >
-          <h2 style={{ margin: '0 0 16px', fontSize: 18, color: SIDEBAR }}>Plan actual</h2>
-          <p style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 700, color: META_BLUE }}>{planLabel}</p>
-          <p style={{ margin: '0 0 20px', fontSize: 14, color: '#6b7280' }}>
+          <h2 style={{ margin: '0 0 16px', fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Plan actual</h2>
+          <p style={{ margin: '0 0 8px', fontSize: 22, fontWeight: 700, color: ds.brand }}>{planLabel}</p>
+          <p style={{ margin: '0 0 20px', fontSize: 11, color: ds.textMuted }}>
             Uso dentro de los límites de tu suscripción.
           </p>
 
           {localLimits && (
             <>
-              <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: '#374151' }}>
+              <div
+                style={{
+                  marginBottom: 20,
+                  paddingBottom: 20,
+                  borderBottom: `1px solid ${ds.borderSide}`,
+                }}
+              >
+                <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>
                   Usuarios (activos + invitaciones pendientes)
                 </div>
-                <div style={{ fontSize: 13, color: '#6b7280' }}>
+                <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 4 }}>
                   {localLimits.users.used}{' '}
                   {localLimits.users.max != null ? `de ${localLimits.users.max}` : '(sin límite)'}
                 </div>
                 <ProgressBar used={localLimits.users.used} max={localLimits.users.max} />
               </div>
               <div style={{ marginBottom: 20 }}>
-                <div style={{ fontSize: 14, fontWeight: 600, color: '#374151' }}>Conexiones Meta</div>
-                <div style={{ fontSize: 13, color: '#6b7280' }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Conexiones Meta</div>
+                <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 4 }}>
                   {localLimits.meta.used}{' '}
                   {localLimits.meta.max != null ? `de ${localLimits.meta.max}` : '(sin límite)'}
                 </div>
@@ -419,27 +483,26 @@ export default function Settings() {
             type="button"
             onClick={() => window.alert('Próximamente: checkout para mejorar tu plan.')}
             style={{
-              padding: '12px 22px',
-              borderRadius: 10,
-              border: `2px solid ${SHOPIFY_GREEN}`,
-              background: '#fff',
-              color: '#3d5c1f',
-              fontWeight: 700,
+              padding: '8px 16px',
+              borderRadius: 8,
+              border: `1px solid ${ds.borderCard}`,
+              background: ds.bgCard,
+              color: ds.textSecondary,
+              fontWeight: 600,
               cursor: 'pointer',
-              fontSize: 15,
+              fontSize: 13,
             }}
           >
             Mejorar plan
           </button>
         </section>
-      </div>
 
       {inviteOpen && (
         <div
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(26,26,46,0.45)',
+            background: 'rgba(0,0,0,0.18)',
             display: 'flex',
             alignItems: 'center',
             justifyContent: 'center',
@@ -452,15 +515,15 @@ export default function Settings() {
         >
           <div
             style={{
-              background: CARD_BG,
+              background: ds.bgCard,
               borderRadius: 16,
-              padding: 24,
+              padding: 28,
               width: '100%',
               maxWidth: 400,
-              boxShadow: '0 20px 50px rgba(0,0,0,0.2)',
+              border: `1px solid ${ds.borderCard}`,
             }}
           >
-            <h3 id="invite-title" style={{ margin: '0 0 16px', color: SIDEBAR }}>
+            <h3 id="invite-title" style={{ margin: '0 0 16px', fontSize: 16, fontWeight: 700, color: ds.textPrimary }}>
               Invitar miembro
             </h3>
             <form onSubmit={sendInvite}>
@@ -486,7 +549,7 @@ export default function Settings() {
                 </select>
               </label>
               {inviteErr && (
-                <p style={{ color: '#dc2626', fontSize: 14, marginTop: 12 }}>{inviteErr}</p>
+                <p style={{ color: ds.dangerText, fontSize: 13, marginTop: 12 }}>{inviteErr}</p>
               )}
               <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
                 <button
@@ -494,12 +557,14 @@ export default function Settings() {
                   onClick={() => setInviteOpen(false)}
                   style={{
                     flex: 1,
-                    padding: '12px 16px',
-                    borderRadius: 10,
-                    border: '1px solid #d1d5db',
-                    background: '#fff',
+                    padding: '8px 16px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    background: ds.bgCard,
+                    color: ds.textSecondary,
                     cursor: 'pointer',
                     fontWeight: 600,
+                    fontSize: 13,
                   }}
                 >
                   Cancelar

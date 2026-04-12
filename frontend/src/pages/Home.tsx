@@ -1,48 +1,32 @@
 import { Link } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
-import { META_BLUE, PAGE_BG, SHOPIFY_GREEN, SIDEBAR } from './authStyles';
+import { ds } from '../design-system/ds';
+import { META_BLUE } from './authStyles';
 
 export default function Home() {
   const { isAuthenticated, isLoading } = useAuth();
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: `linear-gradient(160deg, ${SIDEBAR} 0%, #252542 50%, ${PAGE_BG} 50%)`,
-        fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 32,
-        textAlign: 'center',
-      }}
-    >
+    <div className="kovo-auth-root">
       <div
         style={{
           maxWidth: 520,
-          background: 'rgba(255,255,255,0.98)',
-          borderRadius: 20,
-          padding: 'clamp(32px, 6vw, 48px)',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.15)',
+          width: '100%',
+          background: ds.bgCard,
+          borderRadius: 14,
+          padding: 'clamp(28px, 6vw, 40px)',
+          border: `1px solid ${ds.borderCard}`,
+          textAlign: 'center',
         }}
       >
-        <div
-          style={{
-            fontSize: 28,
-            fontWeight: 800,
-            color: SIDEBAR,
-            letterSpacing: '-0.03em',
-            marginBottom: 12,
-          }}
-        >
-          KOVO
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 10, marginBottom: 16 }}>
+          <div style={{ width: 26, height: 26, borderRadius: 7, background: ds.brand }} />
+          <span style={{ fontSize: 14, fontWeight: 600, color: ds.textPrimary }}>KOVO</span>
         </div>
-        <h1 style={{ margin: '0 0 16px', fontSize: 'clamp(22px, 4vw, 28px)', color: '#111827' }}>
+        <h1 style={{ margin: '0 0 12px', fontSize: 20, fontWeight: 700, color: ds.textPrimary }}>
           Panel de anuncios y tienda
         </h1>
-        <p style={{ margin: '0 0 28px', color: '#6b7280', fontSize: 16, lineHeight: 1.55 }}>
+        <p style={{ margin: '0 0 24px', color: ds.textSecondary, fontSize: 13, lineHeight: 1.55 }}>
           Gestiona Meta Ads, pedidos e inventario desde un solo lugar. Inicia sesión para entrar al panel.
         </p>
 
@@ -52,13 +36,13 @@ export default function Home() {
               <Link
                 to="/dashboard"
                 style={{
-                  padding: '14px 28px',
-                  borderRadius: 10,
+                  padding: '8px 18px',
+                  borderRadius: 8,
                   background: META_BLUE,
                   color: '#fff',
-                  fontWeight: 700,
+                  fontWeight: 600,
                   textDecoration: 'none',
-                  fontSize: 16,
+                  fontSize: 13,
                 }}
               >
                 Ir al panel
@@ -68,13 +52,13 @@ export default function Home() {
                 <Link
                   to="/login"
                   style={{
-                    padding: '14px 28px',
-                    borderRadius: 10,
+                    padding: '8px 18px',
+                    borderRadius: 8,
                     background: META_BLUE,
                     color: '#fff',
-                    fontWeight: 700,
+                    fontWeight: 600,
                     textDecoration: 'none',
-                    fontSize: 16,
+                    fontSize: 13,
                   }}
                 >
                   Iniciar sesión
@@ -82,14 +66,14 @@ export default function Home() {
                 <Link
                   to="/register"
                   style={{
-                    padding: '14px 28px',
-                    borderRadius: 10,
-                    border: `2px solid ${SHOPIFY_GREEN}`,
-                    color: '#3d5c1f',
-                    fontWeight: 700,
+                    padding: '8px 18px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    color: ds.textSecondary,
+                    fontWeight: 600,
                     textDecoration: 'none',
-                    fontSize: 16,
-                    background: '#fff',
+                    fontSize: 13,
+                    background: ds.bgCard,
                   }}
                 >
                   Crear cuenta

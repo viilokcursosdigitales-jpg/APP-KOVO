@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import { apiFetch } from './auth/api';
 import { useAuth } from './auth/AuthContext';
+import { alpha, ds } from './design-system/ds';
+import { KOVO_META_CONNECTION_EVENT } from './meta/useMetaInsightsReady';
 
-const META_BLUE = '#1877F2';
-const SHOPIFY_GREEN = '#96bf48';
-const SIDEBAR_TONE = '#1a1a2e';
-const CARD_BG = '#ffffff';
 const DEVELOPERS_URL = 'https://developers.facebook.com';
+
+function notifyMetaDashboardRefresh() {
+  window.dispatchEvent(new Event(KOVO_META_CONNECTION_EVENT));
+}
 
 export type MetaConnectionErrorCode =
   | 'invalid_credentials'
@@ -71,9 +73,9 @@ function FieldTooltip({ id, text }: { id: string; text: string }) {
           width: 22,
           height: 22,
           borderRadius: '50%',
-          border: `1px solid ${META_BLUE}55`,
-          background: `${META_BLUE}12`,
-          color: META_BLUE,
+          border: `1px solid ${alpha.brand35}`,
+          background: alpha.brand12,
+          color: ds.brand,
           cursor: 'pointer',
           fontSize: 12,
           fontWeight: 700,
@@ -96,12 +98,11 @@ function FieldTooltip({ id, text }: { id: string; text: string }) {
             zIndex: 20,
             width: 'min(320px, calc(100vw - 48px))',
             padding: '12px 14px',
-            background: SIDEBAR_TONE,
+            background: ds.textPrimary,
             color: '#e8eaef',
             fontSize: 13,
             lineHeight: 1.45,
             borderRadius: 10,
-            boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
             fontWeight: 400,
           }}
         >
@@ -137,8 +138,8 @@ function StatusBadge({
 }) {
   const map = {
     disconnected: { label: 'Sin conectar', bg: '#f3f4f6', color: '#6b7280', dot: '#9ca3af' },
-    loading: { label: 'Conectando…', bg: `${META_BLUE}18`, color: META_BLUE, dot: META_BLUE },
-    connected: { label: 'Conectado', bg: `${SHOPIFY_GREEN}22`, color: '#3d5c1f', dot: SHOPIFY_GREEN },
+    loading: { label: 'Conectando…', bg: alpha.brand18, color: ds.brand, dot: ds.brand },
+    connected: { label: 'Conectado', bg: alpha.success15, color: ds.successText, dot: ds.successText },
     error: { label: 'Error', bg: 'rgba(220,80,80,0.15)', color: '#b91c1c', dot: '#dc2626' },
   }[status];
 
@@ -179,7 +180,7 @@ function CheckAnimated() {
         width: 72,
         height: 72,
         borderRadius: '50%',
-        background: `${SHOPIFY_GREEN}22`,
+        background: alpha.success15,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
@@ -189,7 +190,7 @@ function CheckAnimated() {
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none" aria-hidden>
         <path
           d="M5 12.5l5.5 5.5L19 7"
-          stroke={SHOPIFY_GREEN}
+          stroke={ds.successText}
           strokeWidth="2.5"
           strokeLinecap="round"
           strokeLinejoin="round"
@@ -389,6 +390,7 @@ export default function ConexionMetaADS() {
       setSelectedAccountIds([]);
       setStep('success');
       await refreshUser();
+      notifyMetaDashboardRefresh();
     } catch {
       setErrorCode('network');
       setStep('error');
@@ -478,6 +480,7 @@ export default function ConexionMetaADS() {
         );
         setStep('success');
         await refreshUser();
+        notifyMetaDashboardRefresh();
         return;
       }
 
@@ -545,6 +548,7 @@ export default function ConexionMetaADS() {
       setSelectedAccountIds([]);
       setStep('success');
       await refreshUser();
+      notifyMetaDashboardRefresh();
     } catch {
       setErrorCode('network');
       setStep('error');
@@ -613,6 +617,7 @@ export default function ConexionMetaADS() {
     setSelectedAccountIds([]);
     setPreviewError(null);
     await refreshUser();
+    notifyMetaDashboardRefresh();
   }, [saved, refreshUser]);
 
   const badgeStatus: 'disconnected' | 'loading' | 'connected' | 'error' =
@@ -640,7 +645,7 @@ export default function ConexionMetaADS() {
     return shell(
       <div
         style={{
-          background: CARD_BG,
+          background: ds.bgCard,
           borderRadius: 16,
           padding: 40,
           textAlign: 'center',
@@ -656,18 +661,17 @@ export default function ConexionMetaADS() {
     return shell(
       <div
         style={{
-          background: CARD_BG,
+          background: ds.bgCard,
           borderRadius: 16,
           padding: 'clamp(20px, 4vw, 36px)',
           border: '1px solid #e8eaef',
-          boxShadow: '0 4px 24px rgba(26,26,46,0.06)',
           textAlign: 'center',
         }}
       >
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
           <CheckAnimated />
         </div>
-        <h2 style={{ margin: '0 0 8px', fontSize: 22, color: SIDEBAR_TONE }}>¡Conectado exitosamente con Meta ADS!</h2>
+        <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>¡Conectado exitosamente con Meta ADS!</h2>
         <p style={{ margin: '0 0 20px', color: '#6b7280', fontSize: 15, lineHeight: 1.5 }}>
           Tu app de Meta está vinculada. Si elegiste cuentas publicitarias y guardaste un token de usuario, el apartado{' '}
           <strong>Análisis de creativo</strong> mostrará métricas reales (campañas, conjuntos y anuncios). Si conectaste
@@ -690,7 +694,7 @@ export default function ConexionMetaADS() {
           }}
         >
           <div style={{ fontSize: 13, color: '#6b7280', marginBottom: 4 }}>Cuenta conectada</div>
-          <div style={{ fontSize: 17, fontWeight: 700, color: SIDEBAR_TONE }}>{saved.accountName}</div>
+          <div style={{ fontSize: 17, fontWeight: 700, color: ds.textPrimary }}>{saved.accountName}</div>
           <div style={{ fontSize: 13, color: '#6b7280', marginTop: 12 }}>App ID (referencia)</div>
           <div style={{ fontSize: 15, fontWeight: 600, color: '#374151' }}>{saved.appIdHint}</div>
           <div style={{ fontSize: 13, color: '#6b7280', marginTop: 12 }}>Fecha de conexión</div>
@@ -705,9 +709,9 @@ export default function ConexionMetaADS() {
             style={{
               padding: '10px 18px',
               borderRadius: 10,
-              border: `1px solid ${META_BLUE}`,
+              border: `1px solid ${ds.brand}`,
               background: '#fff',
-              color: META_BLUE,
+              color: ds.brand,
               fontWeight: 600,
               cursor: loading ? 'wait' : 'pointer',
               fontSize: 14,
@@ -740,7 +744,7 @@ export default function ConexionMetaADS() {
     return shell(
       <div
         style={{
-          background: CARD_BG,
+          background: ds.bgCard,
           borderRadius: 16,
           padding: 'clamp(20px, 4vw, 36px)',
           border: '1px solid #fecaca',
@@ -765,7 +769,7 @@ export default function ConexionMetaADS() {
             <path d="M12 7v6M12 16v.01" stroke="#dc2626" strokeWidth="2.2" strokeLinecap="round" />
           </svg>
         </div>
-        <h2 style={{ margin: '0 0 10px', fontSize: 20, color: SIDEBAR_TONE }}>No se pudo completar la conexión</h2>
+        <h2 style={{ margin: '0 0 10px', fontSize: 20, color: ds.textPrimary }}>No se pudo completar la conexión</h2>
         <p style={{ margin: '0 0 24px', color: '#374151', fontSize: 16, lineHeight: 1.5 }}>
           {messageForErrorCode(errorCode)}
         </p>
@@ -780,7 +784,7 @@ export default function ConexionMetaADS() {
               padding: '14px 20px',
               borderRadius: 10,
               border: 'none',
-              background: META_BLUE,
+              background: ds.brand,
               color: '#fff',
               fontWeight: 700,
               cursor: 'pointer',
@@ -800,7 +804,7 @@ export default function ConexionMetaADS() {
               borderRadius: 10,
               border: 'none',
               background: 'transparent',
-              color: META_BLUE,
+              color: ds.brand,
               fontWeight: 600,
               cursor: 'pointer',
               fontSize: 14,
@@ -823,7 +827,7 @@ export default function ConexionMetaADS() {
           style={{
             border: 'none',
             background: 'none',
-            color: META_BLUE,
+            color: ds.brand,
             cursor: 'pointer',
             fontSize: 14,
             fontWeight: 600,
@@ -835,13 +839,13 @@ export default function ConexionMetaADS() {
         </button>
         <div
           style={{
-            background: CARD_BG,
+            background: ds.bgCard,
             borderRadius: 16,
             padding: 'clamp(20px, 4vw, 32px)',
             border: '1px solid #e8eaef',
           }}
         >
-          <h2 style={{ margin: '0 0 8px', fontSize: 22, color: SIDEBAR_TONE }}>Antes de conectar</h2>
+          <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>Antes de conectar</h2>
           <p style={{ margin: '0 0 20px', color: '#6b7280', fontSize: 15 }}>
             Sigue estos pasos en Meta. En unos minutos tendrás lo necesario para enlazar tu cuenta.
           </p>
@@ -854,7 +858,7 @@ export default function ConexionMetaADS() {
               alignItems: 'center',
               gap: 8,
               marginBottom: 28,
-              color: META_BLUE,
+              color: ds.brand,
               fontWeight: 700,
               fontSize: 15,
             }}
@@ -879,9 +883,9 @@ export default function ConexionMetaADS() {
                     width: 36,
                     height: 36,
                     borderRadius: 10,
-                    background: `${META_BLUE}18`,
-                    color: META_BLUE,
-                    fontWeight: 800,
+                    background: alpha.brand18,
+                    color: ds.brand,
+                    fontWeight: 700,
                     fontSize: 16,
                     display: 'flex',
                     alignItems: 'center',
@@ -891,7 +895,7 @@ export default function ConexionMetaADS() {
                   {i + 1}
                 </span>
                 <div>
-                  <div style={{ fontWeight: 700, color: SIDEBAR_TONE, marginBottom: 6 }}>{s.title}</div>
+                  <div style={{ fontWeight: 700, color: ds.textPrimary, marginBottom: 6 }}>{s.title}</div>
                   <p style={{ margin: 0, color: '#6b7280', fontSize: 14, lineHeight: 1.5 }}>{s.body}</p>
                 </div>
               </li>
@@ -908,7 +912,7 @@ export default function ConexionMetaADS() {
               padding: '14px 20px',
               borderRadius: 10,
               border: 'none',
-              background: metaAtLimit ? '#93b4e8' : META_BLUE,
+              background: metaAtLimit ? 'alpha.brand45' : ds.brand,
               color: '#fff',
               fontWeight: 700,
               cursor: metaAtLimit ? 'not-allowed' : 'pointer',
@@ -935,7 +939,7 @@ export default function ConexionMetaADS() {
           style={{
             border: 'none',
             background: 'none',
-            color: META_BLUE,
+            color: ds.brand,
             cursor: 'pointer',
             fontSize: 14,
             fontWeight: 600,
@@ -947,13 +951,13 @@ export default function ConexionMetaADS() {
         </button>
         <div
           style={{
-            background: CARD_BG,
+            background: ds.bgCard,
             borderRadius: 16,
             padding: 'clamp(20px, 4vw, 32px)',
             border: '1px solid #e8eaef',
           }}
         >
-          <h2 style={{ margin: '0 0 8px', fontSize: 22, color: SIDEBAR_TONE }}>
+          <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>
             {editing ? 'Actualizar cuentas publicitarias' : 'Elige tus cuentas publicitarias'}
           </h2>
           <p style={{ margin: '0 0 20px', color: '#6b7280', fontSize: 14, lineHeight: 1.5 }}>
@@ -996,7 +1000,7 @@ export default function ConexionMetaADS() {
                   style={{ marginTop: 4, width: 18, height: 18, cursor: 'pointer' }}
                 />
                 <label htmlFor={`acct-${a.id}`} style={{ cursor: 'pointer', flex: 1, margin: 0 }}>
-                  <div style={{ fontWeight: 700, color: SIDEBAR_TONE }}>{a.name}</div>
+                  <div style={{ fontWeight: 700, color: ds.textPrimary }}>{a.name}</div>
                   <div style={{ fontSize: 13, color: '#6b7280' }}>
                     {a.id}
                     {a.currency ? ` · ${a.currency}` : ''}
@@ -1015,7 +1019,7 @@ export default function ConexionMetaADS() {
               padding: '14px 20px',
               borderRadius: 10,
               border: 'none',
-              background: loading || metaAtLimit ? '#93b4e8' : META_BLUE,
+              background: loading || metaAtLimit ? 'alpha.brand45' : ds.brand,
               color: '#fff',
               fontWeight: 700,
               cursor: loading ? 'wait' : 'pointer',
@@ -1050,7 +1054,7 @@ export default function ConexionMetaADS() {
           style={{
             border: 'none',
             background: 'none',
-            color: META_BLUE,
+            color: ds.brand,
             cursor: 'pointer',
             fontSize: 14,
             fontWeight: 600,
@@ -1062,13 +1066,13 @@ export default function ConexionMetaADS() {
         </button>
         <div
           style={{
-            background: CARD_BG,
+            background: ds.bgCard,
             borderRadius: 16,
             padding: 'clamp(20px, 4vw, 32px)',
             border: '1px solid #e8eaef',
           }}
         >
-          <h2 style={{ margin: '0 0 8px', fontSize: 22, color: SIDEBAR_TONE }}>Datos de tu app</h2>
+          <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>Datos de tu app</h2>
           <p style={{ margin: '0 0 24px', color: '#6b7280', fontSize: 14 }}>
             Los datos se guardan en el servidor y quedan aislados por organización (multi-tenant). Solo usuarios
             autorizados de tu empresa pueden gestionarlos.
@@ -1183,7 +1187,7 @@ export default function ConexionMetaADS() {
               padding: '14px 20px',
               borderRadius: 10,
               border: 'none',
-              background: loading || metaAtLimit ? '#93b4e8' : META_BLUE,
+              background: loading || metaAtLimit ? 'alpha.brand45' : ds.brand,
               color: '#fff',
               fontWeight: 700,
               cursor: loading ? 'wait' : metaAtLimit ? 'not-allowed' : 'pointer',
@@ -1212,9 +1216,9 @@ export default function ConexionMetaADS() {
               width: '100%',
               padding: '12px 20px',
               borderRadius: 10,
-              border: `1px solid ${META_BLUE}66`,
+              border: `1px solid ${alpha.brand40}`,
               background: '#fff',
-              color: META_BLUE,
+              color: ds.brand,
               fontWeight: 600,
               cursor: loading || metaAtLimit ? 'not-allowed' : 'pointer',
               fontSize: 14,
@@ -1231,11 +1235,10 @@ export default function ConexionMetaADS() {
   return shell(
     <div
       style={{
-        background: CARD_BG,
+        background: ds.bgCard,
         borderRadius: 16,
         padding: 'clamp(24px, 5vw, 40px)',
         border: '1px solid #e8eaef',
-        boxShadow: '0 4px 24px rgba(26,26,46,0.06)',
       }}
     >
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 20 }}>
@@ -1255,7 +1258,7 @@ export default function ConexionMetaADS() {
           {planLimitMessage}
         </div>
       )}
-      <h2 style={{ margin: '0 0 12px', fontSize: 'clamp(22px, 4vw, 28px)', color: SIDEBAR_TONE, lineHeight: 1.2 }}>
+      <h2 style={{ margin: '0 0 12px', fontSize: 'clamp(22px, 4vw, 28px)', color: ds.textPrimary, lineHeight: 1.2 }}>
         Conecta tu cuenta de Meta ADS
       </h2>
       <p style={{ margin: '0 0 28px', color: '#6b7280', fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>
@@ -1276,7 +1279,7 @@ export default function ConexionMetaADS() {
             padding: '14px 28px',
             borderRadius: 10,
             border: 'none',
-            background: metaAtLimit ? '#93b4e8' : META_BLUE,
+            background: metaAtLimit ? 'alpha.brand45' : ds.brand,
             color: '#fff',
             fontWeight: 700,
             cursor: metaAtLimit ? 'not-allowed' : 'pointer',

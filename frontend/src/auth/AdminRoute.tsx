@@ -1,4 +1,5 @@
 import { Navigate, Outlet } from 'react-router-dom';
+import { ds } from '../design-system/ds';
 import { useAuth } from './AuthContext';
 
 /** Solo owner y admin (Configuración /settings). */
@@ -13,8 +14,10 @@ export function AdminRoute() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#f4f5f7',
-          color: '#6b7280',
+          background: ds.bgApp,
+          color: ds.textMuted,
+          fontFamily: ds.font,
+          fontSize: 13,
         }}
       >
         Cargando…

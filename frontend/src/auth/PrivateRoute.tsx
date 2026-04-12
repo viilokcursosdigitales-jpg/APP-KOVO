@@ -1,4 +1,5 @@
 import { Navigate, Outlet, useLocation } from 'react-router-dom';
+import { ds } from '../design-system/ds';
 import { useAuth } from './AuthContext';
 
 export function PrivateRoute() {
@@ -13,9 +14,10 @@ export function PrivateRoute() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          background: '#f4f5f7',
-          fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
-          color: '#6b7280',
+          background: ds.bgApp,
+          fontFamily: ds.font,
+          color: ds.textMuted,
+          fontSize: 13,
         }}
       >
         Cargando sesión…

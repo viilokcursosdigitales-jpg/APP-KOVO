@@ -2,7 +2,8 @@ import { useMemo, useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { apiUrl } from '../auth/api';
-import { CARD_BG, PAGE_BG, SIDEBAR, inputStyle, labelStyle, linkStyle, primaryButton } from './authStyles';
+import { alpha, ds } from '../design-system/ds';
+import { CARD_BG, inputStyle, labelStyle, linkStyle, primaryButton } from './authStyles';
 
 function Spinner() {
   return (
@@ -84,31 +85,20 @@ export default function Register() {
   }
 
   return (
-    <div
-      style={{
-        minHeight: '100vh',
-        background: PAGE_BG,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-        fontFamily: "system-ui, 'Segoe UI', Roboto, sans-serif",
-      }}
-    >
+    <div className="kovo-auth-root">
       <style>{`@keyframes kovoSpin { to { transform: rotate(360deg); } }`}</style>
       <div
         style={{
           width: '100%',
           maxWidth: 460,
           background: CARD_BG,
-          borderRadius: 16,
+          borderRadius: 14,
           padding: 'clamp(24px, 5vw, 40px)',
-          boxShadow: '0 8px 32px rgba(26,26,46,0.08)',
-          border: '1px solid #e8eaef',
+          border: `1px solid ${ds.borderCard}`,
         }}
       >
-        <h1 style={{ margin: '0 0 8px', fontSize: 24, color: SIDEBAR }}>Crear cuenta</h1>
-        <p style={{ margin: '0 0 24px', color: '#6b7280', fontSize: 15 }}>
+        <h1 style={{ margin: '0 0 8px', fontSize: 20, fontWeight: 700, color: ds.textPrimary }}>Crear cuenta</h1>
+        <p style={{ margin: '0 0 24px', color: ds.textSecondary, fontSize: 13 }}>
           Regístrate para usar el panel KOVO
         </p>
 
@@ -117,10 +107,11 @@ export default function Register() {
             style={{
               marginBottom: 20,
               padding: '12px 14px',
-              borderRadius: 10,
-              background: 'rgba(150,191,72,0.15)',
-              color: '#3d5c1f',
-              fontSize: 14,
+              borderRadius: 8,
+              background: alpha.success15,
+              color: ds.successText,
+              fontSize: 13,
+              border: `1px solid ${ds.borderCard}`,
             }}
           >
             ¡Cuenta creada! Redirigiendo al inicio de sesión…
@@ -132,10 +123,11 @@ export default function Register() {
             style={{
               marginBottom: 20,
               padding: '12px 14px',
-              borderRadius: 10,
-              background: 'rgba(220,80,80,0.1)',
-              color: '#b91c1c',
-              fontSize: 14,
+              borderRadius: 8,
+              background: ds.dangerBg,
+              color: ds.dangerText,
+              fontSize: 13,
+              border: `1px solid ${ds.borderCard}`,
             }}
           >
             {error}

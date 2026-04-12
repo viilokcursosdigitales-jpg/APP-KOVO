@@ -1294,13 +1294,36 @@ app.delete('/api/meta/connections/:id', verifyToken, scopeToOrganization, async 
 });
 
 if (hasFrontendDist) {
-  app.use(express.static(staticDir));
+  /** Evita que index.html quede cacheado (CDN/navegador) y siga cargando bundles viejos tras un deploy. */
+  function cacheControlForStatic(absFilePath, res) {
+    const rel = path.relative(staticDir, absFilePath).replace(/\\/g, '/');
+    if (rel === 'index.html') {
+      res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+      res.setHeader('Pragma', 'no-cache');
+      res.setHeader('Expires', '0');
+      return;
+    }
+    if (rel.startsWith('assets/')) {
+      res.setHeader('Cache-Control', 'public, max-age=31536000, immutable');
+      return;
+    }
+    res.setHeader('Cache-Control', 'public, max-age=3600');
+  }
+
+  app.use(
+    express.static(staticDir, {
+      setHeaders(res, absPath) {
+        cacheControlForStatic(absPath, res);
+      },
+    }),
+  );
   /** React Router (SPA): en Express 5 el path '*' es inválido; el catch-all es una RegExp en app.get/app.head. */
   const spaIndex = path.join(staticDir, 'index.html');
   function sendSpaIfNotApi(req, res, next) {
     if (req.path.startsWith('/api')) {
       return next();
     }
+    cacheControlForStatic(spaIndex, res);
     res.sendFile(spaIndex, (err) => next(err));
   }
   app.get(/.*/, sendSpaIfNotApi);
