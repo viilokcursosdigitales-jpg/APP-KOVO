@@ -194,16 +194,16 @@ async function checkPlanLimit(organizationId, feature) {
   return { ok: true };
 }
 
-async function verifyToken(req, res, next) {
-  const auth = req.headers.authorization;
-  if (!auth || !auth.startsWith('Bearer ')) {
-    return res.status(401).json({ error: 'No autorizado' });
-  }
+/**
+ * @param {string} accessToken JWT sin prefijo Bearer
+ * @returns {Promise<true|'jwt'|'user'>}
+ */
+async function loadSessionFromAccessToken(accessToken, req) {
   let decoded;
   try {
-    decoded = jwt.verify(auth.slice(7), JWT_SECRET);
+    decoded = jwt.verify(accessToken, JWT_SECRET);
   } catch {
-    return res.status(401).json({ error: 'Token inválido o expirado' });
+    return 'jwt';
   }
 
   const { rows } = await pool.query(
@@ -215,7 +215,7 @@ async function verifyToken(req, res, next) {
   const row = rows[0];
 
   if (!row || !row.is_active || !row.organization_id) {
-    return res.status(401).json({ error: 'Usuario no válido' });
+    return 'user';
   }
 
   req.user = {
@@ -227,6 +227,21 @@ async function verifyToken(req, res, next) {
     role: row.role,
   };
   req.organizationId = row.organization_id;
+  return true;
+}
+
+async function verifyToken(req, res, next) {
+  const auth = req.headers.authorization;
+  if (!auth || !auth.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'No autorizado' });
+  }
+  const r = await loadSessionFromAccessToken(auth.slice(7), req);
+  if (r === 'jwt') {
+    return res.status(401).json({ error: 'Token inválido o expirado' });
+  }
+  if (r === 'user') {
+    return res.status(401).json({ error: 'Usuario no válido' });
+  }
   next();
 }
 
@@ -1369,26 +1384,6 @@ function shopifyMissingEnvKeys() {
   return missing;
 }
 
-const SHOPIFY_OAUTH_LAUNCH_PURPOSE = 'shopify_oauth_launch';
-
-function shopifyOAuthEnvErrorJson() {
-  const missingEnvKeys = shopifyMissingEnvKeys();
-  console.warn('[shopify] OAuth no configurado. Faltan variables:', missingEnvKeys.join(', '));
-  return {
-    error: 'Shopify OAuth no está configurado en el servidor',
-    code: 'shopify_oauth_env',
-    hint:
-      'En el servicio que ejecuta el backend (Render, VPS, etc.) define SHOPIFY_API_KEY, SHOPIFY_API_SECRET y SHOPIFY_APP_URL=https://kovo.services. Si no pones SHOPIFY_REDIRECT_URI, debe poder deducirse de SHOPIFY_APP_URL.',
-    missingEnvKeys,
-  };
-}
-
-function redirectShopifyLaunchError(res) {
-  const b = (SHOPIFY_APP_URL || '').replace(/\/$/, '');
-  const loc = b ? `${b}/canales?shopify=error` : '/canales?shopify=error';
-  return res.redirect(302, loc);
-}
-
 /** Inserta state OAuth y devuelve la URL de autorización en Shopify (dominio myshopify.com). */
 async function buildShopifyAuthorizeUrlForOrg(organizationId, shop) {
   await cleanupShopifyOauthStates();
@@ -1399,98 +1394,64 @@ async function buildShopifyAuthorizeUrlForOrg(organizationId, shop) {
     [state, organizationId, shop, expiresAt],
   );
   console.log('State guardado en BD:', { state, shop, expiresAt });
+  const redirectUri = SHOPIFY_REDIRECT_URI;
   const params = new URLSearchParams({
     client_id: SHOPIFY_API_KEY,
     scope: SHOPIFY_SCOPES,
-    redirect_uri: SHOPIFY_REDIRECT_URI,
+    redirect_uri: redirectUri,
     state,
   });
-  return `https://${shop}/admin/oauth/authorize?${params.toString()}`;
+  const authUrl = `https://${shop}/admin/oauth/authorize?${params.toString()}`;
+  console.log('Redirect URI enviada a Shopify:', redirectUri);
+  console.log('Auth URL completa:', authUrl);
+  return authUrl;
 }
 
 /**
- * Paso 1 (con JWT): el front obtiene una ruta interna; luego hace window.location = apiUrl(launchPath).
- * Así el navegador hace un GET completo a tu API y recibe el 302 a Shopify (flujo OAuth estándar).
+ * Inicio OAuth: navegación top-level del navegador (sin fetch). El JWT va en query `kovo_token`
+ * porque un GET directo no puede enviar header Authorization.
+ * Siempre responde con 302 (a Shopify, login o error).
  */
-app.get('/api/shopify/auth/start', verifyToken, scopeToOrganization, async (req, res) => {
+app.get('/api/shopify/auth', async (req, res) => {
+  const appBase = (SHOPIFY_APP_URL || '').replace(/\/$/, '');
+  const redirectCanalesErr = () =>
+    res.redirect(302, appBase ? `${appBase}/canales?shopify=error` : '/canales?shopify=error');
+  const redirectLogin = () => res.redirect(302, appBase ? `${appBase}/login` : '/login');
+
   try {
-    if (!shopifyConfigured()) {
-      return res.status(503).json(shopifyOAuthEnvErrorJson());
+    const qTok = req.query.kovo_token;
+    const qAlt = req.query.token;
+    const fromQuery =
+      (typeof qTok === 'string' && qTok) || (typeof qAlt === 'string' && qAlt) || null;
+    const auth = req.headers.authorization;
+    const fromHeader =
+      auth && auth.startsWith('Bearer ') ? auth.slice(7) : null;
+    const accessToken = fromQuery || fromHeader;
+
+    if (!accessToken) {
+      return redirectLogin();
     }
+
+    const session = await loadSessionFromAccessToken(accessToken, req);
+    if (session === 'jwt' || session === 'user') {
+      return redirectCanalesErr();
+    }
+
+    if (!shopifyConfigured()) {
+      console.warn('[shopify auth] OAuth no configurado:', shopifyMissingEnvKeys().join(', '));
+      return redirectCanalesErr();
+    }
+
     const shop = sanitizeShopDomain(req.query.shop);
     if (!shop) {
-      return res.status(400).json({ error: 'Dominio inválido. Debe ser algo como mitienda.myshopify.com' });
+      return redirectCanalesErr();
     }
-    const launchToken = jwt.sign(
-      { purpose: SHOPIFY_OAUTH_LAUNCH_PURPOSE, organizationId: req.organizationId, shop },
-      JWT_SECRET,
-      { expiresIn: '10m' },
-    );
-    const launchPath = `/api/shopify/auth/go?launch=${encodeURIComponent(launchToken)}`;
-    return res.json({ launchPath });
-  } catch (e) {
-    console.error('[shopify auth/start]', e);
-    res.status(500).json({ error: 'Error al iniciar OAuth Shopify' });
-  }
-});
 
-/**
- * Paso 2 (público): valida el JWT de un solo uso de corta duración y redirige a Shopify.
- * No usa Bearer: debe poder abrirse con navegación top-level.
- */
-app.get('/api/shopify/auth/go', async (req, res) => {
-  try {
-    const token = req.query.launch;
-    if (!token || typeof token !== 'string') {
-      return redirectShopifyLaunchError(res);
-    }
-    let decoded;
-    try {
-      decoded = jwt.verify(token, JWT_SECRET);
-    } catch {
-      return redirectShopifyLaunchError(res);
-    }
-    if (decoded.purpose !== SHOPIFY_OAUTH_LAUNCH_PURPOSE) {
-      return redirectShopifyLaunchError(res);
-    }
-    const orgId = Number(decoded.organizationId);
-    if (!Number.isFinite(orgId) || orgId < 1) {
-      return redirectShopifyLaunchError(res);
-    }
-    const shop = sanitizeShopDomain(decoded.shop);
-    if (!shop) {
-      return redirectShopifyLaunchError(res);
-    }
-    if (!shopifyConfigured()) {
-      return redirectShopifyLaunchError(res);
-    }
-    const authorizeUrl = await buildShopifyAuthorizeUrlForOrg(orgId, shop);
-    return res.redirect(302, authorizeUrl);
-  } catch (e) {
-    console.error('[shopify auth/go]', e);
-    return redirectShopifyLaunchError(res);
-  }
-});
-
-/** Inicio OAuth con sesión (Bearer). Con Accept: application/json devuelve authorizeUrl; si no, 302 directo a Shopify. */
-app.get('/api/shopify/auth', verifyToken, scopeToOrganization, async (req, res) => {
-  try {
-    if (!shopifyConfigured()) {
-      return res.status(503).json(shopifyOAuthEnvErrorJson());
-    }
-    const shop = sanitizeShopDomain(req.query.shop);
-    if (!shop) {
-      return res.status(400).json({ error: 'Dominio inválido. Debe ser algo como mitienda.myshopify.com' });
-    }
     const authorizeUrl = await buildShopifyAuthorizeUrlForOrg(req.organizationId, shop);
-    const wantsJson = (req.get('accept') || '').includes('application/json');
-    if (wantsJson) {
-      return res.json({ authorizeUrl });
-    }
     return res.redirect(302, authorizeUrl);
   } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Error al iniciar OAuth Shopify' });
+    console.error('[shopify auth]', e);
+    return redirectCanalesErr();
   }
 });
 

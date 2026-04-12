@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { apiFetch, apiUrl } from '../auth/api';
+import { apiFetch, getStoredToken } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { IconMegaphone } from '../design-system/icons';
 import { PageHeader } from '../design-system/PageHeader';
@@ -73,45 +73,25 @@ export default function CanalesPage() {
 
   const shopifyConnected = shopifyConn?.status === 'connected' && Boolean(shopifyConn.shop_domain);
 
-  const handleConnectShopify = async () => {
-    const trimmed = shopDomainInput.trim().toLowerCase();
-    if (!trimmed.endsWith('.myshopify.com')) {
+  const handleConnectShopify = () => {
+    const shop = shopDomainInput.trim().toLowerCase();
+    if (!shop.endsWith('.myshopify.com')) {
       setShopifyFormError('El dominio debe terminar en .myshopify.com');
       return;
     }
-    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(trimmed)) {
+    if (!/^[a-z0-9][a-z0-9-]*\.myshopify\.com$/.test(shop)) {
       setShopifyFormError('Formato de tienda no válido');
       return;
     }
-    setShopifyFormError('');
-    setShopifyActionLoading(true);
-    try {
-      // 1) JWT en fetch (solo JSON). 2) Navegación top-level a /auth/go → el servidor hace 302 a Shopify.
-      // Así el callback de Shopify siempre es una redirección del navegador, no depende de authorizeUrl en fetch.
-      const res = await apiFetch(`/api/shopify/auth/start?shop=${encodeURIComponent(trimmed)}`);
-      const data = (await res.json().catch(() => ({}))) as {
-        launchPath?: string;
-        error?: string;
-        hint?: string;
-        missingEnvKeys?: string[];
-      };
-      if (!res.ok) {
-        let err = typeof data.error === 'string' ? data.error : 'No se pudo iniciar la conexión';
-        if (data.hint) err = `${err}\n\n${data.hint}`;
-        if (data.missingEnvKeys?.length) err = `${err}\n\nFaltan en el servidor: ${data.missingEnvKeys.join(', ')}.`;
-        setShopifyFormError(err);
-        return;
-      }
-      if (data.launchPath) {
-        window.location.href = apiUrl(data.launchPath);
-        return;
-      }
-      setShopifyFormError('Respuesta inesperada del servidor');
-    } catch {
-      setShopifyFormError('Error de red');
-    } finally {
-      setShopifyActionLoading(false);
+    const token = getStoredToken();
+    if (!token) {
+      setShopifyFormError('Inicia sesión para conectar Shopify.');
+      navigate('/login');
+      return;
     }
+    setShopifyFormError('');
+    const apiRoot = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '') || window.location.origin;
+    window.location.href = `${apiRoot}/api/shopify/auth?shop=${encodeURIComponent(shop)}&kovo_token=${encodeURIComponent(token)}`;
   };
 
   const handleDisconnectShopify = async () => {
