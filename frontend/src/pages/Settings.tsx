@@ -44,6 +44,16 @@ type Limits = {
   meta: { used: number; max: number | null };
 };
 
+type ModuleCatalogEntry = { id: string; label: string; group: string };
+
+type RoleModuleRow = {
+  slug: string;
+  label: string;
+  full_access: boolean;
+  modules: string[];
+  locked?: boolean;
+};
+
 function ProgressBar({ used, max }: { used: number; max: number | null }) {
   const pct = max == null ? 0 : Math.min(100, (used / max) * 100);
   return (
@@ -83,12 +93,42 @@ export default function Settings() {
   const [inviteRole, setInviteRole] = useState('member');
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteErr, setInviteErr] = useState('');
+  const [inviteOkMsg, setInviteOkMsg] = useState('');
+  /** Si el correo no se envió por SMTP, el invitador puede copiar el enlace. */
+  const [inviteManualLink, setInviteManualLink] = useState('');
+  const [resendingInvitationId, setResendingInvitationId] = useState<number | null>(null);
 
   const [customRoles, setCustomRoles] = useState<CustomRoleRow[]>([]);
   const [newRoleLabel, setNewRoleLabel] = useState('');
   const [newRoleBase, setNewRoleBase] = useState<'admin' | 'member'>('member');
   const [roleSaving, setRoleSaving] = useState(false);
   const [roleMsg, setRoleMsg] = useState('');
+
+  const [moduleCatalog, setModuleCatalog] = useState<ModuleCatalogEntry[]>([]);
+  const [roleModuleRows, setRoleModuleRows] = useState<RoleModuleRow[]>([]);
+  const [roleModSaving, setRoleModSaving] = useState(false);
+  const [roleModErr, setRoleModErr] = useState('');
+
+  const loadRoleModules = useCallback(async () => {
+    setRoleModErr('');
+    const res = await apiFetch('/api/organization/role-modules');
+    const data = (await res.json().catch(() => ({}))) as {
+      module_catalog?: ModuleCatalogEntry[];
+      roles?: RoleModuleRow[];
+      error?: string;
+    };
+    if (!res.ok) {
+      setRoleModErr(typeof data.error === 'string' ? data.error : 'No se pudieron cargar los permisos por módulo');
+      return;
+    }
+    setModuleCatalog(Array.isArray(data.module_catalog) ? data.module_catalog : []);
+    setRoleModuleRows(
+      (Array.isArray(data.roles) ? data.roles : []).map((r) => ({
+        ...r,
+        modules: Array.isArray(r.modules) ? [...r.modules] : [],
+      })),
+    );
+  }, []);
 
   const loadTeam = useCallback(async () => {
     const res = await apiFetch('/api/organization/members');
@@ -117,6 +157,10 @@ export default function Settings() {
     if (canManageOrg) void loadTeam();
   }, [canManageOrg, loadTeam]);
 
+  useEffect(() => {
+    if (canManageOrg) void loadRoleModules();
+  }, [canManageOrg, loadRoleModules]);
+
   async function saveOrganization(e: FormEvent) {
     e.preventDefault();
     setOrgMsg('');
@@ -143,16 +187,33 @@ export default function Settings() {
   async function sendInvite(e: FormEvent) {
     e.preventDefault();
     setInviteErr('');
+    setInviteOkMsg('');
+    setInviteManualLink('');
     setInviteLoading(true);
     try {
+      const invitedEmail = inviteEmail.trim();
       const res = await apiFetch('/api/organization/invite', {
         method: 'POST',
-        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole.trim() }),
+        body: JSON.stringify({ email: invitedEmail, role: inviteRole.trim() }),
       });
-      const d = await res.json().catch(() => ({}));
+      const d = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        message?: string;
+        email_sent?: boolean;
+        invite_link?: string;
+      };
       if (!res.ok) {
         setInviteErr(typeof d.error === 'string' ? d.error : 'No se pudo enviar');
         return;
+      }
+      const serverMsg = typeof d.message === 'string' ? d.message : '';
+      setInviteOkMsg(
+        serverMsg ||
+          `Se envió un correo a ${invitedEmail} para que apruebe la invitación y se una al workspace.`,
+      );
+      const emailSent = d.email_sent !== false;
+      if (!emailSent && typeof d.invite_link === 'string' && d.invite_link.length > 0) {
+        setInviteManualLink(d.invite_link);
       }
       setInviteEmail('');
       setInviteOpen(false);
@@ -183,6 +244,45 @@ export default function Settings() {
     }
   }
 
+  async function cancelInvitation(invitationId: number) {
+    if (!window.confirm('¿Cancelar esta invitación? Podrás volver a invitar al mismo correo.')) return;
+    const res = await apiFetch(`/api/organization/invitations/${invitationId}`, { method: 'DELETE' });
+    if (res.ok) {
+      await loadTeam();
+      await refreshUser();
+    }
+  }
+
+  async function resendInvitation(invitationId: number) {
+    setInviteErr('');
+    setInviteOkMsg('');
+    setInviteManualLink('');
+    setResendingInvitationId(invitationId);
+    try {
+      const res = await apiFetch(`/api/organization/invitations/${invitationId}/resend`, {
+        method: 'POST',
+      });
+      const d = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        message?: string;
+        email_sent?: boolean;
+        invite_link?: string;
+      };
+      if (!res.ok) {
+        setInviteErr(typeof d.error === 'string' ? d.error : 'No se pudo reenviar');
+        return;
+      }
+      const serverMsg = typeof d.message === 'string' ? d.message : '';
+      setInviteOkMsg(serverMsg || 'Invitación reenviada.');
+      const emailSent = d.email_sent !== false;
+      if (!emailSent && typeof d.invite_link === 'string' && d.invite_link.length > 0) {
+        setInviteManualLink(d.invite_link);
+      }
+    } finally {
+      setResendingInvitationId(null);
+    }
+  }
+
   async function addCustomRole(e: FormEvent) {
     e.preventDefault();
     setRoleMsg('');
@@ -203,6 +303,7 @@ export default function Settings() {
       setNewRoleLabel('');
       setRoleMsg('Rol agregado.');
       await loadTeam();
+      await loadRoleModules();
     } finally {
       setRoleSaving(false);
     }
@@ -218,7 +319,59 @@ export default function Settings() {
       return;
     }
     await loadTeam();
+    await loadRoleModules();
   }
+
+  async function saveRoleModules() {
+    setRoleModErr('');
+    setRoleModSaving(true);
+    try {
+      const entries = roleModuleRows
+        .filter((r) => !r.locked)
+        .map((r) => ({
+          role_slug: r.slug,
+          full_access: r.full_access,
+          modules: r.full_access ? [] : r.modules,
+        }));
+      const res = await apiFetch('/api/organization/role-modules', {
+        method: 'PUT',
+        body: JSON.stringify({ entries }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRoleModErr(typeof d.error === 'string' ? d.error : 'No se pudo guardar');
+        return;
+      }
+      await loadRoleModules();
+      await refreshUser();
+    } finally {
+      setRoleModSaving(false);
+    }
+  }
+
+  function setRowFullAccess(slug: string, full: boolean) {
+    setRoleModuleRows((rows) =>
+      rows.map((r) => (r.slug === slug ? { ...r, full_access: full, modules: full ? [] : r.modules } : r)),
+    );
+  }
+
+  function toggleRowModule(slug: string, moduleId: string) {
+    setRoleModuleRows((rows) =>
+      rows.map((r) => {
+        if (r.slug !== slug || r.locked || r.full_access) return r;
+        const has = r.modules.includes(moduleId);
+        const modules = has ? r.modules.filter((m) => m !== moduleId) : [...r.modules, moduleId];
+        return { ...r, modules };
+      }),
+    );
+  }
+
+  const catalogByGroup = moduleCatalog.reduce<Record<string, ModuleCatalogEntry[]>>((acc, m) => {
+    const g = m.group || 'Otros';
+    if (!acc[g]) acc[g] = [];
+    acc[g].push(m);
+    return acc;
+  }, {});
 
   if (!organization || !canManageOrg) {
     return null;
@@ -228,8 +381,97 @@ export default function Settings() {
     organization.plan === 'free' ? 'Gratuito' : organization.plan === 'pro' ? 'Pro' : 'Enterprise';
 
   return (
-    <div style={{ maxWidth: 720 }}>
+    <div style={{ maxWidth: 960 }}>
       <PageHeader title="Configuración" subtitle={`Workspace: ${organization.slug}`} />
+
+      {inviteOkMsg ? (
+        <div
+          style={{
+            marginBottom: 20,
+            padding: '12px 16px',
+            borderRadius: 12,
+            border: `1px solid ${ds.borderCard}`,
+            background: inviteManualLink ? ds.infoBg : ds.successBg,
+            color: inviteManualLink ? ds.infoText : ds.successText,
+            fontSize: 13,
+            lineHeight: 1.45,
+          }}
+          role="status"
+        >
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              justifyContent: 'space-between',
+              gap: 12,
+            }}
+          >
+            <span style={{ flex: '1 1 220px' }}>{inviteOkMsg}</span>
+            <button
+              type="button"
+              onClick={() => {
+                setInviteOkMsg('');
+                setInviteManualLink('');
+              }}
+              style={{
+                border: 'none',
+                background: 'transparent',
+                color: inviteManualLink ? ds.infoText : ds.successText,
+                fontWeight: 600,
+                fontSize: 12,
+                cursor: 'pointer',
+                textDecoration: 'underline',
+              }}
+            >
+              Cerrar
+            </button>
+          </div>
+          {inviteManualLink ? (
+            <div style={{ marginTop: 12, width: '100%' }}>
+              <div style={{ fontSize: 11, fontWeight: 600, marginBottom: 6, opacity: 0.9 }}>
+                Enlace para el invitado (mientras no haya SMTP en el servidor)
+              </div>
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                <input
+                  readOnly
+                  value={inviteManualLink}
+                  style={{
+                    flex: '1 1 200px',
+                    minWidth: 0,
+                    padding: '8px 10px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    fontSize: 11,
+                    background: ds.bgCard,
+                    color: ds.textPrimary,
+                  }}
+                />
+                <button
+                  type="button"
+                  onClick={() => {
+                    void navigator.clipboard.writeText(inviteManualLink).catch(() => {
+                      window.alert('No se pudo copiar. Selecciona el enlace manualmente.');
+                    });
+                  }}
+                  style={{
+                    padding: '8px 14px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    background: ds.bgCard,
+                    color: ds.brand,
+                    fontWeight: 600,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Copiar enlace
+                </button>
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
         {/* Mi organización */}
         <section
@@ -385,6 +627,133 @@ export default function Settings() {
           </section>
         ) : null}
 
+        {/* Acceso por módulo */}
+        <section
+          style={{
+            background: ds.bgCard,
+            borderRadius: 14,
+            padding: '18px 20px',
+            marginBottom: 20,
+            border: `1px solid ${ds.borderCard}`,
+          }}
+        >
+          <h2 style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>
+            Acceso a módulos por rol
+          </h2>
+          <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.45 }}>
+            Define si cada rol tiene <strong>acceso total</strong> a la barra lateral o solo a los módulos que marques.
+            Cuenta y Configuración siguen las reglas de administrador/miembro (no se restringen aquí).
+          </p>
+          {roleModErr ? (
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.dangerText }}>{roleModErr}</p>
+          ) : null}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 20 }}>
+            {roleModuleRows.map((row) => (
+              <div
+                key={row.slug}
+                style={{
+                  paddingTop: row.slug === roleModuleRows[0]?.slug ? 0 : 16,
+                  borderTop: row.slug === roleModuleRows[0]?.slug ? 'none' : `1px solid ${ds.borderRow}`,
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: 13, color: ds.textPrimary, marginBottom: 8 }}>{row.label}</div>
+                {row.locked ? (
+                  <p style={{ margin: 0, fontSize: 12, color: ds.textMuted }}>
+                    El propietario siempre tiene acceso total a todos los módulos.
+                  </p>
+                ) : (
+                  <>
+                    <label
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 8,
+                        fontSize: 12,
+                        color: ds.textSecondary,
+                        cursor: 'pointer',
+                        marginBottom: 10,
+                      }}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={row.full_access}
+                        onChange={(e) => setRowFullAccess(row.slug, e.target.checked)}
+                        style={{ accentColor: ds.brand }}
+                      />
+                      Acceso total (todos los módulos)
+                    </label>
+                    {!row.full_access ? (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                        {Object.entries(catalogByGroup).map(([gName, items]) => (
+                          <div key={gName}>
+                            <div
+                              style={{
+                                fontSize: 10,
+                                textTransform: 'uppercase',
+                                letterSpacing: '0.5px',
+                                color: ds.textHint,
+                                marginBottom: 6,
+                              }}
+                            >
+                              {gName}
+                            </div>
+                            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                              {items.map((m) => {
+                                const on = row.modules.includes(m.id);
+                                return (
+                                  <label
+                                    key={m.id}
+                                    style={{
+                                      display: 'inline-flex',
+                                      alignItems: 'center',
+                                      gap: 6,
+                                      padding: '4px 10px',
+                                      borderRadius: 8,
+                                      border: `1px solid ${on ? ds.brand : ds.borderCard}`,
+                                      background: on ? ds.brandBg : ds.bgSubtle,
+                                      fontSize: 11,
+                                      fontWeight: on ? 600 : 500,
+                                      color: on ? ds.brand : ds.textSecondary,
+                                      cursor: 'pointer',
+                                    }}
+                                  >
+                                    <input
+                                      type="checkbox"
+                                      checked={on}
+                                      onChange={() => toggleRowModule(row.slug, m.id)}
+                                      style={{ accentColor: ds.brand }}
+                                    />
+                                    {m.label}
+                                  </label>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : null}
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+          <button
+            type="button"
+            disabled={roleModSaving || roleModuleRows.length === 0}
+            onClick={() => void saveRoleModules()}
+            style={{
+              ...primaryButton,
+              marginTop: 20,
+              width: 'auto',
+              minWidth: 180,
+              opacity: roleModSaving || roleModuleRows.length === 0 ? 0.75 : 1,
+              cursor: roleModSaving ? 'wait' : 'pointer',
+            }}
+          >
+            {roleModSaving ? 'Guardando…' : 'Guardar permisos de módulos'}
+          </button>
+        </section>
+
         {/* Equipo */}
         <section
           style={{
@@ -401,6 +770,8 @@ export default function Settings() {
               type="button"
               onClick={() => {
                 setInviteErr('');
+                setInviteOkMsg('');
+                setInviteManualLink('');
                 setInviteOpen(true);
               }}
               style={{
@@ -456,7 +827,7 @@ export default function Settings() {
                   >
                     Estado
                   </th>
-                  {role === 'owner' ? (
+                  {canManageOrg ? (
                     <th
                       style={{
                         padding: '11px 16px',
@@ -539,7 +910,7 @@ export default function Settings() {
                           {m.is_active ? 'Activo' : 'Inactivo'}
                         </span>
                       </td>
-                      {role === 'owner' ? (
+                      {canManageOrg ? (
                         <td style={{ padding: '12px 16px' }}>
                           {canRemove ? (
                             <button
@@ -599,7 +970,44 @@ export default function Settings() {
                         Pendiente
                       </span>
                     </td>
-                    {role === 'owner' ? <td style={{ padding: '12px 16px' }} /> : null}
+                    {canManageOrg ? (
+                      <td style={{ padding: '12px 16px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', gap: 8 }}>
+                          <button
+                            type="button"
+                            disabled={resendingInvitationId === inv.id}
+                            onClick={() => void resendInvitation(inv.id)}
+                            style={{
+                              border: 'none',
+                              background: 'none',
+                              color: ds.brand,
+                              cursor: resendingInvitationId === inv.id ? 'wait' : 'pointer',
+                              fontWeight: 600,
+                              fontSize: 13,
+                              opacity: resendingInvitationId === inv.id ? 0.7 : 1,
+                            }}
+                          >
+                            {resendingInvitationId === inv.id ? 'Reenviando…' : 'Reenviar correo'}
+                          </button>
+                          <button
+                            type="button"
+                            disabled={resendingInvitationId != null}
+                            onClick={() => void cancelInvitation(inv.id)}
+                            style={{
+                              border: 'none',
+                              background: 'none',
+                              color: ds.dangerText,
+                              cursor: resendingInvitationId != null ? 'not-allowed' : 'pointer',
+                              fontWeight: 600,
+                              fontSize: 13,
+                              opacity: resendingInvitationId != null ? 0.5 : 1,
+                            }}
+                          >
+                            Cancelar invitación
+                          </button>
+                        </div>
+                      </td>
+                    ) : null}
                   </tr>
                 ))}
               </tbody>

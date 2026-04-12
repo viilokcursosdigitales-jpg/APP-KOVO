@@ -35,6 +35,7 @@ const {
   normalizeShopifyOrdersForApp,
   mapFinancialToBadge,
 } = require('./shopifyService');
+const { getPublicAppUrl, sendInvitationEmail, isMailConfigured } = require('./mailService');
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
 const hasFrontendDist = fs.existsSync(staticDir);
 
@@ -49,6 +50,27 @@ const PLAN_LIMITS = {
   pro: { users: 10, metaConnections: 5 },
   enterprise: { users: Infinity, metaConnections: Infinity },
 };
+
+/** Slugs de módulos configurables (sidebar); perfil y configuración no se restringen aquí. */
+const CONFIGURABLE_MODULE_IDS = [
+  'dashboard',
+  'pedidos',
+  'motico',
+  'inventario',
+  'meta_ads',
+  'indicadores_marketing',
+  'canales',
+];
+
+const MODULE_CATALOG_FOR_API = [
+  { id: 'dashboard', label: 'Dashboard', group: 'Principal' },
+  { id: 'pedidos', label: 'Pedidos', group: 'Principal' },
+  { id: 'motico', label: 'Motico', group: 'Principal' },
+  { id: 'inventario', label: 'Inventario', group: 'Principal' },
+  { id: 'meta_ads', label: 'Meta Ads', group: 'Marketing' },
+  { id: 'indicadores_marketing', label: 'Indicadores', group: 'Marketing' },
+  { id: 'canales', label: 'Canales', group: 'Marketing' },
+];
 
 const pool = createPool();
 
@@ -170,6 +192,44 @@ async function getUsageSnapshot(organizationId) {
  * @param {number} organizationId
  * @param {'invite_user'|'meta_connection'} feature
  */
+function normalizeConfigurableModulesList(raw) {
+  if (!Array.isArray(raw)) return [];
+  const out = [];
+  const seen = new Set();
+  for (const x of raw) {
+    const id = String(x || '').trim();
+    if (!id || seen.has(id) || !CONFIGURABLE_MODULE_IDS.includes(id)) continue;
+    seen.add(id);
+    out.push(id);
+  }
+  return out;
+}
+
+/**
+ * null = acceso a todos los módulos configurables (comportamiento por defecto).
+ * array = solo esos ids.
+ */
+async function resolveModuleAccessForSession(organizationId, roleSlug, roleTier) {
+  if (roleSlug === 'owner' || roleTier === 'owner') {
+    return null;
+  }
+  let row;
+  try {
+    const r = await pool.query(
+      `SELECT full_access, modules FROM organization_role_modules
+       WHERE organization_id = $1 AND role_slug = $2`,
+      [organizationId, roleSlug],
+    );
+    row = r.rows[0];
+  } catch (e) {
+    if (e && e.code === '42P01') return null;
+    throw e;
+  }
+  if (!row) return null;
+  if (row.full_access) return null;
+  return normalizeConfigurableModulesList(row.modules);
+}
+
 async function checkPlanLimit(organizationId, feature) {
   const plan = await getOrgPlan(organizationId);
   const lim = getPlanLimits(plan);
@@ -295,6 +355,49 @@ async function isAssignableOrgRole(organizationId, role) {
   return rows.length > 0;
 }
 
+async function invitationRoleLabel(organizationId, roleSlug) {
+  const r = String(roleSlug || '');
+  if (r === 'admin') return 'Administrador';
+  if (r === 'member') return 'Miembro';
+  const { rows } = await pool.query(
+    `SELECT label, base_role FROM organization_custom_roles WHERE organization_id = $1 AND slug = $2`,
+    [organizationId, r],
+  );
+  const row = rows[0];
+  if (row) {
+    return `${row.label} (${row.base_role === 'admin' ? 'como administrador' : 'como miembro'})`;
+  }
+  return r || 'miembro';
+}
+
+/** Envía el correo de invitación (mismo enlace mientras el token no cambie). */
+async function sendInvitationNotification(organizationId, email, role, token, inviterUserId) {
+  const orgR = await pool.query(`SELECT name FROM organizations WHERE id = $1`, [organizationId]);
+  const organizationName = orgR.rows[0]?.name || 'KOVO';
+  const inviterR = await pool.query(`SELECT name FROM users WHERE id = $1`, [inviterUserId]);
+  const inviterName = inviterR.rows[0]?.name || 'Un administrador';
+  const roleLabel = await invitationRoleLabel(organizationId, role);
+  const acceptUrl = `${getPublicAppUrl()}/aceptar-invitacion?token=${encodeURIComponent(token)}`;
+  const sendRes = await sendInvitationEmail({
+    to: email,
+    organizationName,
+    inviterName,
+    roleLabel,
+    acceptUrl,
+  });
+  return { sendRes, acceptUrl };
+}
+
+function logInvitationSmtp(email, acceptUrl, sendRes) {
+  if (!isMailConfigured()) {
+    console.warn(`[invite] SMTP no configurado. Enlace invitación ${email}: ${acceptUrl}`);
+  } else if (!sendRes.ok && !sendRes.skipped) {
+    console.error(`[invite] Fallo SMTP para ${email}:`, sendRes.error);
+  } else if (process.env.NODE_ENV !== 'production' && sendRes.ok) {
+    console.log(`[invite] Correo enviado a ${email} · ${acceptUrl}`);
+  }
+}
+
 async function verifyToken(req, res, next) {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) {
@@ -361,6 +464,7 @@ async function buildSessionPayload(userId) {
   if (!org) return null;
   const limits = await getUsageSnapshot(org.id);
   const role_tier = (await getRoleTier(u.id, u.organization_id)) || 'member';
+  const module_access = await resolveModuleAccessForSession(org.id, u.role, role_tier);
   return {
     user: {
       id: u.id,
@@ -377,6 +481,7 @@ async function buildSessionPayload(userId) {
     role: u.role,
     role_tier,
     limits,
+    module_access,
   };
 }
 
@@ -593,6 +698,107 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
+app.get('/api/invitations/accept-info', async (req, res) => {
+  try {
+    const token = String(req.query.token || '').trim();
+    if (!token) {
+      return res.status(400).json({ error: 'Falta el token de invitación' });
+    }
+    const { rows } = await pool.query(
+      `SELECT i.email, i.role, i.expires_at, i.organization_id, o.name AS organization_name
+       FROM invitations i
+       JOIN organizations o ON o.id = i.organization_id
+       WHERE i.token = $1 AND i.accepted_at IS NULL AND i.expires_at > now()`,
+      [token],
+    );
+    const row = rows[0];
+    if (!row) {
+      return res.status(404).json({ error: 'Invitación no válida o caducada' });
+    }
+    const role_label = await invitationRoleLabel(row.organization_id, row.role);
+    res.json({
+      email: row.email,
+      role: row.role,
+      role_label,
+      organization_name: row.organization_name,
+      expires_at: row.expires_at,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al leer la invitación' });
+  }
+});
+
+app.post('/api/auth/accept-invitation', async (req, res) => {
+  const token = String(req.body?.token || '').trim();
+  const name = String(req.body?.name || '').trim();
+  const em = normalizeEmail(req.body?.email);
+  const pw = String(req.body?.password || '');
+
+  if (!token) {
+    return res.status(400).json({ error: 'Falta el token de invitación' });
+  }
+  if (!name || name.length < 2) {
+    return res.status(400).json({ error: 'El nombre debe tener al menos 2 caracteres' });
+  }
+  if (!isValidEmail(em)) {
+    return res.status(400).json({ error: 'Email no válido' });
+  }
+  if (pw.length < 8) {
+    return res.status(400).json({ error: 'La contraseña debe tener al menos 8 caracteres' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const invQ = await client.query(
+      `SELECT id, email, role, organization_id
+       FROM invitations
+       WHERE token = $1 AND accepted_at IS NULL AND expires_at > now()
+       FOR UPDATE`,
+      [token],
+    );
+    const invRow = invQ.rows[0];
+    if (!invRow) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Invitación no válida o caducada' });
+    }
+    if (em !== normalizeEmail(invRow.email)) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'El email debe ser el de la invitación' });
+    }
+    const ex = await client.query('SELECT id FROM users WHERE lower(email) = lower($1)', [em]);
+    if (ex.rowCount > 0) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: 'Ya existe una cuenta con este email' });
+    }
+    const password_hash = bcrypt.hashSync(pw, BCRYPT_ROUNDS);
+    const userIns = await client.query(
+      `INSERT INTO users (name, email, password_hash, organization_id, role, is_active)
+       VALUES ($1, $2, $3, $4, $5, true) RETURNING id`,
+      [name, em, password_hash, invRow.organization_id, invRow.role],
+    );
+    await client.query(`UPDATE invitations SET accepted_at = now() WHERE id = $1`, [invRow.id]);
+    await client.query('COMMIT');
+    const uid = userIns.rows[0].id;
+    const session = await buildSessionPayload(uid);
+    if (!session) {
+      return res.status(500).json({ error: 'Cuenta creada pero no se pudo iniciar sesión' });
+    }
+    return res.status(201).json({ token: issueToken(uid), ...session });
+  } catch (e) {
+    try {
+      await client.query('ROLLBACK');
+    } catch (rbErr) {
+      /* ignore */
+    }
+    console.error(e);
+    return res.status(500).json({ error: 'Error al aceptar la invitación' });
+  } finally {
+    client.release();
+  }
+});
+
 app.post('/api/auth/login', async (req, res) => {
   try {
     const em = normalizeEmail(req.body?.email);
@@ -729,6 +935,7 @@ app.put('/api/auth/profile', verifyToken, async (req, res) => {
       role: session.role,
       role_tier: session.role_tier,
       limits: session.limits,
+      module_access: session.module_access,
     });
   } catch (e) {
     console.error(e);
@@ -848,10 +1055,144 @@ app.delete(
         id,
         req.organizationId,
       ]);
+      try {
+        await pool.query(
+          `DELETE FROM organization_role_modules WHERE organization_id = $1 AND role_slug = $2`,
+          [req.organizationId, row.slug],
+        );
+      } catch (e) {
+        if (e && e.code !== '42P01') throw e;
+      }
       res.json({ ok: true });
     } catch (e) {
       console.error(e);
       res.status(500).json({ error: 'Error al eliminar el rol' });
+    }
+  },
+);
+
+app.get(
+  '/api/organization/role-modules',
+  verifyToken,
+  scopeToOrganization,
+  requireRole('owner', 'admin'),
+  async (req, res) => {
+    try {
+      let rows = [];
+      try {
+        const r = await pool.query(
+          `SELECT role_slug, full_access, modules FROM organization_role_modules WHERE organization_id = $1`,
+          [req.organizationId],
+        );
+        rows = r.rows;
+      } catch (e) {
+        if (e && e.code !== '42P01') throw e;
+      }
+      const bySlug = new Map(rows.map((x) => [x.role_slug, x]));
+
+      let custom = [];
+      try {
+        const cr = await pool.query(
+          `SELECT slug, label, base_role FROM organization_custom_roles WHERE organization_id = $1 ORDER BY label`,
+          [req.organizationId],
+        );
+        custom = cr.rows;
+      } catch (e) {
+        if (e && e.code !== '42P01') throw e;
+      }
+
+      const roleRows = [
+        { slug: 'owner', label: 'Propietario', locked: true },
+        { slug: 'admin', label: 'Administrador', locked: false },
+        { slug: 'member', label: 'Miembro', locked: false },
+        ...custom.map((c) => ({
+          slug: c.slug,
+          label: `${c.label} (${c.base_role === 'admin' ? 'como admin' : 'como miembro'})`,
+          locked: false,
+        })),
+      ];
+
+      const roles = roleRows.map((meta) => {
+        if (meta.slug === 'owner') {
+          return { slug: meta.slug, label: meta.label, full_access: true, modules: [], locked: true };
+        }
+        const db = bySlug.get(meta.slug);
+        if (!db) {
+          return { slug: meta.slug, label: meta.label, full_access: true, modules: [], locked: false };
+        }
+        const full = Boolean(db.full_access);
+        const mods = full ? [] : normalizeConfigurableModulesList(db.modules);
+        return {
+          slug: meta.slug,
+          label: meta.label,
+          full_access: full,
+          modules: mods,
+          locked: false,
+        };
+      });
+
+      res.json({ module_catalog: MODULE_CATALOG_FOR_API, roles });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al leer permisos por módulo' });
+    }
+  },
+);
+
+app.put(
+  '/api/organization/role-modules',
+  verifyToken,
+  scopeToOrganization,
+  requireRole('owner', 'admin'),
+  async (req, res) => {
+    try {
+      const entries = req.body?.entries;
+      if (!Array.isArray(entries)) {
+        return res.status(400).json({ error: 'Se esperaba entries: array' });
+      }
+
+      let customSlugs = new Set();
+      try {
+        const cr = await pool.query(`SELECT slug FROM organization_custom_roles WHERE organization_id = $1`, [
+          req.organizationId,
+        ]);
+        customSlugs = new Set(cr.rows.map((r) => r.slug));
+      } catch (e) {
+        if (e && e.code !== '42P01') throw e;
+      }
+
+      const allowedSlugs = new Set(['admin', 'member', ...customSlugs]);
+
+      for (const ent of entries) {
+        const slug = String(ent?.role_slug || '').trim();
+        if (!slug || slug === 'owner' || !allowedSlugs.has(slug)) {
+          return res.status(400).json({ error: `Rol no válido en entries: ${slug || '(vacío)'}` });
+        }
+        const full_access = Boolean(ent?.full_access);
+        const modules = normalizeConfigurableModulesList(ent?.modules);
+        if (!full_access && modules.length === 0) {
+          /* permitido: solo Cuenta / Configuración según tier */
+        }
+        await pool.query(
+          `INSERT INTO organization_role_modules (organization_id, role_slug, full_access, modules, updated_at)
+           VALUES ($1, $2, $3, $4::jsonb, now())
+           ON CONFLICT (organization_id, role_slug) DO UPDATE SET
+             full_access = EXCLUDED.full_access,
+             modules = EXCLUDED.modules,
+             updated_at = now()`,
+          [req.organizationId, slug, full_access, JSON.stringify(modules)],
+        );
+      }
+
+      res.json({ ok: true });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Falta la tabla organization_role_modules. Reinicia el backend o ejecuta initDb.',
+        });
+      }
+      console.error(e);
+      res.status(500).json({ error: 'Error al guardar permisos por módulo' });
     }
   },
 );
@@ -959,20 +1300,125 @@ app.post(
         [req.organizationId, email, role, token, expires, req.user.userId],
       );
 
-      if (process.env.NODE_ENV !== 'production') {
-        console.log(
-          `[dev] Invitación ${email} rol ${role} token=${token} (aceptación futura; por ahora solo listado)`,
-        );
+      const { sendRes, acceptUrl } = await sendInvitationNotification(
+        req.organizationId,
+        email,
+        role,
+        token,
+        req.user.userId,
+      );
+      logInvitationSmtp(email, acceptUrl, sendRes);
+
+      let message;
+      let email_sent = false;
+      if (sendRes.ok) {
+        email_sent = true;
+        message = `Se envió un correo a ${email} con el enlace para aceptar la invitación.`;
+      } else if (sendRes.skipped) {
+        message =
+          'Invitación creada. Falta configurar el envío de correo (SMTP) en el servidor; copia el enlace y envíalo tú al invitado.';
+      } else {
+        message = `Invitación creada, pero no se pudo enviar el correo (${sendRes.error || 'error SMTP'}). Copia el enlace y envíalo tú.`;
       }
 
       res.status(201).json({
         ok: true,
+        email_sent,
+        invite_link: acceptUrl,
+        message,
         invitation: { email, role, expires_at: expires },
         limits: await getUsageSnapshot(req.organizationId),
       });
     } catch (e) {
       console.error(e);
       res.status(500).json({ error: 'Error al crear la invitación' });
+    }
+  },
+);
+
+app.delete(
+  '/api/organization/invitations/:id',
+  verifyToken,
+  scopeToOrganization,
+  requireRole('owner', 'admin'),
+  async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID inválido' });
+      }
+      const del = await pool.query(
+        `DELETE FROM invitations
+         WHERE id = $1 AND organization_id = $2 AND accepted_at IS NULL
+         RETURNING id`,
+        [id, req.organizationId],
+      );
+      if (del.rowCount === 0) {
+        return res.status(404).json({ error: 'Invitación no encontrada o ya aceptada' });
+      }
+      res.json({ ok: true, limits: await getUsageSnapshot(req.organizationId) });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al cancelar la invitación' });
+    }
+  },
+);
+
+app.post(
+  '/api/organization/invitations/:id/resend',
+  verifyToken,
+  scopeToOrganization,
+  requireRole('owner', 'admin'),
+  async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID inválido' });
+      }
+      const row = (
+        await pool.query(
+          `SELECT id, email, role, token, invited_by, organization_id
+           FROM invitations
+           WHERE id = $1 AND organization_id = $2 AND accepted_at IS NULL AND expires_at > now()`,
+          [id, req.organizationId],
+        )
+      ).rows[0];
+      if (!row) {
+        return res.status(404).json({
+          error: 'Invitación no encontrada, ya aceptada o caducada. Cancela y crea una nueva si hace falta.',
+        });
+      }
+
+      const { sendRes, acceptUrl } = await sendInvitationNotification(
+        row.organization_id,
+        row.email,
+        row.role,
+        row.token,
+        row.invited_by,
+      );
+      logInvitationSmtp(row.email, acceptUrl, sendRes);
+
+      let message;
+      let email_sent = false;
+      if (sendRes.ok) {
+        email_sent = true;
+        message = `Se reenvió el correo a ${row.email} con el mismo enlace de invitación.`;
+      } else if (sendRes.skipped) {
+        message =
+          'No hay SMTP configurado en el servidor. Copia el enlace y envíalo tú al invitado (es el mismo de siempre).';
+      } else {
+        message = `No se pudo enviar el correo (${sendRes.error || 'error SMTP'}). Copia el enlace y envíalo tú.`;
+      }
+
+      res.json({
+        ok: true,
+        email_sent,
+        invite_link: acceptUrl,
+        message,
+      });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al reenviar la invitación' });
     }
   },
 );

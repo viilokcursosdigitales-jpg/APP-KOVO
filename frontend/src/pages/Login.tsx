@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react';
 import { Link, Navigate, useLocation, useNavigate, useSearchParams } from 'react-router-dom';
+import { postLoginPath } from '../appModules';
 import { useAuth, type SessionPayload } from '../auth/AuthContext';
 import { apiUrl } from '../auth/api';
 import { alpha, ds } from '../design-system/ds';
@@ -20,14 +21,20 @@ function Spinner() {
   );
 }
 
+function parseModuleAccessFromLoginBody(data: Record<string, unknown>): string[] | null {
+  const m = data.module_access;
+  if (m === undefined) return null;
+  if (m === null) return null;
+  if (Array.isArray(m)) return m.filter((x): x is string => typeof x === 'string');
+  return null;
+}
+
 export default function Login() {
-  const { login, isAuthenticated, isLoading: authLoading } = useAuth();
+  const { login, isAuthenticated, isLoading: authLoading, moduleAccess } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [params] = useSearchParams();
   const state = location.state as { from?: string } | undefined;
-  const redirectTo =
-    typeof state?.from === 'string' && state.from.startsWith('/') ? state.from : '/dashboard';
   const registered = params.get('registered') === '1';
 
   const [email, setEmail] = useState('');
@@ -36,7 +43,7 @@ export default function Login() {
   const [loading, setLoading] = useState(false);
 
   if (!authLoading && isAuthenticated) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={postLoginPath(moduleAccess, undefined)} replace />;
   }
 
   async function handleSubmit(e: FormEvent) {
@@ -62,15 +69,23 @@ export default function Login() {
           : r === 'owner' || r === 'admin' || r === 'member'
             ? r
             : 'member';
+      const module_access = parseModuleAccessFromLoginBody(data as Record<string, unknown>);
       const session: SessionPayload = {
         user: data.user,
         organization: data.organization,
         role: r,
         role_tier,
         limits: data.limits,
+        module_access,
       };
       login(data.token, session);
-      navigate(redirectTo, { replace: true });
+      navigate(
+        postLoginPath(
+          module_access,
+          typeof state?.from === 'string' ? state.from : undefined,
+        ),
+        { replace: true },
+      );
     } catch {
       setError('Error de red. Comprueba que el servidor esté en marcha.');
     } finally {

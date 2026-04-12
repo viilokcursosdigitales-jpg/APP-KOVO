@@ -176,6 +176,20 @@ async function initDb(pool) {
     `CREATE INDEX IF NOT EXISTS idx_org_custom_roles_org ON organization_custom_roles (organization_id)`,
   );
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS organization_role_modules (
+      organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+      role_slug VARCHAR(64) NOT NULL,
+      full_access BOOLEAN NOT NULL DEFAULT true,
+      modules JSONB NOT NULL DEFAULT '[]'::jsonb,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (organization_id, role_slug)
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_org_role_modules_org ON organization_role_modules (organization_id)`,
+  );
+
   try {
     await pool.query(`ALTER TABLE invitations DROP CONSTRAINT IF EXISTS invitations_role_check`);
   } catch (e) {

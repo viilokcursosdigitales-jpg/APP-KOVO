@@ -10,6 +10,7 @@ export const TOKEN_KEY = 'kovo_token';
 export const ORG_STORAGE_KEY = 'kovo_organization';
 export const ROLE_STORAGE_KEY = 'kovo_role';
 export const LIMITS_STORAGE_KEY = 'kovo_limits';
+export const MODULE_ACCESS_STORAGE_KEY = 'kovo_module_access';
 
 export function getStoredToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
@@ -21,6 +22,7 @@ function clearAuthStorage() {
   localStorage.removeItem(ORG_STORAGE_KEY);
   localStorage.removeItem(ROLE_STORAGE_KEY);
   localStorage.removeItem(LIMITS_STORAGE_KEY);
+  localStorage.removeItem(MODULE_ACCESS_STORAGE_KEY);
 }
 
 export async function apiFetch(path: string, init: RequestInit = {}): Promise<Response> {

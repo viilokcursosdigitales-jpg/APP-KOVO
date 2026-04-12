@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AdminRoute } from './auth/AdminRoute';
+import { ModuleGuard } from './auth/ModuleGuard';
 import { PrivateRoute } from './auth/PrivateRoute';
 import { AppShell } from './layout/AppShell';
 import CanalesPage from './pages/CanalesPage';
@@ -13,6 +14,7 @@ import MetaAdsPage from './pages/MetaAdsPage';
 import MoticoPage from './pages/MoticoPage';
 import PedidosPage from './pages/PedidosPage';
 import Profile from './pages/Profile';
+import AcceptInvitation from './pages/AcceptInvitation';
 import Register from './pages/Register';
 import ResetPassword from './pages/ResetPassword';
 import Settings from './pages/Settings';
@@ -23,18 +25,21 @@ export default function App() {
       <Route path="/" element={<Home />} />
       <Route path="/login" element={<Login />} />
       <Route path="/register" element={<Register />} />
+      <Route path="/aceptar-invitacion" element={<AcceptInvitation />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
 
       <Route element={<PrivateRoute />}>
         <Route element={<AppShell />}>
-          <Route path="/dashboard" element={<DashboardHome />} />
-          <Route path="/pedidos" element={<PedidosPage />} />
-          <Route path="/motico" element={<MoticoPage />} />
-          <Route path="/inventario" element={<InventarioPage />} />
-          <Route path="/meta-ads" element={<MetaAdsPage />} />
-          <Route path="/indicadores-marketing" element={<MarketingIndicatorsPage />} />
-          <Route path="/canales" element={<CanalesPage />} />
+          <Route element={<ModuleGuard />}>
+            <Route path="/dashboard" element={<DashboardHome />} />
+            <Route path="/pedidos" element={<PedidosPage />} />
+            <Route path="/motico" element={<MoticoPage />} />
+            <Route path="/inventario" element={<InventarioPage />} />
+            <Route path="/meta-ads" element={<MetaAdsPage />} />
+            <Route path="/indicadores-marketing" element={<MarketingIndicatorsPage />} />
+            <Route path="/canales" element={<CanalesPage />} />
+          </Route>
           <Route path="/profile" element={<Profile />} />
           <Route element={<AdminRoute />}>
             <Route path="/settings" element={<Settings />} />

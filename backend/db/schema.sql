@@ -124,6 +124,17 @@ CREATE TABLE IF NOT EXISTS organization_custom_roles (
 
 CREATE INDEX IF NOT EXISTS idx_org_custom_roles_org ON organization_custom_roles (organization_id);
 
+CREATE TABLE IF NOT EXISTS organization_role_modules (
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  role_slug VARCHAR(64) NOT NULL,
+  full_access BOOLEAN NOT NULL DEFAULT true,
+  modules JSONB NOT NULL DEFAULT '[]'::jsonb,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (organization_id, role_slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_org_role_modules_org ON organization_role_modules (organization_id);
+
 CREATE TABLE IF NOT EXISTS shopify_product_marketing_targets (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,

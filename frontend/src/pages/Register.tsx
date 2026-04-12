@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react';
 import { Link, Navigate, useNavigate } from 'react-router-dom';
+import { postLoginPath } from '../appModules';
 import { useAuth } from '../auth/AuthContext';
 import { apiUrl } from '../auth/api';
 import { alpha, ds } from '../design-system/ds';
@@ -21,7 +22,7 @@ function Spinner() {
 }
 
 export default function Register() {
-  const { isAuthenticated, isLoading: authLoading } = useAuth();
+  const { isAuthenticated, isLoading: authLoading, moduleAccess } = useAuth();
   const navigate = useNavigate();
   const [organizationName, setOrganizationName] = useState('');
   const [name, setName] = useState('');
@@ -38,7 +39,7 @@ export default function Register() {
   }, [password, confirm]);
 
   if (!authLoading && isAuthenticated) {
-    return <Navigate to="/dashboard" replace />;
+    return <Navigate to={postLoginPath(moduleAccess, undefined)} replace />;
   }
 
   async function handleSubmit(e: FormEvent) {

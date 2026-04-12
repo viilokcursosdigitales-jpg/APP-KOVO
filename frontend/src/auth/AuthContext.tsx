@@ -11,6 +11,7 @@ import {
   apiFetch,
   getStoredToken,
   LIMITS_STORAGE_KEY,
+  MODULE_ACCESS_STORAGE_KEY,
   ORG_STORAGE_KEY,
   ROLE_STORAGE_KEY,
   TOKEN_KEY,
@@ -46,6 +47,8 @@ export type SessionPayload = {
   role: OrgRole;
   role_tier: RoleTier;
   limits: PlanLimits;
+  /** null = acceso a todos los módulos de la barra lateral. */
+  module_access: string[] | null;
 };
 
 type AuthContextValue = {
@@ -62,6 +65,8 @@ type AuthContextValue = {
   logout: () => void;
   refreshUser: () => Promise<void>;
   setSessionFromPayload: (session: SessionPayload) => void;
+  moduleAccess: string[] | null;
+  canAccessModule: (moduleId: string) => boolean;
 };
 
 const AuthContext = createContext<AuthContextValue | null>(null);
@@ -109,12 +114,26 @@ function readStoredLimits(): PlanLimits | null {
   }
 }
 
+function readStoredModuleAccess(): string[] | null {
+  try {
+    const raw = localStorage.getItem(MODULE_ACCESS_STORAGE_KEY);
+    if (raw == null) return null;
+    const j = JSON.parse(raw) as unknown;
+    if (j === null) return null;
+    if (Array.isArray(j)) return j.filter((x): x is string => typeof x === 'string');
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 function persistSession(session: SessionPayload | null) {
   if (!session) {
     localStorage.removeItem('kovo_user_id');
     localStorage.removeItem(ORG_STORAGE_KEY);
     localStorage.removeItem(ROLE_STORAGE_KEY);
     localStorage.removeItem(LIMITS_STORAGE_KEY);
+    localStorage.removeItem(MODULE_ACCESS_STORAGE_KEY);
     return;
   }
   localStorage.setItem('kovo_user_id', String(session.user.id));
@@ -124,6 +143,7 @@ function persistSession(session: SessionPayload | null) {
     JSON.stringify({ role: session.role, role_tier: session.role_tier }),
   );
   localStorage.setItem(LIMITS_STORAGE_KEY, JSON.stringify(session.limits));
+  localStorage.setItem(MODULE_ACCESS_STORAGE_KEY, JSON.stringify(session.module_access ?? null));
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -141,6 +161,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [limits, setLimits] = useState<PlanLimits | null>(() =>
     typeof localStorage !== 'undefined' ? readStoredLimits() : null,
   );
+  const [moduleAccess, setModuleAccess] = useState<string[] | null>(() =>
+    typeof localStorage !== 'undefined' ? readStoredModuleAccess() : null,
+  );
   const [isLoading, setIsLoading] = useState(true);
 
   const setSessionFromPayload = useCallback((session: SessionPayload) => {
@@ -150,12 +173,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         : session.role === 'owner' || session.role === 'admin' || session.role === 'member'
           ? session.role
           : 'member';
-    const next: SessionPayload = { ...session, role_tier };
+    const module_access =
+      session.module_access === undefined
+        ? null
+        : session.module_access === null
+          ? null
+          : Array.isArray(session.module_access)
+            ? session.module_access.filter((x) => typeof x === 'string')
+            : null;
+    const next: SessionPayload = { ...session, role_tier, module_access };
     setUser(next.user);
     setOrganization(next.organization);
     setRole(next.role);
     setRoleTier(next.role_tier);
     setLimits(next.limits);
+    setModuleAccess(next.module_access);
     persistSession(next);
   }, []);
 
@@ -168,6 +200,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setRole(null);
     setRoleTier(null);
     setLimits(null);
+    setModuleAccess(null);
   }, []);
 
   const refreshUser = useCallback(async () => {
@@ -198,6 +231,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setRole(null);
           setRoleTier(null);
           setLimits(null);
+          setModuleAccess(null);
         }
         return;
       }
@@ -234,6 +268,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const canManageOrg = roleTier === 'owner' || roleTier === 'admin';
 
+  const canAccessModule = useCallback(
+    (moduleId: string) => {
+      if (moduleAccess === null) return true;
+      return moduleAccess.includes(moduleId);
+    },
+    [moduleAccess],
+  );
+
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
@@ -249,6 +291,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       refreshUser,
       setSessionFromPayload,
+      moduleAccess,
+      canAccessModule,
     }),
     [
       user,
@@ -263,6 +307,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       logout,
       refreshUser,
       setSessionFromPayload,
+      moduleAccess,
+      canAccessModule,
     ],
   );
 

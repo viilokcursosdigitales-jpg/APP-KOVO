@@ -1,10 +1,11 @@
 import { Link } from 'react-router-dom';
+import { postLoginPath } from '../appModules';
 import { useAuth } from '../auth/AuthContext';
 import { ds } from '../design-system/ds';
 import { META_BLUE } from './authStyles';
 
 export default function Home() {
-  const { isAuthenticated, isLoading } = useAuth();
+  const { isAuthenticated, isLoading, moduleAccess } = useAuth();
 
   return (
     <div className="kovo-auth-root">
@@ -34,7 +35,7 @@ export default function Home() {
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, justifyContent: 'center' }}>
             {isAuthenticated ? (
               <Link
-                to="/dashboard"
+                to={postLoginPath(moduleAccess, undefined)}
                 style={{
                   padding: '8px 18px',
                   borderRadius: 8,

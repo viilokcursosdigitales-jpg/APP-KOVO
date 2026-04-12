@@ -14,7 +14,7 @@ import {
   IconUser,
 } from '../design-system/icons';
 
-type NavItem = { to: string; label: string; icon: React.ReactNode };
+type NavItem = { to: string; label: string; icon: React.ReactNode; moduleId: string | null };
 
 function NavGroup({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -37,24 +37,37 @@ function NavGroup({ label, children }: { label: string; children: React.ReactNod
 }
 
 function SidebarNav({ mobile }: { mobile: boolean }) {
-  const { canManageOrg } = useAuth();
+  const { canManageOrg, canAccessModule } = useAuth();
 
   const main: NavItem[] = [
-    { to: '/dashboard', label: 'Dashboard', icon: <IconLayout /> },
-    { to: '/pedidos', label: 'Pedidos', icon: <IconCart /> },
-    { to: '/motico', label: 'Motico', icon: <IconTruck /> },
-    { to: '/inventario', label: 'Inventario', icon: <IconPackage /> },
+    { to: '/dashboard', label: 'Dashboard', icon: <IconLayout />, moduleId: 'dashboard' },
+    { to: '/pedidos', label: 'Pedidos', icon: <IconCart />, moduleId: 'pedidos' },
+    { to: '/motico', label: 'Motico', icon: <IconTruck />, moduleId: 'motico' },
+    { to: '/inventario', label: 'Inventario', icon: <IconPackage />, moduleId: 'inventario' },
   ];
   const marketing: NavItem[] = [
-    { to: '/meta-ads', label: 'Meta Ads', icon: <IconMegaphone /> },
-    { to: '/indicadores-marketing', label: 'Indicadores', icon: <IconTarget /> },
-    { to: '/canales', label: 'Canales', icon: <IconShare /> },
+    { to: '/meta-ads', label: 'Meta Ads', icon: <IconMegaphone />, moduleId: 'meta_ads' },
+    {
+      to: '/indicadores-marketing',
+      label: 'Indicadores',
+      icon: <IconTarget />,
+      moduleId: 'indicadores_marketing',
+    },
+    { to: '/canales', label: 'Canales', icon: <IconShare />, moduleId: 'canales' },
   ];
   const account: NavItem[] = [];
   if (canManageOrg) {
-    account.push({ to: '/settings', label: 'Configuración', icon: <IconSettings /> });
+    account.push({
+      to: '/settings',
+      label: 'Configuración',
+      icon: <IconSettings />,
+      moduleId: null,
+    });
   }
-  account.push({ to: '/profile', label: 'Cuenta', icon: <IconUser /> });
+  account.push({ to: '/profile', label: 'Cuenta', icon: <IconUser />, moduleId: null });
+
+  const mainVisible = main.filter((it) => it.moduleId === null || canAccessModule(it.moduleId));
+  const marketingVisible = marketing.filter((it) => it.moduleId === null || canAccessModule(it.moduleId));
 
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     display: 'flex',
@@ -87,7 +100,13 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   );
 
   if (mobile) {
-    const mobileNav: NavItem[] = [main[0], main[1], main[3], marketing[0], account[account.length - 1]];
+    const mobileNav: NavItem[] = [
+      mainVisible[0],
+      mainVisible[1],
+      mainVisible[3],
+      marketingVisible[0],
+      account[account.length - 1],
+    ].filter((it): it is NavItem => Boolean(it));
     return (
       <nav
         style={{
@@ -165,8 +184,10 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
         <span style={{ fontSize: 14, fontWeight: 600, color: ds.textPrimary }}>KOVO</span>
       </NavLink>
 
-      <NavGroup label="Principal">{main.map(renderItem)}</NavGroup>
-      <NavGroup label="Marketing">{marketing.map(renderItem)}</NavGroup>
+      {mainVisible.length > 0 ? <NavGroup label="Principal">{mainVisible.map(renderItem)}</NavGroup> : null}
+      {marketingVisible.length > 0 ? (
+        <NavGroup label="Marketing">{marketingVisible.map(renderItem)}</NavGroup>
+      ) : null}
       <NavGroup label="Cuenta">{account.map(renderItem)}</NavGroup>
     </aside>
   );
