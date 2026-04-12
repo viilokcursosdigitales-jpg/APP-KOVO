@@ -28,6 +28,7 @@ const {
   verifyShopifyWebhookHmac,
   shopifyRequest,
   registerUninstallWebhook,
+  normalizeShopifyOrdersForApp,
 } = require('./shopifyService');
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
 const hasFrontendDist = fs.existsSync(staticDir);
@@ -1539,12 +1540,12 @@ app.get('/api/shopify/callback', async (req, res) => {
       return redirectErr();
     }
 
-    if (sanitizeShopDomain(stateRow.shop_domain) !== shop) {
-      console.log('[shopify callback] fail: shop no coincide con el guardado al iniciar OAuth', {
-        desdeBd: stateRow.shop_domain,
-        desdeQuery: shop,
-      });
-      return redirectErr();
+    const shopInicio = sanitizeShopDomain(stateRow.shop_domain);
+    if (shopInicio && shopInicio !== shop) {
+      console.warn(
+        '[shopify callback] la tienda en el callback difiere de la indicada al conectar (p. ej. otra sesión o tienda de desarrollo); se usa la tienda que devolvió Shopify',
+        { indicadoAlIniciar: stateRow.shop_domain, desdeShopify: shop },
+      );
     }
 
     await pool.query(`DELETE FROM shopify_oauth_states WHERE state = $1`, [state]);
@@ -1654,11 +1655,21 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
-    const r = await shopifyRequest(row.shop_domain, row.access_token, 'orders.json?limit=50&status=any');
+    const limit = Math.min(250, Math.max(1, parseInt(String(req.query.limit || '100'), 10) || 100));
+    const r = await shopifyRequest(
+      row.shop_domain,
+      row.access_token,
+      `orders.json?limit=${limit}&status=any`,
+    );
     if (!r.ok) {
       return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
     }
-    res.json(r.data);
+    res.json({
+      source: 'shopify',
+      shop_domain: row.shop_domain,
+      fetchedAt: new Date().toISOString(),
+      orders: normalizeShopifyOrdersForApp(r.data),
+    });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener pedidos' });

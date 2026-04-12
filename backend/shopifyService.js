@@ -131,11 +131,54 @@ async function registerUninstallWebhook(shop, accessToken) {
   }
 }
 
+/**
+ * Mapea pedidos REST Admin a filas listas para el front (Pedidos KOVO).
+ * @param {object|null} apiData cuerpo JSON de orders.json
+ * @returns {object[]}
+ */
+function normalizeShopifyOrdersForApp(apiData) {
+  const list = (apiData && apiData.orders) || [];
+  return list.map((o) => {
+    const b = mapFinancialToBadge(o.financial_status);
+    const customer = o.customer || {};
+    const client =
+      [customer.first_name, customer.last_name].filter(Boolean).join(' ').trim() || 'Invitado';
+    const email = o.email || customer.email || '—';
+    const orderName = o.name || (o.order_number != null ? `#${o.order_number}` : `#${o.id}`);
+    return {
+      id: o.id,
+      orderName,
+      client,
+      email,
+      createdAt: o.created_at,
+      total: o.total_price,
+      currency: o.currency || '',
+      financialStatus: o.financial_status || '',
+      fulfillmentStatus: o.fulfillment_status || '',
+      label: b.label,
+      badgeVariant: b.variant,
+    };
+  });
+}
+
+function mapFinancialToBadge(financial) {
+  const f = String(financial || '').toLowerCase();
+  if (f === 'paid') return { label: 'Pagado', variant: 'success' };
+  if (f === 'pending' || f === 'unpaid') return { label: 'Pendiente de pago', variant: 'paused' };
+  if (f === 'authorized') return { label: 'Autorizado', variant: 'info' };
+  if (f === 'partially_paid') return { label: 'Pago parcial', variant: 'info' };
+  if (f === 'refunded') return { label: 'Reembolsado', variant: 'error' };
+  if (f === 'partially_refunded') return { label: 'Reemb. parcial', variant: 'warning' };
+  if (f === 'voided') return { label: 'Anulado', variant: 'error' };
+  return { label: financial != null && financial !== '' ? String(financial) : '—', variant: 'info' };
+}
+
 module.exports = {
   sanitizeShopDomain,
   verifyShopifyOAuthHmac,
   verifyShopifyWebhookHmac,
   shopifyRequest,
   registerUninstallWebhook,
+  normalizeShopifyOrdersForApp,
   DEFAULT_API_VERSION,
 };
