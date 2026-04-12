@@ -17,7 +17,9 @@ import {
 } from './api';
 
 export type OrgPlan = 'free' | 'pro' | 'enterprise';
-export type OrgRole = 'owner' | 'admin' | 'member';
+/** Rol interno guardado en servidor (owner, admin, member o slug de rol personalizado). */
+export type OrgRole = string;
+export type RoleTier = 'owner' | 'admin' | 'member';
 
 export type AuthUser = {
   id: number;
@@ -42,6 +44,7 @@ export type SessionPayload = {
   user: AuthUser;
   organization: Organization;
   role: OrgRole;
+  role_tier: RoleTier;
   limits: PlanLimits;
 };
 
@@ -49,6 +52,7 @@ type AuthContextValue = {
   user: AuthUser | null;
   organization: Organization | null;
   role: OrgRole | null;
+  roleTier: RoleTier | null;
   limits: PlanLimits | null;
   token: string | null;
   isLoading: boolean;
@@ -72,10 +76,27 @@ function readStoredOrg(): Organization | null {
   }
 }
 
-function readStoredRole(): OrgRole | null {
+function readStoredRolePayload(): { role: OrgRole | null; role_tier: RoleTier | null } {
   const r = localStorage.getItem(ROLE_STORAGE_KEY);
-  if (r === 'owner' || r === 'admin' || r === 'member') return r;
-  return null;
+  if (!r) return { role: null, role_tier: null };
+  try {
+    const j = JSON.parse(r) as { role?: string; role_tier?: string };
+    if (j && typeof j.role === 'string') {
+      const rt =
+        j.role_tier === 'owner' || j.role_tier === 'admin' || j.role_tier === 'member'
+          ? j.role_tier
+          : j.role === 'owner' || j.role === 'admin' || j.role === 'member'
+            ? j.role
+            : 'member';
+      return { role: j.role, role_tier: rt };
+    }
+  } catch {
+    /* formato legado: solo texto */
+  }
+  if (r === 'owner' || r === 'admin' || r === 'member') {
+    return { role: r, role_tier: r };
+  }
+  return { role: r, role_tier: 'member' };
 }
 
 function readStoredLimits(): PlanLimits | null {
@@ -98,7 +119,10 @@ function persistSession(session: SessionPayload | null) {
   }
   localStorage.setItem('kovo_user_id', String(session.user.id));
   localStorage.setItem(ORG_STORAGE_KEY, JSON.stringify(session.organization));
-  localStorage.setItem(ROLE_STORAGE_KEY, session.role);
+  localStorage.setItem(
+    ROLE_STORAGE_KEY,
+    JSON.stringify({ role: session.role, role_tier: session.role_tier }),
+  );
   localStorage.setItem(LIMITS_STORAGE_KEY, JSON.stringify(session.limits));
 }
 
@@ -109,7 +133,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     typeof localStorage !== 'undefined' ? readStoredOrg() : null,
   );
   const [role, setRole] = useState<OrgRole | null>(() =>
-    typeof localStorage !== 'undefined' ? readStoredRole() : null,
+    typeof localStorage !== 'undefined' ? readStoredRolePayload().role : null,
+  );
+  const [roleTier, setRoleTier] = useState<RoleTier | null>(() =>
+    typeof localStorage !== 'undefined' ? readStoredRolePayload().role_tier : null,
   );
   const [limits, setLimits] = useState<PlanLimits | null>(() =>
     typeof localStorage !== 'undefined' ? readStoredLimits() : null,
@@ -117,11 +144,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const setSessionFromPayload = useCallback((session: SessionPayload) => {
-    setUser(session.user);
-    setOrganization(session.organization);
-    setRole(session.role);
-    setLimits(session.limits);
-    persistSession(session);
+    const role_tier: RoleTier =
+      session.role_tier === 'owner' || session.role_tier === 'admin' || session.role_tier === 'member'
+        ? session.role_tier
+        : session.role === 'owner' || session.role === 'admin' || session.role === 'member'
+          ? session.role
+          : 'member';
+    const next: SessionPayload = { ...session, role_tier };
+    setUser(next.user);
+    setOrganization(next.organization);
+    setRole(next.role);
+    setRoleTier(next.role_tier);
+    setLimits(next.limits);
+    persistSession(next);
   }, []);
 
   const logout = useCallback(() => {
@@ -131,6 +166,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
     setOrganization(null);
     setRole(null);
+    setRoleTier(null);
     setLimits(null);
   }, []);
 
@@ -160,6 +196,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(null);
           setOrganization(null);
           setRole(null);
+          setRoleTier(null);
           setLimits(null);
         }
         return;
@@ -195,13 +232,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     [setSessionFromPayload],
   );
 
-  const canManageOrg = role === 'owner' || role === 'admin';
+  const canManageOrg = roleTier === 'owner' || roleTier === 'admin';
 
   const value = useMemo<AuthContextValue>(
     () => ({
       user,
       organization,
       role,
+      roleTier,
       limits,
       token,
       isLoading,
@@ -216,6 +254,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       organization,
       role,
+      roleTier,
       limits,
       token,
       isLoading,

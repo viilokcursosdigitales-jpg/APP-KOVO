@@ -236,6 +236,65 @@ async function loadSessionFromAccessToken(accessToken, req) {
   return true;
 }
 
+/** Permiso efectivo: owner | admin | member (roles personalizados heredan admin o member). */
+async function getRoleTier(userId, organizationId) {
+  const { rows } = await pool.query(
+    `SELECT role FROM users WHERE id = $1 AND organization_id = $2 AND is_active = true`,
+    [userId, organizationId],
+  );
+  const r = rows[0]?.role;
+  if (r == null) return null;
+  if (r === 'owner') return 'owner';
+  if (r === 'admin') return 'admin';
+  if (r === 'member') return 'member';
+  const cr = await pool.query(
+    `SELECT base_role FROM organization_custom_roles WHERE organization_id = $1 AND slug = $2`,
+    [organizationId, r],
+  );
+  if (cr.rows[0]) return cr.rows[0].base_role;
+  return 'member';
+}
+
+function slugifyRoleLabel(label) {
+  return (
+    String(label || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .slice(0, 48) || 'rol'
+  );
+}
+
+async function uniqueCustomRoleSlug(organizationId, label) {
+  const base = slugifyRoleLabel(label);
+  let n = 0;
+  for (;;) {
+    const slug = n === 0 ? base : `${base}_${n}`;
+    if (slug === 'owner' || slug === 'admin' || slug === 'member') {
+      n += 1;
+      continue;
+    }
+    const clash = await pool.query(
+      `SELECT 1 FROM organization_custom_roles WHERE organization_id = $1 AND slug = $2
+       UNION ALL SELECT 1 FROM users WHERE organization_id = $1 AND role = $2 LIMIT 1`,
+      [organizationId, slug],
+    );
+    if (clash.rowCount === 0) return String(slug).slice(0, 64);
+    n += 1;
+  }
+}
+
+async function isAssignableOrgRole(organizationId, role) {
+  if (role === 'owner' || role === 'admin' || role === 'member') return true;
+  const { rows } = await pool.query(
+    `SELECT 1 FROM organization_custom_roles WHERE organization_id = $1 AND slug = $2`,
+    [organizationId, role],
+  );
+  return rows.length > 0;
+}
+
 async function verifyToken(req, res, next) {
   const auth = req.headers.authorization;
   if (!auth || !auth.startsWith('Bearer ')) {
@@ -253,10 +312,18 @@ async function verifyToken(req, res, next) {
 
 function requireRole(...allowed) {
   return (req, res, next) => {
-    if (!allowed.includes(req.user.role)) {
-      return res.status(403).json({ error: 'No tienes permisos para esta acción' });
-    }
-    next();
+    (async () => {
+      try {
+        const tier = await getRoleTier(req.user.userId, req.user.organizationId);
+        if (!tier || !allowed.includes(tier)) {
+          return res.status(403).json({ error: 'No tienes permisos para esta acción' });
+        }
+        next();
+      } catch (e) {
+        console.error('[requireRole]', e);
+        return res.status(500).json({ error: 'Error de autorización' });
+      }
+    })();
   };
 }
 
@@ -293,6 +360,7 @@ async function buildSessionPayload(userId) {
   const org = oq.rows[0];
   if (!org) return null;
   const limits = await getUsageSnapshot(org.id);
+  const role_tier = (await getRoleTier(u.id, u.organization_id)) || 'member';
   return {
     user: {
       id: u.id,
@@ -307,6 +375,7 @@ async function buildSessionPayload(userId) {
       plan: org.plan,
     },
     role: u.role,
+    role_tier,
     limits,
   };
 }
@@ -658,6 +727,7 @@ app.put('/api/auth/profile', verifyToken, async (req, res) => {
       user: session.user,
       organization: session.organization,
       role: session.role,
+      role_tier: session.role_tier,
       limits: session.limits,
     });
   } catch (e) {
@@ -705,6 +775,87 @@ app.put(
   },
 );
 
+app.post(
+  '/api/organization/custom-roles',
+  verifyToken,
+  scopeToOrganization,
+  requireRole('owner'),
+  async (req, res) => {
+    try {
+      const label = String(req.body?.label || '').trim();
+      const base_role = String(req.body?.base_role || '').toLowerCase();
+      if (label.length < 2 || label.length > 120) {
+        return res.status(400).json({ error: 'El nombre del rol debe tener entre 2 y 120 caracteres' });
+      }
+      if (base_role !== 'admin' && base_role !== 'member') {
+        return res.status(400).json({ error: 'El nivel debe ser admin o member' });
+      }
+      const slug = await uniqueCustomRoleSlug(req.organizationId, label);
+      const ins = await pool.query(
+        `INSERT INTO organization_custom_roles (organization_id, slug, label, base_role)
+         VALUES ($1, $2, $3, $4) RETURNING id, slug, label, base_role, created_at`,
+        [req.organizationId, slug, label, base_role],
+      );
+      res.status(201).json({ ok: true, role: ins.rows[0] });
+    } catch (e) {
+      if (e && e.code === '23505') {
+        return res.status(409).json({ error: 'Ya existe un rol con ese identificador' });
+      }
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Falta la tabla organization_custom_roles. Reinicia el backend para ejecutar initDb.',
+        });
+      }
+      console.error(e);
+      res.status(500).json({ error: 'Error al crear el rol' });
+    }
+  },
+);
+
+app.delete(
+  '/api/organization/custom-roles/:id',
+  verifyToken,
+  scopeToOrganization,
+  requireRole('owner'),
+  async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID inválido' });
+      }
+      const row = (
+        await pool.query(
+          `SELECT id, slug FROM organization_custom_roles WHERE id = $1 AND organization_id = $2`,
+          [id, req.organizationId],
+        )
+      ).rows[0];
+      if (!row) return res.status(404).json({ error: 'Rol no encontrado' });
+      const uCount = await pool.query(
+        `SELECT COUNT(*)::int AS c FROM users WHERE organization_id = $1 AND role = $2 AND is_active = true`,
+        [req.organizationId, row.slug],
+      );
+      if (uCount.rows[0].c > 0) {
+        return res.status(400).json({ error: 'Hay miembros con este rol; reasígnalos antes de borrar' });
+      }
+      const iCount = await pool.query(
+        `SELECT COUNT(*)::int AS c FROM invitations WHERE organization_id = $1 AND role = $2 AND accepted_at IS NULL`,
+        [req.organizationId, row.slug],
+      );
+      if (iCount.rows[0].c > 0) {
+        return res.status(400).json({ error: 'Hay invitaciones pendientes con este rol' });
+      }
+      await pool.query(`DELETE FROM organization_custom_roles WHERE id = $1 AND organization_id = $2`, [
+        id,
+        req.organizationId,
+      ]);
+      res.json({ ok: true });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error al eliminar el rol' });
+    }
+  },
+);
+
 app.get(
   '/api/organization/members',
   verifyToken,
@@ -730,9 +881,22 @@ app.get(
         )
       ).rows;
 
+      let custom_roles = [];
+      try {
+        const cr = await pool.query(
+          `SELECT id, slug, label, base_role, created_at
+           FROM organization_custom_roles WHERE organization_id = $1 ORDER BY label`,
+          [req.organizationId],
+        );
+        custom_roles = cr.rows;
+      } catch (crErr) {
+        if (crErr && crErr.code !== '42P01') throw crErr;
+      }
+
       res.json({
         members,
         invitations,
+        custom_roles,
         limits: await getUsageSnapshot(req.organizationId),
       });
     } catch (e) {
@@ -754,7 +918,7 @@ app.post(
       if (!isValidEmail(email)) {
         return res.status(400).json({ error: 'Email no válido' });
       }
-      if (!['admin', 'member'].includes(role)) {
+      if (role === 'owner' || !(await isAssignableOrgRole(req.organizationId, role))) {
         return res.status(400).json({ error: 'Rol de invitación no válido' });
       }
 
@@ -822,7 +986,7 @@ app.put(
     try {
       const targetId = parseInt(req.params.id, 10);
       const newRole = String(req.body?.role || '');
-      if (!['owner', 'admin', 'member'].includes(newRole)) {
+      if (!(await isAssignableOrgRole(req.organizationId, newRole))) {
         return res.status(400).json({ error: 'Rol no válido' });
       }
 
@@ -1603,7 +1767,7 @@ const SHOPIFY_MOTICO_STATUSES = new Set([
 ]);
 
 const SHOPIFY_ORDER_LIST_FIELDS =
-  'id,name,email,created_at,total_price,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address';
+  'id,name,email,created_at,total_price,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address,billing_address';
 
 async function loadLocalFieldsMap(organizationId, orderIds) {
   if (!orderIds.length) return new Map();

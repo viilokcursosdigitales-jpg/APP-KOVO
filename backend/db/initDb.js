@@ -161,6 +161,27 @@ async function initDb(pool) {
     )
   `);
 
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS organization_custom_roles (
+      id SERIAL PRIMARY KEY,
+      organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+      slug VARCHAR(64) NOT NULL,
+      label VARCHAR(120) NOT NULL,
+      base_role VARCHAR(16) NOT NULL CHECK (base_role IN ('admin', 'member')),
+      created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      UNIQUE (organization_id, slug)
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_org_custom_roles_org ON organization_custom_roles (organization_id)`,
+  );
+
+  try {
+    await pool.query(`ALTER TABLE invitations DROP CONSTRAINT IF EXISTS invitations_role_check`);
+  } catch (e) {
+    console.warn('[initDb] invitations_role_check:', e && e.message);
+  }
+
   const tableCheck = await pool.query(`
     SELECT EXISTS (
       SELECT 1 FROM information_schema.tables

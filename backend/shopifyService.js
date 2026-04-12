@@ -172,9 +172,18 @@ async function shopifySyncFirstLineItemQuantityAndPrice(shop, accessToken, order
   return { ok: true, data: putRes.data };
 }
 
+function resolveOrderAddress(o) {
+  const candidates = [o.shipping_address, o.billing_address];
+  for (const raw of candidates) {
+    if (!raw || typeof raw !== 'object') continue;
+    if (raw.address1 || raw.city || raw.province || raw.zip || raw.country) return raw;
+  }
+  return null;
+}
+
 function pickShippingAddress(o) {
-  const s = o.shipping_address;
-  if (!s || typeof s !== 'object') return null;
+  const s = resolveOrderAddress(o);
+  if (!s) return null;
   const name = [s.first_name, s.last_name].filter(Boolean).join(' ').trim();
   const lines = [s.address1, s.address2].filter(Boolean).map(String);
   const cityLine = [s.city, s.province, s.zip].filter(Boolean).join(', ');
@@ -271,6 +280,11 @@ function normalizeShopifyOrdersForApp(apiData) {
       quantity: parseInt(String(li.quantity), 10) || 0,
       price: li.price != null ? String(li.price) : '',
     }));
+    const shippingAddress = pickShippingAddress(o);
+    const shippingCity = (shippingAddress && shippingAddress.city) || '';
+    const shippingProvince = (shippingAddress && shippingAddress.province) || '';
+    const shippingAddressLine =
+      shippingAddress && [shippingAddress.address1, shippingAddress.address2].filter(Boolean).join(' · ').trim();
     return {
       id: o.id,
       orderName,
@@ -285,7 +299,10 @@ function normalizeShopifyOrdersForApp(apiData) {
       badgeVariant: b.variant,
       defaultQuantity,
       productIds,
-      shippingAddress: pickShippingAddress(o),
+      shippingAddress,
+      shippingCity,
+      shippingProvince,
+      shippingAddressLine: shippingAddressLine || '',
       lineItemsDetail,
     };
   });

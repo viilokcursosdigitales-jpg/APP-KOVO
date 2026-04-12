@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS invitations (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
   email TEXT NOT NULL,
-  role TEXT NOT NULL CHECK (role IN ('admin', 'member')),
+  role TEXT NOT NULL,
   token TEXT NOT NULL UNIQUE,
   expires_at TIMESTAMPTZ NOT NULL,
   invited_by INTEGER NOT NULL REFERENCES users (id),
@@ -111,6 +111,18 @@ CREATE TABLE IF NOT EXISTS meta_campaign_product_links (
 );
 
 CREATE INDEX IF NOT EXISTS idx_meta_campaign_links_org ON meta_campaign_product_links (organization_id);
+
+CREATE TABLE IF NOT EXISTS organization_custom_roles (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  slug VARCHAR(64) NOT NULL,
+  label VARCHAR(120) NOT NULL,
+  base_role VARCHAR(16) NOT NULL CHECK (base_role IN ('admin', 'member')),
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (organization_id, slug)
+);
+
+CREATE INDEX IF NOT EXISTS idx_org_custom_roles_org ON organization_custom_roles (organization_id);
 
 CREATE TABLE IF NOT EXISTS shopify_product_marketing_targets (
   id SERIAL PRIMARY KEY,

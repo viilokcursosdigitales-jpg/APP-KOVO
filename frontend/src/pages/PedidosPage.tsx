@@ -52,6 +52,9 @@ type ShopifyOrderRow = {
   motico_status?: string;
   shopifyTotal: string;
   shopifyQuantity: number;
+  shippingCity?: string;
+  shippingProvince?: string;
+  shippingAddressLine?: string;
 };
 
 type ShopifyOrdersPayload = {
@@ -89,6 +92,19 @@ function orderMatchesFilter(row: ShopifyOrderRow, filter: 'all' | 'active' | 'do
   if (filter === 'all') return true;
   if (filter === 'done') return f === 'paid';
   return f !== 'paid' && f !== 'refunded' && f !== 'voided';
+}
+
+function cityKeyFromRow(row: ShopifyOrderRow) {
+  return String(row.shippingCity || '')
+    .trim()
+    .toLowerCase();
+}
+
+function orderMatchesCityFilter(row: ShopifyOrderRow, selectedKeys: string[]) {
+  if (!selectedKeys.length) return true;
+  const k = cityKeyFromRow(row);
+  if (!k) return false;
+  return selectedKeys.includes(k);
 }
 
 const selectStyle: CSSProperties = {
@@ -203,6 +219,7 @@ export default function PedidosPage() {
   const [shopifyError, setShopifyError] = useState('');
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [selectedCityKeys, setSelectedCityKeys] = useState<string[]>([]);
 
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
@@ -228,6 +245,9 @@ export default function PedidosPage() {
       mensajero: o.mensajero || null,
       motico_status: o.motico_status || 'confirmado',
       productIds: Array.isArray(o.productIds) ? o.productIds : [],
+      shippingCity: o.shippingCity || '',
+      shippingProvince: o.shippingProvince || '',
+      shippingAddressLine: o.shippingAddressLine || '',
     };
   }, []);
 
@@ -401,9 +421,30 @@ export default function PedidosPage() {
     return () => window.clearInterval(id);
   }, [shopifyConnected, loadShopifyOrders]);
 
+  const cityOptions = useMemo(() => {
+    const m = new Map<string, string>();
+    for (const r of shopifyOrders) {
+      const label = String(r.shippingCity || '').trim();
+      if (!label) continue;
+      const k = label.toLowerCase();
+      if (!m.has(k)) m.set(k, label);
+    }
+    return [...m.entries()]
+      .sort((a, b) => a[1].localeCompare(b[1], 'es'))
+      .map(([value, label]) => ({ value, label }));
+  }, [shopifyOrders]);
+
+  useEffect(() => {
+    const valid = new Set(cityOptions.map((c) => c.value));
+    setSelectedCityKeys((prev) => prev.filter((k) => valid.has(k)));
+  }, [cityOptions]);
+
   const filteredShopify = useMemo(
-    () => shopifyOrders.filter((r) => orderMatchesFilter(r, filter)),
-    [shopifyOrders, filter],
+    () =>
+      shopifyOrders.filter(
+        (r) => orderMatchesFilter(r, filter) && orderMatchesCityFilter(r, selectedCityKeys),
+      ),
+    [shopifyOrders, filter, selectedCityKeys],
   );
 
   const filteredDemo = useMemo(
@@ -529,6 +570,78 @@ export default function PedidosPage() {
               />
             </>
           ) : null}
+          {cityOptions.length > 0 ? (
+            <div
+              style={{
+                width: '100%',
+                flexBasis: '100%',
+                marginTop: 4,
+                paddingTop: 10,
+                borderTop: `1px solid ${ds.borderCard}`,
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 8,
+                alignItems: 'center',
+              }}
+            >
+              <span style={{ fontSize: 11, fontWeight: 700, color: ds.textSecondary }}>Ciudad</span>
+              {selectedCityKeys.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedCityKeys([])}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    background: ds.bgCard,
+                    color: ds.brand,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Todas
+                </button>
+              ) : null}
+              {cityOptions.map((c) => {
+                const on = selectedCityKeys.includes(c.value);
+                return (
+                  <label
+                    key={c.value}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 6,
+                      padding: '4px 10px',
+                      borderRadius: 8,
+                      border: `1px solid ${on ? ds.brand : ds.borderCard}`,
+                      background: on ? ds.brandBg : ds.bgCard,
+                      fontSize: 11,
+                      fontWeight: on ? 600 : 500,
+                      color: on ? ds.brand : ds.textSecondary,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={on}
+                      onChange={() =>
+                        setSelectedCityKeys((prev) =>
+                          prev.includes(c.value) ? prev.filter((x) => x !== c.value) : [...prev, c.value],
+                        )
+                      }
+                      style={{ accentColor: ds.brand }}
+                    />
+                    {c.label}
+                  </label>
+                );
+              })}
+            </div>
+          ) : useLive && shopifyOrders.length > 0 && !shopifyLoading ? (
+            <div style={{ width: '100%', flexBasis: '100%', marginTop: 6, fontSize: 11, color: ds.textMuted }}>
+              Ningún pedido en el rango tiene ciudad en la dirección de envío.
+            </div>
+          ) : null}
         </div>
       ) : null}
 
@@ -578,7 +691,11 @@ export default function PedidosPage() {
         title={useLive ? 'Pedidos en Shopify' : 'Todos los pedidos'}
         subtitle={
           useLive
-            ? `Mostrando ${filteredShopify.length} de ${shopifyOrders.length} pedidos · rango según filtro de fechas`
+            ? `Mostrando ${filteredShopify.length} de ${shopifyOrders.length} pedidos · rango de fechas${
+                selectedCityKeys.length
+                  ? ` · ${selectedCityKeys.length} ciudad(es) en el filtro`
+                  : ''
+              }`
             : `Mostrando ${filteredDemo.length} resultados · demo`
         }
       >
@@ -586,11 +703,18 @@ export default function PedidosPage() {
           <div style={{ padding: 24, color: ds.textMuted, fontSize: 13 }}>Cargando pedidos de Shopify…</div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ ...tableBase, minWidth: 1080 }}>
+            <table style={{ ...tableBase, minWidth: useLive ? 1420 : 1080 }}>
               <thead>
                 <tr>
                   <Th>Pedido</Th>
                   <Th>Cliente</Th>
+                  {useLive ? (
+                    <>
+                      <Th>Ciudad</Th>
+                      <Th>Departamento</Th>
+                      <Th>Dirección</Th>
+                    </>
+                  ) : null}
                   <Th>Fecha</Th>
                   <Th>Precio</Th>
                   <Th>Cant.</Th>
@@ -610,6 +734,24 @@ export default function PedidosPage() {
                             <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
                           </Td>
                           <Td isLast={i === arr.length - 1}>{o.client}</Td>
+                          <Td isLast={i === arr.length - 1}>
+                            <span style={{ fontSize: 11 }}>{o.shippingCity?.trim() || '—'}</span>
+                          </Td>
+                          <Td isLast={i === arr.length - 1}>
+                            <span style={{ fontSize: 11 }}>{o.shippingProvince?.trim() || '—'}</span>
+                          </Td>
+                          <Td isLast={i === arr.length - 1}>
+                            <div
+                              style={{
+                                fontSize: 11,
+                                maxWidth: 240,
+                                wordBreak: 'break-word',
+                                lineHeight: 1.35,
+                              }}
+                            >
+                              {o.shippingAddressLine?.trim() || '—'}
+                            </div>
+                          </Td>
                           <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
                           <Td isLast={i === arr.length - 1}>
                             <input

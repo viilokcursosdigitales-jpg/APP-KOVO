@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { apiFetch } from '../auth/api';
-import { useAuth, type OrgRole } from '../auth/AuthContext';
+import { useAuth } from '../auth/AuthContext';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
 import { inputStyle, labelStyle, primaryButton } from './authStyles';
@@ -9,10 +9,27 @@ type MemberRow = {
   id: number;
   name: string;
   email: string;
-  role: OrgRole;
+  role: string;
   is_active: number;
   created_at: string;
 };
+
+type CustomRoleRow = {
+  id: number;
+  slug: string;
+  label: string;
+  base_role: 'admin' | 'member';
+  created_at?: string;
+};
+
+function formatRoleLabel(slug: string, custom: CustomRoleRow[]) {
+  const c = custom.find((x) => x.slug === slug);
+  if (c) return `${c.label} (${c.base_role === 'admin' ? 'como admin' : 'como miembro'})`;
+  if (slug === 'owner') return 'Propietario';
+  if (slug === 'admin') return 'Administrador';
+  if (slug === 'member') return 'Miembro';
+  return slug;
+}
 
 type InviteRow = {
   id: number;
@@ -63,9 +80,15 @@ export default function Settings() {
 
   const [inviteOpen, setInviteOpen] = useState(false);
   const [inviteEmail, setInviteEmail] = useState('');
-  const [inviteRole, setInviteRole] = useState<'admin' | 'member'>('member');
+  const [inviteRole, setInviteRole] = useState('member');
   const [inviteLoading, setInviteLoading] = useState(false);
   const [inviteErr, setInviteErr] = useState('');
+
+  const [customRoles, setCustomRoles] = useState<CustomRoleRow[]>([]);
+  const [newRoleLabel, setNewRoleLabel] = useState('');
+  const [newRoleBase, setNewRoleBase] = useState<'admin' | 'member'>('member');
+  const [roleSaving, setRoleSaving] = useState(false);
+  const [roleMsg, setRoleMsg] = useState('');
 
   const loadTeam = useCallback(async () => {
     const res = await apiFetch('/api/organization/members');
@@ -73,10 +96,12 @@ export default function Settings() {
     const data = (await res.json()) as {
       members: MemberRow[];
       invitations: InviteRow[];
+      custom_roles?: CustomRoleRow[];
       limits: Limits;
     };
     setMembers(data.members);
     setInvitations(data.invitations);
+    setCustomRoles(Array.isArray(data.custom_roles) ? data.custom_roles : []);
     setLocalLimits(data.limits);
   }, []);
 
@@ -122,7 +147,7 @@ export default function Settings() {
     try {
       const res = await apiFetch('/api/organization/invite', {
         method: 'POST',
-        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole }),
+        body: JSON.stringify({ email: inviteEmail.trim(), role: inviteRole.trim() }),
       });
       const d = await res.json().catch(() => ({}));
       if (!res.ok) {
@@ -138,7 +163,7 @@ export default function Settings() {
     }
   }
 
-  async function changeRole(memberId: number, newRole: OrgRole) {
+  async function changeRole(memberId: number, newRole: string) {
     const res = await apiFetch(`/api/organization/members/${memberId}/role`, {
       method: 'PUT',
       body: JSON.stringify({ role: newRole }),
@@ -156,6 +181,43 @@ export default function Settings() {
       await loadTeam();
       await refreshUser();
     }
+  }
+
+  async function addCustomRole(e: FormEvent) {
+    e.preventDefault();
+    setRoleMsg('');
+    const trimmed = newRoleLabel.trim();
+    if (trimmed.length < 2) return;
+    setRoleSaving(true);
+    try {
+      const res = await apiFetch('/api/organization/custom-roles', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: trimmed, base_role: newRoleBase }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        setRoleMsg(typeof d.error === 'string' ? d.error : 'No se pudo crear el rol');
+        return;
+      }
+      setNewRoleLabel('');
+      setRoleMsg('Rol agregado.');
+      await loadTeam();
+    } finally {
+      setRoleSaving(false);
+    }
+  }
+
+  async function deleteCustomRole(id: number) {
+    if (!window.confirm('¿Eliminar este nombre de rol?')) return;
+    setRoleMsg('');
+    const res = await apiFetch(`/api/organization/custom-roles/${id}`, { method: 'DELETE' });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      setRoleMsg(typeof d.error === 'string' ? d.error : 'No se pudo eliminar');
+      return;
+    }
+    await loadTeam();
   }
 
   if (!organization || !canManageOrg) {
@@ -217,6 +279,111 @@ export default function Settings() {
             </button>
           </form>
         </section>
+
+        {role === 'owner' ? (
+          <section
+            style={{
+              background: ds.bgCard,
+              borderRadius: 14,
+              padding: '18px 20px',
+              marginBottom: 20,
+              border: `1px solid ${ds.borderCard}`,
+            }}
+          >
+            <h2 style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>
+              Nombres de roles
+            </h2>
+            <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.45 }}>
+              Crea etiquetas para tu equipo (por ejemplo «Ventas», «Logística»). Cada una hereda permisos de{' '}
+              <strong>administrador</strong> o <strong>miembro</strong>; luego podrás asignarlas al invitar o al
+              cambiar el rol de alguien.
+            </p>
+            <form onSubmit={addCustomRole} style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end', marginBottom: 16 }}>
+              <label style={{ ...labelStyle, flex: '1 1 200px', margin: 0 }}>
+                Nombre del rol
+                <input
+                  value={newRoleLabel}
+                  onChange={(e) => setNewRoleLabel(e.target.value)}
+                  placeholder="Ej. Coordinador de envíos"
+                  style={{ ...inputStyle, marginTop: 8 }}
+                  minLength={2}
+                  maxLength={120}
+                />
+              </label>
+              <label style={{ ...labelStyle, flex: '0 0 160px', margin: 0 }}>
+                Permisos como
+                <select
+                  value={newRoleBase}
+                  onChange={(e) => setNewRoleBase(e.target.value as 'admin' | 'member')}
+                  style={{ ...inputStyle, marginTop: 8 }}
+                >
+                  <option value="member">Miembro</option>
+                  <option value="admin">Administrador</option>
+                </select>
+              </label>
+              <button
+                type="submit"
+                disabled={roleSaving || newRoleLabel.trim().length < 2}
+                style={{
+                  ...primaryButton,
+                  margin: 0,
+                  width: 'auto',
+                  minWidth: 120,
+                  opacity: roleSaving || newRoleLabel.trim().length < 2 ? 0.7 : 1,
+                  cursor: roleSaving ? 'wait' : 'pointer',
+                }}
+              >
+                {roleSaving ? 'Guardando…' : 'Agregar rol'}
+              </button>
+            </form>
+            {roleMsg ? (
+              <p style={{ margin: '0 0 12px', fontSize: 12, color: roleMsg.includes('agregado') ? ds.successText : ds.dangerText }}>
+                {roleMsg}
+              </p>
+            ) : null}
+            {customRoles.length ? (
+              <ul style={{ margin: 0, padding: 0, listStyle: 'none' }}>
+                {customRoles.map((cr) => (
+                  <li
+                    key={cr.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 12,
+                      padding: '10px 0',
+                      borderTop: `1px solid ${ds.borderRow}`,
+                      fontSize: 13,
+                    }}
+                  >
+                    <span>
+                      <strong style={{ color: ds.textPrimary }}>{cr.label}</strong>
+                      <span style={{ color: ds.textMuted, marginLeft: 8 }}>
+                        · {cr.base_role === 'admin' ? 'permisos de administrador' : 'permisos de miembro'}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => void deleteCustomRole(cr.id)}
+                      style={{
+                        border: 'none',
+                        background: 'none',
+                        color: ds.dangerText,
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        fontSize: 12,
+                      }}
+                    >
+                      Eliminar
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p style={{ margin: 0, fontSize: 12, color: ds.textMuted }}>Aún no hay roles personalizados.</p>
+            )}
+          </section>
+        ) : null}
 
         {/* Equipo */}
         <section
@@ -324,7 +491,7 @@ export default function Settings() {
                         {role === 'owner' ? (
                           <select
                             value={m.role}
-                            onChange={(e) => void changeRole(m.id, e.target.value as OrgRole)}
+                            onChange={(e) => void changeRole(m.id, e.target.value)}
                             style={{
                               padding: '8px 12px',
                               borderRadius: 8,
@@ -334,12 +501,17 @@ export default function Settings() {
                               background: ds.bgCard,
                             }}
                           >
-                            <option value="owner">owner</option>
-                            <option value="admin">admin</option>
-                            <option value="member">member</option>
+                            <option value="owner">Propietario</option>
+                            <option value="admin">Administrador</option>
+                            <option value="member">Miembro</option>
+                            {customRoles.map((cr) => (
+                              <option key={cr.id} value={cr.slug}>
+                                {cr.label} ({cr.base_role === 'admin' ? 'admin' : 'miembro'})
+                              </option>
+                            ))}
                           </select>
                         ) : (
-                          <span style={{ textTransform: 'capitalize' }}>{m.role}</span>
+                          <span>{formatRoleLabel(m.role, customRoles)}</span>
                         )}
                       </td>
                       <td style={{ padding: '12px 16px' }}>
@@ -401,7 +573,7 @@ export default function Settings() {
                       <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{inv.email}</div>
                       <div style={{ fontSize: 10.5, color: ds.textHint }}>Invitación pendiente</div>
                     </td>
-                    <td style={{ padding: '12px 16px', textTransform: 'capitalize' }}>{inv.role}</td>
+                    <td style={{ padding: '12px 16px' }}>{formatRoleLabel(inv.role, customRoles)}</td>
                     <td style={{ padding: '12px 16px' }}>
                       <span
                         style={{
@@ -541,11 +713,16 @@ export default function Settings() {
                 Rol
                 <select
                   value={inviteRole}
-                  onChange={(e) => setInviteRole(e.target.value as 'admin' | 'member')}
+                  onChange={(e) => setInviteRole(e.target.value)}
                   style={{ ...inputStyle, marginTop: 8 }}
                 >
                   <option value="member">Miembro</option>
                   <option value="admin">Administrador</option>
+                  {customRoles.map((cr) => (
+                    <option key={cr.id} value={cr.slug}>
+                      {cr.label} ({cr.base_role === 'admin' ? 'como admin' : 'como miembro'})
+                    </option>
+                  ))}
                 </select>
               </label>
               {inviteErr && (

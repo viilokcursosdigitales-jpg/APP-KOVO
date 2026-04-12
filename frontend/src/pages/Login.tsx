@@ -54,10 +54,19 @@ export default function Login() {
         setError(typeof data.error === 'string' ? data.error : 'No se pudo iniciar sesión');
         return;
       }
+      const r = data.role as string;
+      const rt = data.role_tier as string | undefined;
+      const role_tier: SessionPayload['role_tier'] =
+        rt === 'owner' || rt === 'admin' || rt === 'member'
+          ? rt
+          : r === 'owner' || r === 'admin' || r === 'member'
+            ? r
+            : 'member';
       const session: SessionPayload = {
         user: data.user,
         organization: data.organization,
-        role: data.role,
+        role: r,
+        role_tier,
         limits: data.limits,
       };
       login(data.token, session);
