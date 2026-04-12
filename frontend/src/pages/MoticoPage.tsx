@@ -842,7 +842,8 @@ export default function MoticoPage() {
             <div
               style={{
                 width: 140,
-                height: 56,
+                minHeight: 56,
+                alignSelf: 'stretch',
                 borderRadius: 8,
                 border: `1px solid ${ds.borderCard}`,
                 overflow: 'hidden',
@@ -850,15 +851,21 @@ export default function MoticoPage() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                flexShrink: 0,
               }}
             >
-              <img src={logoDataUrl} alt="Logo Motico" style={{ maxWidth: '100%', maxHeight: '100%', objectFit: 'contain' }} />
+              <img
+                src={logoDataUrl}
+                alt="Logo Motico"
+                style={{ width: '100%', height: '100%', objectFit: 'contain', display: 'block' }}
+              />
             </div>
           ) : (
             <div
               style={{
                 width: 140,
-                height: 56,
+                minHeight: 56,
+                alignSelf: 'stretch',
                 borderRadius: 8,
                 border: `2px dashed ${ds.borderCard}`,
                 fontSize: 11,
@@ -866,6 +873,7 @@ export default function MoticoPage() {
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
+                flexShrink: 0,
               }}
             >
               Sin logo
