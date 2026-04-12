@@ -11,12 +11,14 @@ import {
   insightRowBg,
   type ProductMarketingTargets,
 } from './marketingTargetEval';
+import { formatMetaMoney } from './formatMetaMoney';
 import { resolveMetaDataIssue } from './metaDataIssues';
 
-export type MetaInsightPeriod = 'hoy' | '3d' | '7d' | '14d' | '30d' | 'custom';
+export type MetaInsightPeriod = 'hoy' | 'ayer' | '3d' | '7d' | '14d' | '30d' | 'custom';
 
 const PERIOD_LABELS: Record<MetaInsightPeriod, string> = {
   hoy: 'Hoy',
+  ayer: 'Ayer',
   '3d': 'Últimos 3 días',
   '7d': 'Últimos 7 días',
   '14d': 'Últimos 14 días',
@@ -28,14 +30,7 @@ function formatNumber(n: number): string {
   return new Intl.NumberFormat('es-ES').format(Math.round(n));
 }
 
-function formatMoney2(n: number): string {
-  return new Intl.NumberFormat('es-ES', {
-    style: 'currency',
-    currency: 'EUR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
-}
+const formatMoney2 = formatMetaMoney;
 
 function formatPct(n: number, decimals = 2): string {
   return `${n.toFixed(decimals)} %`;
@@ -335,7 +330,7 @@ export function MetaInsightsPanel({
     void load();
   }, [load]);
 
-  const periods: MetaInsightPeriod[] = ['hoy', '3d', '7d', '14d', '30d', 'custom'];
+  const periods: MetaInsightPeriod[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'custom'];
 
   const metricCards = [
     { label: 'Impresiones', value: formatNumber(displayTotals.impressions) },

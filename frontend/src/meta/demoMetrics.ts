@@ -1,10 +1,13 @@
 /** Demo data for Meta tabs (no API). */
 
-export type PeriodKey = 'hoy' | '3d' | '7d' | '14d' | '30d' | 'custom';
+import { formatMetaMoney } from './formatMetaMoney';
+
+export type PeriodKey = 'hoy' | 'ayer' | '3d' | '7d' | '14d' | '30d' | 'custom';
 export type ProductKey = 'all' | 'crema' | 'serum' | 'kit';
 
 export const PERIOD_LABELS: Record<PeriodKey, string> = {
   hoy: 'Hoy',
+  ayer: 'Ayer',
   '3d': 'Últimos 3 días',
   '7d': 'Últimos 7 días',
   '14d': 'Últimos 14 días',
@@ -22,6 +25,7 @@ export const PRODUCT_LABELS: Record<ProductKey, string> = {
 function periodFactor(p: PeriodKey): number {
   const map: Record<PeriodKey, number> = {
     hoy: 0.11,
+    ayer: 0.1,
     '3d': 0.32,
     '7d': 0.58,
     '14d': 0.78,
@@ -46,12 +50,7 @@ export function formatNumber(n: number): string {
 }
 
 export function formatMoney2(n: number): string {
-  return new Intl.NumberFormat('es-ES', {
-    style: 'currency',
-    currency: 'EUR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
+  return formatMetaMoney(n);
 }
 
 export function formatPct(n: number, decimals = 1): string {

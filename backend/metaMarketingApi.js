@@ -14,6 +14,7 @@ function normalizeActId(raw) {
 function datePresetFromDashboardPeriod(period) {
   const map = {
     hoy: 'today',
+    ayer: 'yesterday',
     '3d': 'last_3d',
     '7d': 'last_7d',
     '14d': 'last_14d',

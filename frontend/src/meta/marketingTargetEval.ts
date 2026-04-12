@@ -1,5 +1,7 @@
 /** Objetivos por producto (Shopify) para comparar con filas de Meta Insights. */
 
+import { formatMetaMoney } from './formatMetaMoney';
+
 export type ProductMarketingTargets = {
   cpm_target: number | null;
   ctr_target: number | null;
@@ -116,7 +118,7 @@ export function evaluateInsightAgainstTargets(
   if (t.cpm_target != null && Number.isFinite(t.cpm_target)) {
     if (m.cpm <= t.cpm_target) {
       cpmH = 'good';
-      passes.push(`CPM ≤ ${t.cpm_target.toFixed(2)} €`);
+      passes.push(`CPM ≤ ${formatMetaMoney(t.cpm_target)}`);
     } else {
       cpmH = 'bad';
       failures.push(TIP_CPM_BAD);
@@ -138,7 +140,7 @@ export function evaluateInsightAgainstTargets(
   if (t.cpc_target != null && Number.isFinite(t.cpc_target)) {
     if (m.cpc <= t.cpc_target) {
       cpcH = 'good';
-      passes.push(`CPC ≤ ${t.cpc_target.toFixed(2)} €`);
+      passes.push(`CPC ≤ ${formatMetaMoney(t.cpc_target)}`);
     } else {
       cpcH = 'bad';
       failures.push(TIP_CPC_BAD);
@@ -162,7 +164,7 @@ export function evaluateInsightAgainstTargets(
       cpaH = 'neutral';
     } else if (m.cpa <= t.cpa_target) {
       cpaH = 'good';
-      passes.push(`CPA ≤ ${t.cpa_target.toFixed(2)} €`);
+      passes.push(`CPA ≤ ${formatMetaMoney(t.cpa_target)}`);
     } else {
       cpaH = 'bad';
       failures.push(TIP_CPA_BAD);

@@ -191,7 +191,8 @@ export default function MarketingIndicatorsPage() {
       ) : null}
 
       <p style={{ margin: '0 0 16px', fontSize: 13, color: ds.textSecondary, maxWidth: 720, lineHeight: 1.5 }}>
-        CPM y CPC en €; CTR en % (igual que en Meta); ROAS en veces (p. ej. 2,5); CPA en €. Deja vacío lo que no quieras
+        CPM y CPC en COP (peso colombiano); CTR en % (igual que en Meta); ROAS en veces (p. ej. 2,5); CPA en COP. Deja
+        vacío lo que no quieras
         usar.{' '}
         <Link to="/meta-ads" style={{ color: ds.brand, fontWeight: 600 }}>
           Ir a Meta Ads
@@ -206,11 +207,11 @@ export default function MarketingIndicatorsPage() {
           <thead>
             <tr>
               <Th>Producto</Th>
-              <Th>CPM objetivo (€)</Th>
+              <Th>CPM objetivo (COP)</Th>
               <Th>CTR objetivo (%)</Th>
-              <Th>CPC objetivo (€)</Th>
+              <Th>CPC objetivo (COP)</Th>
               <Th>ROAS objetivo (×)</Th>
-              <Th>CPA objetivo (€)</Th>
+              <Th>CPA objetivo (COP)</Th>
               <Th>Acción</Th>
             </tr>
           </thead>

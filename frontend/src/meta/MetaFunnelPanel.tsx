@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { MetaDataIssueCard, MetaFetchErrorPanel, MetaLiveDataStrip } from './MetaApiStatusBanner';
+import { formatMetaMoney } from './formatMetaMoney';
 import { resolveMetaDataIssue } from './metaDataIssues';
 import { MetricPill } from '../design-system/MetricPill';
 import type { MetaInsightPeriod } from './MetaInsightsPanel';
 
 const PERIOD_LABELS: Record<MetaInsightPeriod, string> = {
   hoy: 'Hoy',
+  ayer: 'Ayer',
   '3d': 'Últimos 3 días',
   '7d': 'Últimos 7 días',
   '14d': 'Últimos 14 días',
@@ -19,14 +21,7 @@ function formatNumber(n: number): string {
   return new Intl.NumberFormat('es-ES').format(Math.round(n));
 }
 
-function formatMoney2(n: number): string {
-  return new Intl.NumberFormat('es-ES', {
-    style: 'currency',
-    currency: 'EUR',
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  }).format(n);
-}
+const formatMoney2 = formatMetaMoney;
 
 function formatPct(n: number, decimals = 2): string {
   return `${n.toFixed(decimals)} %`;
@@ -142,7 +137,7 @@ export function MetaFunnelPanel({
     void load();
   }, [load]);
 
-  const periods: MetaInsightPeriod[] = ['hoy', '3d', '7d', '14d', '30d', 'custom'];
+  const periods: MetaInsightPeriod[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'custom'];
   const n = stages.length;
   const maxP = Math.max(...stages.map((s) => s.people), 1);
   const maxW = 360;
