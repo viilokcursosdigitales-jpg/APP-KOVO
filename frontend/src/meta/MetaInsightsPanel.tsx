@@ -476,12 +476,12 @@ export function MetaInsightsPanel({
     { label: 'Impresiones', value: formatNumber(displayTotals.impressions) },
     { label: 'Clics', value: formatNumber(displayTotals.clicks) },
     { label: 'Compras', value: formatNumber(displayTotals.purchases) },
+    { label: 'CPA', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
     { label: 'Gasto', value: formatMoney2(displayTotals.spend) },
     { label: 'CPM', value: formatMoney2(displayTotals.cpm) },
     { label: 'CPC', value: formatMoney2(displayTotals.cpc) },
     { label: 'CTR', value: formatPct(displayTotals.ctr) },
     { label: 'ROAS', value: formatRoasMeta(displayTotals.roas) },
-    { label: 'CPA', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
   ];
 
   const levelTabs: { id: InsightLevel; label: string }[] = [
@@ -749,12 +749,12 @@ export function MetaInsightsPanel({
                 'Impresiones',
                 'Clics',
                 'Compras',
+                'CPA',
                 'Gasto',
                 'CPM',
                 'CTR',
                 'CPC',
                 'ROAS',
-                'CPA',
               ].map((h) => (
                 <th
                   key={h}
@@ -852,15 +852,15 @@ export function MetaInsightsPanel({
                     <td style={{ padding: '12px 16px' }}>{formatNumber(row.impressions)}</td>
                     <td style={{ padding: '12px 16px' }}>{formatNumber(row.clicks)}</td>
                     <td style={{ padding: '12px 16px' }}>{formatNumber(row.purchases)}</td>
+                    <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpa) }}>
+                      {row.purchases > 0 ? formatMoney2(row.cpa) : '—'}
+                    </td>
                     <td style={{ padding: '12px 16px' }}>{formatMoney2(row.spend)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpm) }}>{formatMoney2(row.cpm)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.ctr) }}>{formatPct(row.ctr)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpc) }}>{formatMoney2(row.cpc)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.roas) }}>
                       {formatRoasMeta(row.roas)}
-                    </td>
-                    <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpa) }}>
-                      {row.purchases > 0 ? formatMoney2(row.cpa) : '—'}
                     </td>
                   </tr>
                 );
