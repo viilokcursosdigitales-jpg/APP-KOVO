@@ -2216,7 +2216,7 @@ app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, 
     const sinceDay = minIso.slice(0, 10);
     const untilDay = maxIso.slice(0, 10);
 
-    if (sinceDay && untilDay && !hasProductFilter) {
+    if (sinceDay && untilDay) {
       try {
         const metaRow = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
         if (metaRow && String(metaRow.access_token || '').trim()) {

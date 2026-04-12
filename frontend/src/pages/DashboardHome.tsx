@@ -315,8 +315,10 @@ export default function DashboardHome() {
       </div>
 
       {productId.trim() ? (
-        <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 12, maxWidth: 560, lineHeight: 1.45 }}>
-          Con un producto concreto seleccionado no se muestran gasto publicitario ni ROAS (el gasto Meta es de toda la cuenta y las ventas están filtradas por producto).
+        <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 12, maxWidth: 640, lineHeight: 1.45 }}>
+          Con producto seleccionado, las ventas y pedidos son solo de ese artículo. El gasto Meta sigue siendo el total
+          de tus cuentas publicitarias en el rango de fechas; el ROAS muestra esas ventas filtradas divididas entre ese
+          gasto (útil como referencia si gran parte del gasto va a ese producto).
         </div>
       ) : null}
 
