@@ -616,33 +616,58 @@ export default function PedidosPage() {
                     gap: 10,
                   }}
                 >
-                  <select
-                    multiple
-                    size={Math.min(8, Math.max(3, cityOptions.length))}
-                    value={selectedCityKeys}
-                    onChange={(e) =>
-                      setSelectedCityKeys(Array.from(e.target.selectedOptions, (o) => o.value))
-                    }
-                    aria-label="Filtrar por ciudad"
+                  <p style={{ margin: 0, fontSize: 10, color: ds.textMuted, lineHeight: 1.4 }}>
+                    Marca una o varias ciudades; la tabla solo muestra pedidos de las elegidas. Sin ninguna
+                    marcada se muestran todas.
+                  </p>
+                  <div
+                    role="group"
+                    aria-label="Ciudades del filtro"
                     style={{
-                      width: '100%',
-                      padding: 8,
+                      maxHeight: 220,
+                      overflowY: 'auto',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: 4,
+                      padding: 4,
                       borderRadius: 8,
                       border: `1px solid ${ds.borderCard}`,
                       background: ds.bgSubtle,
-                      color: ds.textPrimary,
-                      fontSize: 12,
                     }}
                   >
-                    {cityOptions.map((c) => (
-                      <option key={c.value} value={c.value}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                  <p style={{ margin: 0, fontSize: 10, color: ds.textMuted, lineHeight: 1.4 }}>
-                    Mantén Ctrl (Windows) o ⌘ (Mac) y haz clic para elegir varias ciudades.
-                  </p>
+                    {cityOptions.map((c) => {
+                      const on = selectedCityKeys.includes(c.value);
+                      return (
+                        <label
+                          key={c.value}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 8,
+                            padding: '6px 8px',
+                            borderRadius: 6,
+                            cursor: 'pointer',
+                            background: on ? ds.brandBg : 'transparent',
+                            fontSize: 12,
+                            color: on ? ds.brand : ds.textPrimary,
+                            fontWeight: on ? 600 : 500,
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={on}
+                            onChange={() =>
+                              setSelectedCityKeys((prev) =>
+                                prev.includes(c.value) ? prev.filter((x) => x !== c.value) : [...prev, c.value],
+                              )
+                            }
+                            style={{ accentColor: ds.brand, flexShrink: 0, width: 16, height: 16 }}
+                          />
+                          {c.label}
+                        </label>
+                      );
+                    })}
+                  </div>
                   <button
                     type="button"
                     onClick={() => setSelectedCityKeys([])}
