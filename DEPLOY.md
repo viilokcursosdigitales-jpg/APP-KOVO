@@ -147,6 +147,13 @@ Si aun así separas el front en **Vercel** (repositorio GitHub/GitLab, etc.):
 2. En **`backend/.env` del VPS**, incluye en **`CORS_ORIGINS`** el origen del front en Vercel, por ejemplo `https://tu-app.vercel.app`.
 3. **`JWT_SECRET`** y **`DATABASE_URL`** siguen **solo en el servidor** donde corre Node: **no** hace falta poner `JWT_SECRET` ni la URI de Postgres en Vercel. El front en Vercel solo necesita `VITE_API_URL` hacia tu API.
 
+### Shopify OAuth: callback, CORS y Render
+
+- **`GET /api/shopify/callback`** es **público** (sin JWT): Shopify redirige el navegador ahí. **CORS no bloquea** esa petición (no es un `fetch` con preflight desde el admin de Shopify).
+- **`CORS_ORIGINS`** sí importa para los **`fetch`** del front (login, “Conectar Shopify”, etc.). Si **`SHOPIFY_APP_URL`** o **`SHOPIFY_REDIRECT_URI`** son URLs `https://…`, el backend **añade automáticamente** el **origen** de esa URL a los orígenes CORS permitidos (además de `CORS_ORIGINS` y localhost). Conviene seguir listando explícitamente el dominio del front (p. ej. `https://kovo.services`) en **`CORS_ORIGINS`** si ahí se sirve el SPA.
+- **Sitio estático + API en otro host (p. ej. Render Static + Web Service):** si `https://kovo.services` solo sirve archivos estáticos, **`https://kovo.services/api/shopify/callback` no llegará a Node**. Registra en Shopify Partner la URL de callback del **servicio donde corre Express** (p. ej. `https://tu-servicio.onrender.com/api/shopify/callback`) y define **`SHOPIFY_REDIRECT_URI`** igual. Usa **`SHOPIFY_APP_URL=https://kovo.services`** (u otro origen del front) para que, tras el OAuth, el redirect final vaya a `/canales` en el dominio correcto.
+- Evita reglas de redirect del CDN/proxy que capturen **`/api/*`** y las manden al bucket estático en lugar del proceso Node.
+
 ---
 
 ## 6. Verificación en producción
@@ -168,7 +175,7 @@ Si aun así separas el front en **Vercel** (repositorio GitHub/GitLab, etc.):
 
 ## 8. Checklist rápido (salir a producción)
 
-1. **`backend/.env`:** `DATABASE_URL`, `JWT_SECRET` fuerte, `PORT`/`HOST=0.0.0.0`, `CORS_ORIGINS` con cada origen HTTPS del front (sin barra final), `TRUST_PROXY=1` detrás de Nginx/Cloudflare.
+1. **`backend/.env`:** `DATABASE_URL`, `JWT_SECRET` fuerte, `PORT`/`HOST=0.0.0.0`, `CORS_ORIGINS` con cada origen HTTPS del front (sin barra final; `SHOPIFY_APP_URL`/`SHOPIFY_REDIRECT_URI` https añaden su origen automáticamente), `TRUST_PROXY=1` detrás de Nginx/Cloudflare.
 2. **Build:** en la raíz del repo, `npm install --prefix frontend`, `npm install --prefix backend`, `npm run build` (genera `frontend/dist`; Node lo sirve al arrancar).
 3. **Proceso:** `pm2 start deploy/ecosystem.config.cjs`, `pm2 save`, `pm2 startup` (o prueba puntual con `npm start` desde la raíz).
 4. **Nginx:** sitio con `proxy_pass` al mismo puerto que `PORT` (3000 por defecto); Certbot para HTTPS.
@@ -181,7 +188,8 @@ Si aun así separas el front en **Vercel** (repositorio GitHub/GitLab, etc.):
 
 | Síntoma | Qué revisar |
 |--------|--------------|
-| CORS en el navegador | `CORS_ORIGINS` debe incluir el **origen exacto** del front (https + host + sin path). |
+| CORS en el navegador | `CORS_ORIGINS` debe incluir el **origen exacto** del front (https + host + sin path). También se añade el origen de `SHOPIFY_APP_URL` / `SHOPIFY_REDIRECT_URI` si son URLs `https://…`. |
+| Shopify OAuth: `?shopify=error` y en el servidor no hay logs del callback | Suele ser **callback que no llega a Node** (dominio solo estático) o **`SHOPIFY_REDIRECT_URI`** distinta de la URL en Partner Dashboard. Prueba `curl -sI "https://TU_HOST/api/shopify/callback"` desde fuera: debe responder el backend (302/400), no el HTML del SPA. |
 | 502 Bad Gateway | Node caído (`pm2 status`), puerto distinto de `proxy_pass`, firewall. |
 | 404 al recargar una ruta | Nginx debe proxy a Node (esta app sirve `index.html` para el SPA); no sirvas solo archivos estáticos sin fallback. |
 | IP incorrecta del cliente | `TRUST_PROXY=1` y cabeceras `X-Forwarded-*` en Nginx (ya en la plantilla). |

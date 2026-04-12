@@ -49,14 +49,24 @@ const pool = createPool();
 function parseCorsOrigins() {
   const devDefaults = ['http://localhost:5173', 'http://127.0.0.1:5173'];
   const raw = process.env.CORS_ORIGINS;
-  if (!raw || !String(raw).trim()) {
-    return devDefaults;
+  const fromEnv =
+    raw && String(raw).trim()
+      ? String(raw)
+          .split(',')
+          .map((s) => s.trim())
+          .filter(Boolean)
+      : [];
+  const fromShopifyEnv = [];
+  for (const u of [process.env.SHOPIFY_APP_URL, process.env.SHOPIFY_REDIRECT_URI]) {
+    const s = String(u || '').trim();
+    if (!s.startsWith('http')) continue;
+    try {
+      fromShopifyEnv.push(new URL(s).origin);
+    } catch {
+      /* ignore */
+    }
   }
-  const fromEnv = String(raw)
-    .split(',')
-    .map((s) => s.trim())
-    .filter(Boolean);
-  return [...new Set([...devDefaults, ...fromEnv])];
+  return [...new Set([...devDefaults, ...fromEnv, ...fromShopifyEnv])];
 }
 
 const app = express();
@@ -1359,37 +1369,119 @@ function shopifyMissingEnvKeys() {
   return missing;
 }
 
-app.get('/api/shopify/auth', verifyToken, scopeToOrganization, async (req, res) => {
+const SHOPIFY_OAUTH_LAUNCH_PURPOSE = 'shopify_oauth_launch';
+
+function shopifyOAuthEnvErrorJson() {
+  const missingEnvKeys = shopifyMissingEnvKeys();
+  console.warn('[shopify] OAuth no configurado. Faltan variables:', missingEnvKeys.join(', '));
+  return {
+    error: 'Shopify OAuth no está configurado en el servidor',
+    code: 'shopify_oauth_env',
+    hint:
+      'En el servicio que ejecuta el backend (Render, VPS, etc.) define SHOPIFY_API_KEY, SHOPIFY_API_SECRET y SHOPIFY_APP_URL=https://kovo.services. Si no pones SHOPIFY_REDIRECT_URI, debe poder deducirse de SHOPIFY_APP_URL.',
+    missingEnvKeys,
+  };
+}
+
+function redirectShopifyLaunchError(res) {
+  const b = (SHOPIFY_APP_URL || '').replace(/\/$/, '');
+  const loc = b ? `${b}/canales?shopify=error` : '/canales?shopify=error';
+  return res.redirect(302, loc);
+}
+
+/** Inserta state OAuth y devuelve la URL de autorización en Shopify (dominio myshopify.com). */
+async function buildShopifyAuthorizeUrlForOrg(organizationId, shop) {
+  await cleanupShopifyOauthStates();
+  const state = crypto.randomUUID();
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
+  await pool.query(
+    `INSERT INTO shopify_oauth_states (state, organization_id, shop_domain, expires_at) VALUES ($1, $2, $3, $4)`,
+    [state, organizationId, shop, expiresAt],
+  );
+  const params = new URLSearchParams({
+    client_id: SHOPIFY_API_KEY,
+    scope: SHOPIFY_SCOPES,
+    redirect_uri: SHOPIFY_REDIRECT_URI,
+    state,
+  });
+  return `https://${shop}/admin/oauth/authorize?${params.toString()}`;
+}
+
+/**
+ * Paso 1 (con JWT): el front obtiene una ruta interna; luego hace window.location = apiUrl(launchPath).
+ * Así el navegador hace un GET completo a tu API y recibe el 302 a Shopify (flujo OAuth estándar).
+ */
+app.get('/api/shopify/auth/start', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     if (!shopifyConfigured()) {
-      const missingEnvKeys = shopifyMissingEnvKeys();
-      console.warn('[shopify] OAuth no configurado. Faltan variables:', missingEnvKeys.join(', '));
-      return res.status(503).json({
-        error: 'Shopify OAuth no está configurado en el servidor',
-        code: 'shopify_oauth_env',
-        hint:
-          'En el servicio que ejecuta el backend (Render, VPS, etc.) define SHOPIFY_API_KEY, SHOPIFY_API_SECRET y SHOPIFY_APP_URL=https://kovo.services. Si no pones SHOPIFY_REDIRECT_URI, debe poder deducirse de SHOPIFY_APP_URL.',
-        missingEnvKeys,
-      });
+      return res.status(503).json(shopifyOAuthEnvErrorJson());
     }
     const shop = sanitizeShopDomain(req.query.shop);
     if (!shop) {
       return res.status(400).json({ error: 'Dominio inválido. Debe ser algo como mitienda.myshopify.com' });
     }
-    await cleanupShopifyOauthStates();
-    const state = crypto.randomUUID();
-    const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
-    await pool.query(
-      `INSERT INTO shopify_oauth_states (state, organization_id, shop_domain, expires_at) VALUES ($1, $2, $3, $4)`,
-      [state, req.organizationId, shop, expiresAt],
+    const launchToken = jwt.sign(
+      { purpose: SHOPIFY_OAUTH_LAUNCH_PURPOSE, organizationId: req.organizationId, shop },
+      JWT_SECRET,
+      { expiresIn: '10m' },
     );
-    const params = new URLSearchParams({
-      client_id: SHOPIFY_API_KEY,
-      scope: SHOPIFY_SCOPES,
-      redirect_uri: SHOPIFY_REDIRECT_URI,
-      state,
-    });
-    const authorizeUrl = `https://${shop}/admin/oauth/authorize?${params.toString()}`;
+    const launchPath = `/api/shopify/auth/go?launch=${encodeURIComponent(launchToken)}`;
+    return res.json({ launchPath });
+  } catch (e) {
+    console.error('[shopify auth/start]', e);
+    res.status(500).json({ error: 'Error al iniciar OAuth Shopify' });
+  }
+});
+
+/**
+ * Paso 2 (público): valida el JWT de un solo uso de corta duración y redirige a Shopify.
+ * No usa Bearer: debe poder abrirse con navegación top-level.
+ */
+app.get('/api/shopify/auth/go', async (req, res) => {
+  try {
+    const token = req.query.launch;
+    if (!token || typeof token !== 'string') {
+      return redirectShopifyLaunchError(res);
+    }
+    let decoded;
+    try {
+      decoded = jwt.verify(token, JWT_SECRET);
+    } catch {
+      return redirectShopifyLaunchError(res);
+    }
+    if (decoded.purpose !== SHOPIFY_OAUTH_LAUNCH_PURPOSE) {
+      return redirectShopifyLaunchError(res);
+    }
+    const orgId = Number(decoded.organizationId);
+    if (!Number.isFinite(orgId) || orgId < 1) {
+      return redirectShopifyLaunchError(res);
+    }
+    const shop = sanitizeShopDomain(decoded.shop);
+    if (!shop) {
+      return redirectShopifyLaunchError(res);
+    }
+    if (!shopifyConfigured()) {
+      return redirectShopifyLaunchError(res);
+    }
+    const authorizeUrl = await buildShopifyAuthorizeUrlForOrg(orgId, shop);
+    return res.redirect(302, authorizeUrl);
+  } catch (e) {
+    console.error('[shopify auth/go]', e);
+    return redirectShopifyLaunchError(res);
+  }
+});
+
+/** Inicio OAuth con sesión (Bearer). Con Accept: application/json devuelve authorizeUrl; si no, 302 directo a Shopify. */
+app.get('/api/shopify/auth', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    if (!shopifyConfigured()) {
+      return res.status(503).json(shopifyOAuthEnvErrorJson());
+    }
+    const shop = sanitizeShopDomain(req.query.shop);
+    if (!shop) {
+      return res.status(400).json({ error: 'Dominio inválido. Debe ser algo como mitienda.myshopify.com' });
+    }
+    const authorizeUrl = await buildShopifyAuthorizeUrlForOrg(req.organizationId, shop);
     const wantsJson = (req.get('accept') || '').includes('application/json');
     if (wantsJson) {
       return res.json({ authorizeUrl });
@@ -1401,6 +1493,7 @@ app.get('/api/shopify/auth', verifyToken, scopeToOrganization, async (req, res) 
   }
 });
 
+/** Callback OAuth de Shopify: sin verifyToken (Shopify redirige el navegador sin Bearer). */
 app.get('/api/shopify/callback', async (req, res) => {
   const base = SHOPIFY_APP_URL || '';
   const redirectErr = () => res.redirect(302, `${base}/canales?shopify=error`);

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
-import { apiFetch } from '../auth/api';
+import { apiFetch, apiUrl } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { IconMegaphone } from '../design-system/icons';
 import { PageHeader } from '../design-system/PageHeader';
@@ -86,11 +86,11 @@ export default function CanalesPage() {
     setShopifyFormError('');
     setShopifyActionLoading(true);
     try {
-      const res = await apiFetch(`/api/shopify/auth?shop=${encodeURIComponent(trimmed)}`, {
-        headers: { Accept: 'application/json' },
-      });
+      // 1) JWT en fetch (solo JSON). 2) Navegación top-level a /auth/go → el servidor hace 302 a Shopify.
+      // Así el callback de Shopify siempre es una redirección del navegador, no depende de authorizeUrl en fetch.
+      const res = await apiFetch(`/api/shopify/auth/start?shop=${encodeURIComponent(trimmed)}`);
       const data = (await res.json().catch(() => ({}))) as {
-        authorizeUrl?: string;
+        launchPath?: string;
         error?: string;
         hint?: string;
         missingEnvKeys?: string[];
@@ -102,8 +102,8 @@ export default function CanalesPage() {
         setShopifyFormError(err);
         return;
       }
-      if (data.authorizeUrl) {
-        window.location.href = data.authorizeUrl;
+      if (data.launchPath) {
+        window.location.href = apiUrl(data.launchPath);
         return;
       }
       setShopifyFormError('Respuesta inesperada del servidor');
