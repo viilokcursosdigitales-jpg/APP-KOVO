@@ -15,6 +15,19 @@ export type MoticoLineItemRow = {
   price: string;
 };
 
+/** Datos de una guía (una franja horizontal por pedido). */
+export type MoticoGuideLabelData = {
+  nombre: string;
+  direccion: string;
+  ciudad: string;
+  celular: string;
+  valorCobrar: string;
+  observacion: string;
+  orderRef: string;
+};
+
+export const GUIAS_POR_HOJA = 5;
+
 function esc(s: string) {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -23,127 +36,233 @@ function esc(s: string) {
     .replace(/"/g, '&quot;');
 }
 
-function buildPrintHtml(opts: {
-  logoDataUrl: string | null;
+function chunk<T>(arr: T[], size: number): T[][] {
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
+
+function logoCellHtml(logoDataUrl: string | null): string {
+  if (logoDataUrl) {
+    return `<img class="guide-logo-img" src="${String(logoDataUrl).replace(/"/g, '&quot;')}" alt="" />`;
+  }
+  return '<div class="guide-logo-fallback">LOGO</div>';
+}
+
+function oneStripHtml(logoDataUrl: string | null, row: MoticoGuideLabelData): string {
+  return `
+  <div class="guide-strip">
+    <div class="guide-logo-cell">${logoCellHtml(logoDataUrl)}</div>
+    <table class="guide-table" aria-label="Guía ${esc(row.orderRef)}">
+      <tbody>
+        <tr>
+          <th scope="row">NOMBRE :</th>
+          <td>${esc(row.nombre)}</td>
+        </tr>
+        <tr>
+          <th scope="row">DIRECCION:</th>
+          <td>${esc(row.direccion)}</td>
+        </tr>
+        <tr>
+          <th scope="row">CIUDAD:</th>
+          <td>${esc(row.ciudad)}</td>
+        </tr>
+        <tr>
+          <th scope="row">CELULAR:</th>
+          <td>${esc(row.celular)}</td>
+        </tr>
+        <tr>
+          <th scope="row">VALOR A COBRAR :</th>
+          <td>${esc(row.valorCobrar)}</td>
+        </tr>
+        <tr>
+          <th scope="row" class="th-obs"><strong>Observación</strong></th>
+          <td>${esc(row.observacion)}</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>`;
+}
+
+/**
+ * Formato tipo “$55.000” para COP; resto con Intl estándar.
+ */
+export function formatValorCobrarDisplay(amount: number, currency: string): string {
+  if (!Number.isFinite(amount)) return '—';
+  const c = String(currency || '').toUpperCase();
+  if (c === 'COP') {
+    return `$${new Intl.NumberFormat('es-CO', {
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(Math.round(amount))}`;
+  }
+  try {
+    return new Intl.NumberFormat('es-CO', { style: 'currency', currency: c.length === 3 ? c : 'USD' }).format(amount);
+  } catch {
+    return `${amount.toFixed(2)} ${currency}`;
+  }
+}
+
+/** Texto tipo “1 BODY CALI, 2 OTRO” en mayúsculas. */
+export function buildObservacionLine(
+  lineItems: MoticoLineItemRow[],
+  fallbackTitle: string,
+  fallbackQty: number,
+): string {
+  if (lineItems.length) {
+    return lineItems
+      .map((li) => `${li.quantity} ${li.title}`.trim())
+      .join(', ')
+      .toUpperCase();
+  }
+  return `${fallbackQty} ${fallbackTitle}`.trim().toUpperCase();
+}
+
+export function buildMoticoGuideLabelData(opts: {
   orderName: string;
   client: string;
-  email: string;
-  createdAt: string;
-  displayTotal: string;
-  currency: string;
   shipping: MoticoShippingAddress | null;
   lineItems: MoticoLineItemRow[];
-  shopDomain: string | null;
-  shopifyOrderId: number;
-}): string {
-  const addr = opts.shipping;
-  let envioCol = '';
-  if (addr) {
-    envioCol = `
-      <div class="box">
-        <div class="box-title">Envío</div>
-        <p><strong>${esc(addr.name)}</strong></p>
-        <p>${esc(addr.address1)}${addr.address2 ? `<br/>${esc(addr.address2)}` : ''}</p>
-        <p>${esc([addr.city, addr.province, addr.zip].filter(Boolean).join(', '))}</p>
-        <p>${esc(addr.country || '')}</p>
-        ${addr.phone ? `<p>Tel: ${esc(addr.phone)}</p>` : ''}
-      </div>`;
-  } else {
-    envioCol = `<div class="box"><div class="box-title">Envío</div><p class="muted">Sin dirección en Shopify.</p></div>`;
-  }
+  totalAmount: number;
+  currency: string;
+  fallbackProductSummary: string;
+  defaultQuantity: number;
+}): MoticoGuideLabelData {
+  const ship = opts.shipping;
+  const nombre = (ship?.name && ship.name.trim()) || opts.client || '—';
+  const dirParts = [ship?.address1, ship?.address2].filter((x) => String(x || '').trim());
+  const direccion = dirParts.join(' ').trim() || '—';
+  const ciudadRaw = ship?.city || ship?.province || '';
+  const ciudad = ciudadRaw ? ciudadRaw.toUpperCase() : '—';
+  const celular = (ship?.phone && String(ship.phone).trim()) || '—';
+  const valorCobrar = formatValorCobrarDisplay(opts.totalAmount, opts.currency);
+  const observacion = buildObservacionLine(opts.lineItems, opts.fallbackProductSummary, opts.defaultQuantity);
+  return {
+    nombre,
+    direccion,
+    ciudad,
+    celular,
+    valorCobrar,
+    observacion,
+    orderRef: opts.orderName,
+  };
+}
 
-  const rows = opts.lineItems.length
-    ? opts.lineItems
-        .map(
-          (li) =>
-            `<tr><td>${esc(li.title)}</td><td class="num">${li.quantity}</td><td class="num">${esc(li.price)}</td></tr>`,
-        )
-        .join('')
-    : '<tr><td colspan="3" class="muted">—</td></tr>';
-
-  const logoHtml = opts.logoDataUrl
-    ? `<img class="logo" src="${String(opts.logoDataUrl).replace(/"/g, '&quot;')}" alt="Logo" />`
-    : '<div class="logo-placeholder">Logo</div>';
+function buildBatchPrintDocument(logoDataUrl: string | null, labels: MoticoGuideLabelData[]): string {
+  const pages = chunk(labels, GUIAS_POR_HOJA);
+  const pagesHtml = pages
+    .map((pageRows) => {
+      const strips = pageRows.map((row) => oneStripHtml(logoDataUrl, row)).join('\n');
+      return `<section class="print-page">${strips}</section>`;
+    })
+    .join('\n');
 
   return `<!DOCTYPE html>
 <html lang="es">
 <head>
   <meta charset="utf-8"/>
-  <title>Guía ${esc(opts.orderName)}</title>
+  <title>Guías Motico</title>
   <style>
-    @page { size: letter; margin: 0.55in; }
+    @page { size: letter; margin: 0.22in; }
     * { box-sizing: border-box; }
-    body {
-      font-family: system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
-      font-size: 11pt;
-      color: #111;
+    html, body {
       margin: 0;
       padding: 0;
+      font-family: Arial, Helvetica, "Segoe UI", sans-serif;
+      color: #000;
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
     }
-    .sheet { max-width: 7.4in; margin: 0 auto; }
-    .header { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; border-bottom: 2px solid #222; padding-bottom: 14px; margin-bottom: 16px; }
-    .logo { max-height: 72px; max-width: 220px; object-fit: contain; }
-    .logo-placeholder {
-      width: 160px; height: 56px; border: 2px dashed #ccc; display: flex; align-items: center; justify-content: center;
-      font-size: 10pt; color: #999; border-radius: 6px;
+    .print-page {
+      width: 100%;
+      display: flex;
+      flex-direction: column;
+      gap: 0.08in;
+      justify-content: flex-start;
+      page-break-after: always;
+      page-break-inside: avoid;
     }
-    h1 { font-size: 16pt; margin: 0 0 4px 0; }
-    .muted { color: #666; font-size: 10pt; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
-    .box { border: 1px solid #ddd; border-radius: 8px; padding: 10px 12px; }
-    .box-title { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.06em; color: #666; margin-bottom: 6px; font-weight: 700; }
-    .box p { margin: 2px 0; line-height: 1.35; }
-    table { width: 100%; border-collapse: collapse; margin-top: 8px; }
-    th, td { border-bottom: 1px solid #e5e5e5; padding: 8px 6px; text-align: left; font-size: 10pt; }
-    th { font-size: 9pt; text-transform: uppercase; letter-spacing: 0.04em; color: #555; }
-    .num { text-align: right; }
-    .total { margin-top: 14px; font-size: 13pt; font-weight: 700; text-align: right; }
-    .footer { margin-top: 22px; padding-top: 10px; border-top: 1px solid #ddd; font-size: 9pt; color: #666; }
-    .order-id { font-family: ui-monospace, monospace; font-size: 10pt; }
+    .print-page:last-of-type {
+      page-break-after: auto;
+    }
+    .guide-strip {
+      flex: 0 0 auto;
+      height: 1.88in;
+      display: flex;
+      flex-direction: row;
+      align-items: stretch;
+      border: 1px solid #000;
+      page-break-inside: avoid;
+    }
+    .guide-logo-cell {
+      flex: 0 0 18%;
+      min-width: 0.95in;
+      max-width: 1.35in;
+      border-right: 1px solid #000;
+      background: #e8f4fc;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px;
+    }
+    .guide-logo-img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+    }
+    .guide-logo-fallback {
+      font-size: 8pt;
+      font-weight: 700;
+      color: #64748b;
+    }
+    .guide-table {
+      flex: 1 1 auto;
+      width: 100%;
+      border-collapse: collapse;
+      table-layout: fixed;
+      font-size: 8.5pt;
+      line-height: 1.22;
+    }
+    .guide-table th,
+    .guide-table td {
+      border-bottom: 1px solid #000;
+      padding: 3px 6px;
+      vertical-align: top;
+      word-wrap: break-word;
+    }
+    .guide-table tr:last-child th,
+    .guide-table tr:last-child td {
+      border-bottom: none;
+    }
+    .guide-table th {
+      width: 28%;
+      border-right: 1px solid #000;
+      text-align: left;
+      font-weight: 400;
+      text-transform: uppercase;
+    }
+    .guide-table .th-obs {
+      font-weight: 700;
+    }
+    .guide-table td {
+      width: 72%;
+    }
   </style>
 </head>
 <body>
-  <div class="sheet">
-    <div class="header">
-      <div>${logoHtml}</div>
-      <div style="text-align:right">
-        <h1>Guía de envío · Motico</h1>
-        <div class="order-id">${esc(opts.orderName)}</div>
-        <div class="muted">Pedido Shopify #${opts.shopifyOrderId}</div>
-      </div>
-    </div>
-    <div class="grid">
-      <div class="box">
-        <div class="box-title">Cliente</div>
-        <p><strong>${esc(opts.client)}</strong></p>
-        <p>${esc(opts.email)}</p>
-        <p class="muted">${esc(opts.createdAt)}</p>
-      </div>
-      ${envioCol}
-    </div>
-    <div class="box">
-      <div class="box-title">Productos</div>
-      <table>
-        <thead><tr><th>Descripción</th><th class="num">Cant.</th><th class="num">P. unit.</th></tr></thead>
-        <tbody>${rows}</tbody>
-      </table>
-      <div class="total">Total: ${esc(opts.displayTotal)} ${esc(opts.currency)}</div>
-    </div>
-    <div class="footer">
-      ${opts.shopDomain ? `Tienda: ${esc(opts.shopDomain)} · ` : ''}
-      Generado desde KOVO · Hoja carta (Letter).
-    </div>
-  </div>
-  <script>window.onload=function(){window.print();};</script>
+${pagesHtml}
+<script>window.onload=function(){window.print();};</script>
 </body>
 </html>`;
 }
 
-export function openMoticoGuidePrint(opts: Parameters<typeof buildPrintHtml>[0]): boolean {
-  const w = window.open('', '_blank', 'noopener,noreferrer,width=900,height=1200');
+/** Abre ventana de impresión con N guías, máximo ${GUIAS_POR_HOJA} por hoja carta. */
+export function openMoticoGuidesBatchPrint(logoDataUrl: string | null, labels: MoticoGuideLabelData[]): boolean {
+  if (!labels.length) return false;
+  const w = window.open('', '_blank', 'noopener,noreferrer,width=980,height=1200');
   if (!w) return false;
   w.document.open();
-  w.document.write(buildPrintHtml(opts));
+  w.document.write(buildBatchPrintDocument(logoDataUrl, labels));
   w.document.close();
   return true;
 }

@@ -7,7 +7,14 @@ import { IconTruck } from '../design-system/icons';
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
-import { openMoticoGuidePrint, type MoticoLineItemRow, type MoticoShippingAddress } from '../utils/moticoPrintGuide';
+import {
+  buildMoticoGuideLabelData,
+  GUIAS_POR_HOJA,
+  openMoticoGuidesBatchPrint,
+  type MoticoGuideLabelData,
+  type MoticoLineItemRow,
+  type MoticoShippingAddress,
+} from '../utils/moticoPrintGuide';
 
 const POLL_MS = 25_000;
 const SAVE_DEBOUNCE_MS = 500;
@@ -155,7 +162,9 @@ export default function MoticoPage() {
   const [error, setError] = useState('');
   const [syncError, setSyncError] = useState('');
   const [guideHint, setGuideHint] = useState('');
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  const headerSelectRef = useRef<HTMLInputElement>(null);
   const [refreshing, setRefreshing] = useState(false);
 
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
@@ -197,6 +206,23 @@ export default function MoticoPage() {
     if (!statusFilter) return orders;
     return orders.filter((o) => o.motico_status === statusFilter);
   }, [orders, statusFilter]);
+
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+
+  useEffect(() => {
+    setSelectedIds((ids) => ids.filter((id) => orders.some((o) => o.id === id)));
+  }, [orders]);
+
+  const allVisibleSelected =
+    filteredOrders.length > 0 && filteredOrders.every((o) => selectedSet.has(o.id));
+
+  useEffect(() => {
+    const el = headerSelectRef.current;
+    if (!el) return;
+    const vis = filteredOrders;
+    const nSel = vis.filter((o) => selectedSet.has(o.id)).length;
+    el.indeterminate = nSel > 0 && nSel < vis.length;
+  }, [filteredOrders, selectedSet]);
 
   const loadMoticoSettings = useCallback(async () => {
     try {
@@ -378,47 +404,82 @@ export default function MoticoPage() {
       ? qtyDraft[o.id]!
       : String(o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity ?? 0);
 
-  const runGuidePrint = useCallback(
-    (o: MoticoOrderRow) => {
-      const totalStr = String(o.price_override != null ? o.price_override : o.total);
-      const displayTotal = formatMoneyFromString(totalStr, o.currency);
+  const buildLabelFromOrder = useCallback(
+    (o: MoticoOrderRow): MoticoGuideLabelData => {
       const lineItems: MoticoLineItemRow[] = (o.lineItemsDetail || []).map((li, idx) => {
         if (idx === 0 && o.quantity_override != null) {
           return { ...li, quantity: o.quantity_override };
         }
         return li;
       });
-      openMoticoGuidePrint({
-        logoDataUrl,
+      const totalStr = String(o.price_override != null ? o.price_override : o.total);
+      const totalAmount = Number.parseFloat(totalStr);
+      return buildMoticoGuideLabelData({
         orderName: o.orderName,
         client: o.client,
-        email: o.email,
-        createdAt: formatDate(o.createdAt),
-        displayTotal,
-        currency: o.currency || '',
         shipping: o.shippingAddress,
-        lineItems: lineItems.length ? lineItems : [{ title: summarizeProducts(o.productIds), quantity: o.defaultQuantity, price: '—' }],
-        shopDomain,
-        shopifyOrderId: o.id,
+        lineItems: lineItems.length
+          ? lineItems
+          : [{ title: summarizeProducts(o.productIds), quantity: o.defaultQuantity, price: '' }],
+        totalAmount: Number.isFinite(totalAmount) ? totalAmount : 0,
+        currency: o.currency,
+        fallbackProductSummary: summarizeProducts(o.productIds),
+        defaultQuantity: o.quantity_override ?? o.defaultQuantity,
       });
     },
-    [logoDataUrl, shopDomain, summarizeProducts],
+    [summarizeProducts],
   );
+
+  const toggleSelectOrder = useCallback((id: number) => {
+    setSelectedIds((prev) => {
+      const s = new Set(prev);
+      if (s.has(id)) s.delete(id);
+      else s.add(id);
+      return [...s];
+    });
+  }, []);
+
+  const toggleSelectAllVisible = useCallback(() => {
+    const vis = filteredOrders;
+    if (!vis.length) return;
+    const allSelected = vis.every((o) => selectedSet.has(o.id));
+    if (allSelected) {
+      const visIds = new Set(vis.map((o) => o.id));
+      setSelectedIds((prev) => prev.filter((id) => !visIds.has(id)));
+    } else {
+      setSelectedIds((prev) => {
+        const s = new Set(prev);
+        for (const o of vis) s.add(o.id);
+        return [...s];
+      });
+    }
+  }, [filteredOrders, selectedSet]);
+
+  const clearSelection = useCallback(() => setSelectedIds([]), []);
+
+  const handlePrintSelected = useCallback(() => {
+    setGuideHint('');
+    if (!logoDataUrl) {
+      setGuideHint('Sube el logo (PNG o JPEG) arriba para imprimir las guías.');
+      return;
+    }
+    const set = new Set(selectedIds);
+    const list = orders.filter((o) => set.has(o.id));
+    if (!list.length) {
+      setGuideHint('Marca los pedidos a imprimir con la casilla de la primera columna.');
+      return;
+    }
+    const labels = list.map(buildLabelFromOrder);
+    const ok = openMoticoGuidesBatchPrint(logoDataUrl, labels);
+    if (!ok) setGuideHint('Permite ventanas emergentes para abrir la vista previa de impresión.');
+  }, [logoDataUrl, orders, selectedIds, buildLabelFromOrder]);
 
   const onMoticoStatusChange = useCallback(
     async (o: MoticoOrderRow, next: string) => {
       setGuideHint('');
-      if (next === 'imprimir_guia' && !logoDataUrl) {
-        setGuideHint('Sube un logo (PNG o JPEG) arriba antes de usar «Imprimir guía».');
-        return;
-      }
-      const ok = await patchLocalFields(o.id, { motico_status: next });
-      if (ok && next === 'imprimir_guia') {
-        const fresh = ordersRef.current.find((x) => x.id === o.id) || { ...o, motico_status: next };
-        runGuidePrint({ ...fresh, motico_status: next });
-      }
+      await patchLocalFields(o.id, { motico_status: next });
     },
-    [logoDataUrl, patchLocalFields, runGuidePrint],
+    [patchLocalFields],
   );
 
   const onLogoFile = useCallback(
@@ -451,7 +512,7 @@ export default function MoticoPage() {
               return;
             }
             setLogoDataUrl(r);
-            setLogoMessage('Logo guardado. Se usará en todas las guías.');
+            setLogoMessage(`Logo guardado. Se usará en las guías impresas (hasta ${GUIAS_POR_HOJA} por hoja).`);
           } finally {
             setLogoSaving(false);
           }
@@ -556,7 +617,8 @@ export default function MoticoPage() {
               Logo para guías (carta)
             </div>
             <div style={{ fontSize: 12, color: ds.textSecondary, marginBottom: 8, lineHeight: 1.4 }}>
-              Sube PNG o JPEG; se reutiliza al imprimir cada guía al elegir «Imprimir guía».
+              Sube PNG o JPEG. Marca los pedidos en la tabla e imprime: hasta {GUIAS_POR_HOJA} guías por hoja carta
+              (Letter), diseño con logo y datos de envío.
             </div>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 10, cursor: logoSaving ? 'wait' : 'pointer' }}>
               <input
@@ -690,6 +752,66 @@ export default function MoticoPage() {
             </option>
           ))}
         </select>
+
+        {useLive ? (
+          <>
+            <span style={{ width: 1, height: 24, background: ds.borderCard, margin: '0 4px' }} aria-hidden />
+            <button
+              type="button"
+              disabled={!selectedIds.length}
+              onClick={handlePrintSelected}
+              style={{
+                padding: '7px 14px',
+                borderRadius: 8,
+                border: 'none',
+                background: ds.brand,
+                color: '#fff',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: selectedIds.length ? 'pointer' : 'not-allowed',
+                opacity: selectedIds.length ? 1 : 0.5,
+              }}
+            >
+              Imprimir guías ({selectedIds.length}) · {GUIAS_POR_HOJA}/hoja
+            </button>
+            <button
+              type="button"
+              disabled={!filteredOrders.length}
+              onClick={toggleSelectAllVisible}
+              style={{
+                padding: '7px 12px',
+                borderRadius: 8,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.bgCard,
+                color: ds.textSecondary,
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: filteredOrders.length ? 'pointer' : 'not-allowed',
+              }}
+            >
+              {filteredOrders.length && filteredOrders.every((o) => selectedSet.has(o.id))
+                ? 'Desmarcar visibles'
+                : 'Marcar visibles'}
+            </button>
+            <button
+              type="button"
+              disabled={!selectedIds.length}
+              onClick={clearSelection}
+              style={{
+                padding: '7px 12px',
+                borderRadius: 8,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.bgCard,
+                color: ds.textSecondary,
+                fontSize: 11,
+                fontWeight: 600,
+                cursor: selectedIds.length ? 'pointer' : 'not-allowed',
+              }}
+            >
+              Quitar selección
+            </button>
+          </>
+        ) : null}
       </div>
 
       {guideHint ? (
@@ -782,9 +904,20 @@ export default function MoticoPage() {
           </div>
         ) : (
           <div style={{ overflowX: 'auto' }}>
-            <table style={{ ...tableBase, minWidth: 1120 }}>
+            <table style={{ ...tableBase, minWidth: 1180 }}>
               <thead>
                 <tr>
+                  <Th>
+                    <input
+                      ref={headerSelectRef}
+                      type="checkbox"
+                      title="Marcar o desmarcar pedidos visibles"
+                      disabled={!filteredOrders.length}
+                      checked={allVisibleSelected}
+                      onChange={() => toggleSelectAllVisible()}
+                      style={{ width: 16, height: 16, cursor: filteredOrders.length ? 'pointer' : 'not-allowed' }}
+                    />
+                  </Th>
                   <Th>Pedido</Th>
                   <Th>Cliente</Th>
                   <Th>Fecha</Th>
@@ -807,6 +940,15 @@ export default function MoticoPage() {
                         background: `${meta.chipBg}22`,
                       }}
                     >
+                      <Td isLast={i === arr.length - 1}>
+                        <input
+                          type="checkbox"
+                          checked={selectedSet.has(o.id)}
+                          onChange={() => toggleSelectOrder(o.id)}
+                          aria-label={`Incluir ${o.orderName} en impresión de guías`}
+                          style={{ width: 16, height: 16, cursor: 'pointer' }}
+                        />
+                      </Td>
                       <Td isLast={i === arr.length - 1}>
                         <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
                         <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
