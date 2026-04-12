@@ -44,10 +44,12 @@ type ShopifyOrderRow = {
   label: string;
   badgeVariant: StatusBadgeVariant;
   defaultQuantity: number;
+  productIds?: number[];
   internal_status: string;
   price_override: number | null;
   quantity_override: number | null;
   mensajero: string | null;
+  motico_status?: string;
   shopifyTotal: string;
   shopifyQuantity: number;
 };
@@ -224,6 +226,8 @@ export default function PedidosPage() {
       price_override: o.price_override != null ? Number(o.price_override) : null,
       quantity_override: o.quantity_override != null ? Number(o.quantity_override) : null,
       mensajero: o.mensajero || null,
+      motico_status: o.motico_status || 'confirmado',
+      productIds: Array.isArray(o.productIds) ? o.productIds : [],
     };
   }, []);
 
@@ -283,6 +287,7 @@ export default function PedidosPage() {
       price_override?: number | null;
       quantity_override?: number | null;
       mensajero?: string | null;
+      motico_status?: string;
     };
     setShopifyOrders((prev) =>
       prev.map((o) =>
@@ -295,6 +300,7 @@ export default function PedidosPage() {
               quantity_override:
                 data.quantity_override !== undefined ? data.quantity_override : o.quantity_override,
               mensajero: data.mensajero !== undefined ? data.mensajero : o.mensajero,
+              motico_status: data.motico_status !== undefined ? data.motico_status : o.motico_status,
             }
           : o,
       ),

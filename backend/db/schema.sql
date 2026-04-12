@@ -94,6 +94,7 @@ CREATE TABLE IF NOT EXISTS shopify_order_local_fields (
   price_override NUMERIC(14, 4),
   quantity_override INTEGER,
   mensajero VARCHAR(32),
+  motico_status VARCHAR(32) NOT NULL DEFAULT 'confirmado',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (organization_id, shopify_order_id)
 );

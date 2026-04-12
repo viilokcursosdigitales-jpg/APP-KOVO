@@ -1593,6 +1593,13 @@ async function getActiveShopifyConnection(organizationId) {
 
 const SHOPIFY_INTERNAL_STATUSES = new Set(['sin_confirmar', 'confirmado', 'despachado', 'cancelado']);
 const SHOPIFY_MENSAJEROS = new Set(['motico', 'dropi', 'effix']);
+const SHOPIFY_MOTICO_STATUSES = new Set([
+  'confirmado',
+  'imprimir_guia',
+  'pagado',
+  'cancelado',
+  'devolucion',
+]);
 
 const SHOPIFY_ORDER_LIST_FIELDS =
   'id,name,email,created_at,total_price,currency,financial_status,fulfillment_status,customer,order_number,line_items';
@@ -1600,7 +1607,7 @@ const SHOPIFY_ORDER_LIST_FIELDS =
 async function loadLocalFieldsMap(organizationId, orderIds) {
   if (!orderIds.length) return new Map();
   const { rows } = await pool.query(
-    `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero
+    `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status
      FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = ANY($2::bigint[])`,
     [organizationId, orderIds],
   );
@@ -1919,8 +1926,11 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       }
       throw dbErr;
     }
-    const orders = normalized.map((o) => {
+    let orders = normalized.map((o) => {
       const lf = localMap.get(Number(o.id));
+      const moticoRaw = lf?.motico_status;
+      const motico_status =
+        typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : 'confirmado';
       return {
         ...o,
         internal_status: lf?.internal_status || 'sin_confirmar',
@@ -1929,10 +1939,22 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         quantity_override:
           lf?.quantity_override != null && lf.quantity_override !== '' ? Number(lf.quantity_override) : null,
         mensajero: lf?.mensajero || null,
+        motico_status,
         shopifyTotal: o.total,
         shopifyQuantity: o.defaultQuantity,
       };
     });
+    const mensajeroFilter = typeof req.query.mensajero_filter === 'string' ? req.query.mensajero_filter.trim().toLowerCase() : '';
+    if (mensajeroFilter === 'motico') {
+      orders = orders.filter((o) => o.mensajero === 'motico');
+    }
+    const productIdQ = typeof req.query.product_id === 'string' ? req.query.product_id.trim() : '';
+    if (productIdQ) {
+      const want = Number(productIdQ);
+      if (Number.isFinite(want)) {
+        orders = orders.filter((o) => Array.isArray(o.productIds) && o.productIds.includes(want));
+      }
+    }
     res.json({
       source: 'shopify',
       shop_domain: row.shop_domain,
@@ -1957,7 +1979,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
     }
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const { rows: existing } = await pool.query(
-      `SELECT internal_status, price_override, quantity_override, mensajero
+      `SELECT internal_status, price_override, quantity_override, mensajero, motico_status
        FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = $2`,
       [req.organizationId, orderId],
     );
@@ -2003,16 +2025,29 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         mensajero = m;
       }
     }
+    let motico_status =
+      cur.motico_status != null && String(cur.motico_status) !== ''
+        ? String(cur.motico_status)
+        : 'confirmado';
+    if (!SHOPIFY_MOTICO_STATUSES.has(motico_status)) motico_status = 'confirmado';
+    if (body.motico_status !== undefined) {
+      const ms = String(body.motico_status);
+      if (!SHOPIFY_MOTICO_STATUSES.has(ms)) {
+        return res.status(400).json({ error: 'Estado Motico no válido' });
+      }
+      motico_status = ms;
+    }
     await pool.query(
-      `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero)
-       VALUES ($1, $2, $3, $4, $5, $6)
+      `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
        ON CONFLICT (organization_id, shopify_order_id) DO UPDATE SET
          internal_status = EXCLUDED.internal_status,
          price_override = EXCLUDED.price_override,
          quantity_override = EXCLUDED.quantity_override,
          mensajero = EXCLUDED.mensajero,
+         motico_status = EXCLUDED.motico_status,
          updated_at = now()`,
-      [req.organizationId, orderId, internal_status, price_override, quantity_override, mensajero],
+      [req.organizationId, orderId, internal_status, price_override, quantity_override, mensajero, motico_status],
     );
     res.json({
       ok: true,
@@ -2020,6 +2055,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       price_override,
       quantity_override,
       mensajero,
+      motico_status,
     });
   } catch (e) {
     console.error(e);

@@ -10,6 +10,7 @@ import {
   IconSettings,
   IconShare,
   IconTarget,
+  IconTruck,
   IconUser,
 } from '../design-system/icons';
 
@@ -41,6 +42,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   const main: NavItem[] = [
     { to: '/dashboard', label: 'Dashboard', icon: <IconLayout /> },
     { to: '/pedidos', label: 'Pedidos', icon: <IconCart /> },
+    { to: '/motico', label: 'Motico', icon: <IconTruck /> },
     { to: '/inventario', label: 'Inventario', icon: <IconPackage /> },
   ];
   const marketing: NavItem[] = [
@@ -85,7 +87,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   );
 
   if (mobile) {
-    const mobileNav: NavItem[] = [main[0], main[1], main[2], marketing[0], account[account.length - 1]];
+    const mobileNav: NavItem[] = [main[0], main[1], main[3], marketing[0], account[account.length - 1]];
     return (
       <nav
         style={{

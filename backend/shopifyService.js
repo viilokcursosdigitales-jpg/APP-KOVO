@@ -150,6 +150,13 @@ function normalizeShopifyOrdersForApp(apiData) {
       (s, li) => s + (parseInt(String(li.quantity), 10) || 0),
       0,
     );
+    const productIds = [
+      ...new Set(
+        lineItems
+          .map((li) => (li.product_id != null ? Number(li.product_id) : NaN))
+          .filter((n) => Number.isFinite(n)),
+      ),
+    ];
     return {
       id: o.id,
       orderName,
@@ -163,6 +170,7 @@ function normalizeShopifyOrdersForApp(apiData) {
       label: b.label,
       badgeVariant: b.variant,
       defaultQuantity,
+      productIds,
     };
   });
 }

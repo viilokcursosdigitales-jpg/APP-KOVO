@@ -10,6 +10,7 @@ import InventarioPage from './pages/InventarioPage';
 import Login from './pages/Login';
 import MarketingIndicatorsPage from './pages/MarketingIndicatorsPage';
 import MetaAdsPage from './pages/MetaAdsPage';
+import MoticoPage from './pages/MoticoPage';
 import PedidosPage from './pages/PedidosPage';
 import Profile from './pages/Profile';
 import Register from './pages/Register';
@@ -29,6 +30,7 @@ export default function App() {
         <Route element={<AppShell />}>
           <Route path="/dashboard" element={<DashboardHome />} />
           <Route path="/pedidos" element={<PedidosPage />} />
+          <Route path="/motico" element={<MoticoPage />} />
           <Route path="/inventario" element={<InventarioPage />} />
           <Route path="/meta-ads" element={<MetaAdsPage />} />
           <Route path="/indicadores-marketing" element={<MarketingIndicatorsPage />} />

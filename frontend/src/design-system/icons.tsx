@@ -57,6 +57,18 @@ export function IconPackage() {
   );
 }
 
+/** Envío / mensajería (p. ej. Motico) */
+export function IconTruck() {
+  return strokeSvg(
+    <>
+      <path d="M14 18V6a2 2 0 00-2-2H4v14" />
+      <path d="M14 9h4l3 3v5h-6" />
+      <circle cx="7" cy="18" r="2" />
+      <circle cx="17" cy="18" r="2" />
+    </>,
+  );
+}
+
 export function IconMegaphone() {
   return strokeSvg(
     <>

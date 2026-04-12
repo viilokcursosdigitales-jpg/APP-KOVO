@@ -106,10 +106,17 @@ async function initDb(pool) {
       price_override NUMERIC(14, 4),
       quantity_override INTEGER,
       mensajero VARCHAR(32),
+      motico_status VARCHAR(32) NOT NULL DEFAULT 'confirmado',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (organization_id, shopify_order_id)
     )
   `);
+  await pool.query(
+    `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS motico_status VARCHAR(32) DEFAULT 'confirmado'`,
+  );
+  await pool.query(
+    `UPDATE shopify_order_local_fields SET motico_status = 'confirmado' WHERE motico_status IS NULL`,
+  );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_shopify_order_local_org ON shopify_order_local_fields (organization_id)`,
   );
