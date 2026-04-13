@@ -9,7 +9,11 @@ import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
 import { labelStyle } from './authStyles';
-import { downloadMoticoGuidesOrdersExcel } from '../utils/moticoGuidesExcelExport';
+import {
+  downloadMoticoGuidesLayoutExcel,
+  mapLineItemToExportLine,
+  type MoticoGuideExportLine,
+} from '../utils/moticoGuidesExcelExport';
 import {
   buildMoticoGuideLabelData,
   GUIAS_POR_HOJA,
@@ -85,7 +89,16 @@ const STATUS_META = Object.fromEntries(MOTICO_STATUS_OPTIONS.map((o) => [o.value
   (typeof MOTICO_STATUS_OPTIONS)[number]
 >;
 
-type LineItemDetail = { id: number; title: string; quantity: number; price: string };
+type LineItemDetail = {
+  id: number;
+  title: string;
+  quantity: number;
+  price: string;
+  name?: string;
+  variant_title?: string;
+  sku?: string;
+  properties?: { name: string; value: string }[];
+};
 
 type MoticoOrderRow = {
   id: number;
@@ -744,7 +757,7 @@ export default function MoticoPage() {
     }
   }, [logoDataUrl, orders, selectedIds, buildLabelFromOrder]);
 
-  const handleDownloadGuidesExcel = useCallback(() => {
+  const handleDownloadGuidesExcel = useCallback(async () => {
     setGuideHint('');
     const set = new Set(selectedIds);
     const list = orders.filter((o) => set.has(o.id));
@@ -764,35 +777,52 @@ export default function MoticoPage() {
       setGuideHint(
         skipped === 1
           ? 'Se omitió 1 pedido que no está en «Imprimir guía». El Excel incluye el resto.'
-          : `Se omitieron ${skipped} pedidos que no están en «Imprimir guía». Excel con ${eligible.length} filas.`,
+          : `Se omitieron ${skipped} pedidos que no están en «Imprimir guía». Excel con ${eligible.length} pedidos.`,
       );
     }
-    const rows = eligible.map((o) => {
+    const payload = eligible.map((o, orderIdx) => {
       const sa = o.shippingAddress;
       const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
-      const showPrice = formatMoneyFromString(String(o.price_override ?? o.shopifyTotal ?? ''), o.currency);
-      const showQty = String(o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity);
-      const moticoLabel = STATUS_META[o.motico_status]?.label ?? o.motico_status;
+      const ciudad = (sa?.city?.trim() || '').toUpperCase();
+      const details = o.lineItemsDetail || [];
+      let lines: MoticoGuideExportLine[];
+      if (details.length) {
+        lines = details.map((li, idx) => {
+          const base = mapLineItemToExportLine({
+            title: li.title,
+            name: li.name,
+            variant_title: li.variant_title,
+            quantity: li.quantity,
+            properties: li.properties,
+          });
+          const numero =
+            idx === 0 && o.quantity_override != null ? o.quantity_override : li.quantity;
+          return { ...base, numero };
+        });
+      } else {
+        const numero = o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity ?? 0;
+        lines = [
+          {
+            producto: summarizeProducts(o.productIds),
+            diseño: '',
+            color: '',
+            numero,
+            talla: '',
+            nombre: '',
+          },
+        ];
+      }
       return {
-        'ID Shopify': o.id,
-        Pedido: o.orderName,
-        Cliente: o.client,
-        Email: o.email,
-        Teléfono: o.phoneLocal || '',
-        Departamento: sa?.province?.trim() || '',
-        Ciudad: sa?.city?.trim() || '',
-        Dirección: dirLine,
-        Productos: summarizeProducts(o.productIds),
-        'Precio (KOVO)': showPrice,
-        Cantidad: showQty,
-        'Pago Shopify': o.label,
-        'Total a pagar': o.total_a_pagar,
-        Moneda: o.currency,
-        'Fecha pedido': formatDate(o.createdAt),
-        'Estado Motico': moticoLabel,
+        orderIndex: orderIdx + 1,
+        cliente: o.client,
+        celular: o.phoneLocal || '',
+        direccion: dirLine,
+        ciudad,
+        cobro: o.total_a_pagar,
+        lines,
       };
     });
-    downloadMoticoGuidesOrdersExcel(rows);
+    await downloadMoticoGuidesLayoutExcel(payload);
   }, [orders, selectedIds, summarizeProducts]);
 
   const onMoticoStatusChange = useCallback(

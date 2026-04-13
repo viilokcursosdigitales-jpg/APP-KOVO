@@ -349,8 +349,17 @@ function normalizeShopifyOrdersForApp(apiData) {
     const lineItemsDetail = lineItems.map((li) => ({
       id: li.id,
       title: String(li.title || li.name || '').trim() || 'Producto',
+      name: String(li.name || '').trim(),
+      variant_title: li.variant_title != null ? String(li.variant_title).trim() : '',
       quantity: parseInt(String(li.quantity), 10) || 0,
       price: li.price != null ? String(li.price) : '',
+      sku: li.sku != null ? String(li.sku).trim() : '',
+      properties: Array.isArray(li.properties)
+        ? li.properties.map((p) => ({
+            name: String(p.name != null ? p.name : '').trim(),
+            value: String(p.value != null ? p.value : '').trim(),
+          }))
+        : [],
     }));
     const shippingAddress = pickShippingAddress(o);
     const shippingCity = (shippingAddress && shippingAddress.city) || '';
