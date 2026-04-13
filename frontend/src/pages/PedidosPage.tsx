@@ -177,9 +177,9 @@ function estadoSelectStyle(internalStatus: string): CSSProperties {
       };
     case 'despachado':
       return {
-        background: '#14532d',
-        color: '#ecfdf5',
-        borderColor: '#166534',
+        background: '#6CC832',
+        color: '#0f2907',
+        borderColor: '#58a628',
       };
     case 'cancelado':
       return {
