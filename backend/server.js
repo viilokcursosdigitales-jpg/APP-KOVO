@@ -2233,7 +2233,13 @@ async function getActiveShopifyConnection(organizationId) {
   return rows[0] || null;
 }
 
-const SHOPIFY_INTERNAL_STATUSES = new Set(['sin_confirmar', 'confirmado', 'despachado', 'cancelado']);
+const SHOPIFY_INTERNAL_STATUSES = new Set([
+  'sin_confirmar',
+  'confirmado',
+  'despachado',
+  'prueba',
+  'cancelado',
+]);
 const SHOPIFY_MENSAJEROS = new Set(['motico', 'dropi', 'effix']);
 const SHOPIFY_MOTICO_STATUSES = new Set([
   'confirmado',

@@ -30,6 +30,7 @@ const INTERNAL_OPTIONS = [
   { value: 'sin_confirmar', label: 'Sin confirmar' },
   { value: 'confirmado', label: 'Confirmado' },
   { value: 'despachado', label: 'Despachado' },
+  { value: 'prueba', label: 'Prueba' },
   { value: 'cancelado', label: 'Cancelado' },
 ] as const;
 
@@ -180,6 +181,12 @@ function estadoSelectStyle(internalStatus: string): CSSProperties {
         background: '#6CC832',
         color: '#0f2907',
         borderColor: '#58a628',
+      };
+    case 'prueba':
+      return {
+        background: '#f3f4f6',
+        color: '#6b7280',
+        borderColor: '#e5e7eb',
       };
     case 'cancelado':
       return {
