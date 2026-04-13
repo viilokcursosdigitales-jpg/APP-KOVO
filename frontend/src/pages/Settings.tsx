@@ -3,6 +3,7 @@ import { apiFetch } from '../auth/api';
 import { useAuth } from '../auth/AuthContext';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
+import { UpgradeButton } from '../components/UpgradeButton';
 import { inputStyle, labelStyle, primaryButton } from './authStyles';
 
 type MemberRow = {
@@ -1100,22 +1101,7 @@ export default function Settings() {
             </>
           )}
 
-          <button
-            type="button"
-            onClick={() => window.alert('Próximamente: checkout para mejorar tu plan.')}
-            style={{
-              padding: '8px 16px',
-              borderRadius: 8,
-              border: `1px solid ${ds.borderCard}`,
-              background: ds.bgCard,
-              color: ds.textSecondary,
-              fontWeight: 600,
-              cursor: 'pointer',
-              fontSize: 13,
-            }}
-          >
-            Mejorar plan
-          </button>
+          <UpgradeButton />
         </section>
 
       {inviteOpen && (

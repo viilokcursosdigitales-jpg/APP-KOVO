@@ -2504,6 +2504,71 @@ app.post('/api/shopify/webhooks/uninstalled', async (req, res) => {
   }
 });
 
+/** Email del comprador en payloads Hotmart (varía según versión del webhook). */
+function hotmartBuyerEmailFromPayload(body) {
+  const d = body && typeof body === 'object' ? body.data : null;
+  if (!d || typeof d !== 'object') return '';
+  const buyer = d.buyer;
+  if (buyer && typeof buyer === 'object' && buyer.email) return String(buyer.email).trim().toLowerCase();
+  if (d.user && typeof d.user === 'object' && d.user.email) return String(d.user.email).trim().toLowerCase();
+  if (d.subscriber && typeof d.subscriber === 'object' && d.subscriber.email) {
+    return String(d.subscriber.email).trim().toLowerCase();
+  }
+  if (d.purchase && typeof d.purchase === 'object' && d.purchase.buyer_email) {
+    return String(d.purchase.buyer_email).trim().toLowerCase();
+  }
+  return '';
+}
+
+app.post('/api/hotmart/webhook', async (req, res) => {
+  const expected = String(process.env.HOTMART_WEBHOOK_TOKEN || '').trim();
+  if (!expected) {
+    console.warn('[hotmart] HOTMART_WEBHOOK_TOKEN no configurado');
+    return res.status(503).json({ error: 'Webhook not configured' });
+  }
+  const token = req.get('x-hotmart-webhook-token');
+  if (token !== expected) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const event = String(body.event || '');
+    const email = hotmartBuyerEmailFromPayload(body);
+    console.log('Hotmart event:', event, email);
+
+    if (email) {
+      const uq = await pool.query(
+        `SELECT organization_id FROM users WHERE lower(trim(email)) = $1 AND organization_id IS NOT NULL LIMIT 1`,
+        [email],
+      );
+      const orgId = uq.rows[0]?.organization_id;
+      if (!orgId) {
+        console.log('[hotmart] sin usuario u organización para email', email);
+      } else if (event === 'PURCHASE_APPROVED') {
+        await pool.query(
+          `UPDATE organizations SET plan = 'pro', hotmart_email = $2, plan_activated_at = now() WHERE id = $1`,
+          [orgId, email],
+        );
+      } else if (
+        event === 'PURCHASE_CANCELED' ||
+        event === 'SUBSCRIPTION_CANCELLATION' ||
+        event === 'PURCHASE_REFUNDED'
+      ) {
+        await pool.query(
+          `UPDATE organizations SET plan = 'free', hotmart_email = NULL, plan_activated_at = NULL WHERE id = $1`,
+          [orgId],
+        );
+      }
+    }
+
+    return res.status(200).json({ received: true });
+  } catch (e) {
+    console.error('[hotmart webhook]', e);
+    return res.status(200).json({ received: true });
+  }
+});
+
 app.get('/api/shopify/connection', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const row = await getActiveShopifyConnection(req.organizationId);

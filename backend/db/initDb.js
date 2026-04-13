@@ -69,6 +69,9 @@ async function initDb(pool) {
     ADD COLUMN IF NOT EXISTS disconnect_reason TEXT
   `);
 
+  await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hotmart_email TEXT`);
+  await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan_activated_at TIMESTAMPTZ`);
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shopify_connections (
       id SERIAL PRIMARY KEY,
