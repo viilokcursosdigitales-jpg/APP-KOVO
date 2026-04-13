@@ -3281,7 +3281,9 @@ async function start() {
     await initDb(pool);
   } catch (err) {
     logDbStartupError(err);
-    throw err;
+    console.error(
+      '[server] El arranque continúa; si faltan tablas o columnas, corrige schema.sql / DATABASE_URL y reinicia.',
+    );
   }
 
   const oauthTableCheck = await pool.query(

@@ -26,19 +26,16 @@ async function uniqueSlug(pool, base) {
 
 /**
  * Ejecuta el SQL del esquema en sentencias sueltas (necesario con Supabase Transaction pooler / PgBouncer).
+ * Quita primero las líneas que empiezan por --; si no, un ; dentro de un comentario rompe el split por `;`.
  */
 async function runSchemaStatements(pool, sql) {
-  const parts = sql.split(';').map((chunk) =>
-    chunk
-      .split('\n')
-      .filter((line) => !/^\s*--/.test(line))
-      .join('\n')
-      .trim(),
-  );
+  const withoutLineComments = String(sql)
+    .split('\n')
+    .filter((line) => !/^\s*--/.test(line))
+    .join('\n');
+  const parts = withoutLineComments.split(';').map((chunk) => chunk.trim()).filter((chunk) => chunk.length > 0);
   for (const stmt of parts) {
-    if (stmt.length > 0) {
-      await pool.query(stmt);
-    }
+    await pool.query(stmt);
   }
 }
 
@@ -69,8 +66,12 @@ async function initDb(pool) {
     ADD COLUMN IF NOT EXISTS disconnect_reason TEXT
   `);
 
-  await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hotmart_email TEXT`);
-  await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan_activated_at TIMESTAMPTZ`);
+  try {
+    await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hotmart_email TEXT`);
+    await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan_activated_at TIMESTAMPTZ`);
+  } catch (e) {
+    console.error('[initDb] organizations Hotmart columns (hotmart_email / plan_activated_at):', e && e.message);
+  }
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shopify_connections (

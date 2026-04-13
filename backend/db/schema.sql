@@ -156,7 +156,7 @@ CREATE TABLE IF NOT EXISTS motico_org_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
--- Hotmart: webhook activa plan pro; columnas opcionales en orgs ya existentes
+-- Hotmart webhook: optional organization columns (keep no semicolons inside -- lines: initDb splits on ;)
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'free';
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hotmart_email TEXT;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan_activated_at TIMESTAMPTZ;
