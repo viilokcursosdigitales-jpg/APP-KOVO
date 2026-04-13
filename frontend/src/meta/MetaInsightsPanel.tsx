@@ -26,6 +26,35 @@ const PERIOD_LABELS: Record<MetaInsightPeriod, string> = {
   custom: 'Personalizado',
 };
 
+/** Rango ISO para filtrar pedidos Shopify; alineado de forma razonable con los presets de Meta. */
+function shopifyDateRangeForMetaPeriod(period: MetaInsightPeriod): { min: string; max: string } | null {
+  const now = new Date();
+  const dayBounds = (d: Date) => {
+    const s = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    const e = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+    return { min: s.toISOString(), max: e.toISOString() };
+  };
+  if (period === 'hoy') return dayBounds(now);
+  if (period === 'ayer') {
+    const y = new Date(now);
+    y.setDate(y.getDate() - 1);
+    return dayBounds(y);
+  }
+  const rollingDays: Record<string, number> = { '3d': 3, '7d': 7, '14d': 14, '30d': 30 };
+  const n = rollingDays[period];
+  if (n) {
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const startDay = new Date(now);
+    startDay.setDate(startDay.getDate() - (n - 1));
+    const start = new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate(), 0, 0, 0, 0);
+    return { min: start.toISOString(), max: end.toISOString() };
+  }
+  if (period === 'custom') {
+    return shopifyDateRangeForMetaPeriod('7d');
+  }
+  return shopifyDateRangeForMetaPeriod('7d');
+}
+
 function formatNumber(n: number): string {
   return new Intl.NumberFormat('es-ES').format(Math.round(n));
 }
@@ -227,6 +256,8 @@ export function MetaInsightsPanel({
     kind: 'ok' | 'err';
     text: string;
   } | null>(null);
+  const [shopifyPedidosByCampaign, setShopifyPedidosByCampaign] = useState<Record<string, number>>({});
+  const [shopifyPedidosAvailable, setShopifyPedidosAvailable] = useState(false);
 
   useEffect(() => {
     let c = false;
@@ -341,6 +372,59 @@ export function MetaInsightsPanel({
     setCampaignProductLinks((prev) => ({ ...prev, [campaignId]: ids }));
   }, []);
 
+  const loadShopifyPedidosCounts = useCallback(async () => {
+    const range = shopifyDateRangeForMetaPeriod(period);
+    if (!range) {
+      setShopifyPedidosByCampaign({});
+      setShopifyPedidosAvailable(false);
+      return;
+    }
+    try {
+      const qs = new URLSearchParams({
+        limit: '250',
+        created_at_min: range.min,
+        created_at_max: range.max,
+      });
+      const res = await apiFetch(`/api/shopify/orders?${qs.toString()}`);
+      const raw = (await res.json().catch(() => ({}))) as { code?: string; orders?: { productIds?: number[] }[] };
+      if (!res.ok) {
+        setShopifyPedidosByCampaign({});
+        setShopifyPedidosAvailable(false);
+        return;
+      }
+      const orders = Array.isArray(raw.orders) ? raw.orders : [];
+      const productToCampaigns = new Map<number, string[]>();
+      for (const [cid, pids] of Object.entries(campaignProductLinks)) {
+        for (const pid of pids) {
+          if (!productToCampaigns.has(pid)) productToCampaigns.set(pid, []);
+          productToCampaigns.get(pid)!.push(cid);
+        }
+      }
+      const counts: Record<string, number> = {};
+      for (const o of orders) {
+        const pids = Array.isArray(o.productIds) ? o.productIds : [];
+        const matchedCampaigns = new Set<string>();
+        for (const pid of pids) {
+          for (const c of productToCampaigns.get(pid) || []) {
+            matchedCampaigns.add(c);
+          }
+        }
+        for (const c of matchedCampaigns) {
+          counts[c] = (counts[c] || 0) + 1;
+        }
+      }
+      setShopifyPedidosByCampaign(counts);
+      setShopifyPedidosAvailable(true);
+    } catch {
+      setShopifyPedidosByCampaign({});
+      setShopifyPedidosAvailable(false);
+    }
+  }, [period, campaignProductLinks]);
+
+  useEffect(() => {
+    void loadShopifyPedidosCounts();
+  }, [loadShopifyPedidosCounts]);
+
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
       const st = String(row.status || '').toUpperCase();
@@ -423,7 +507,7 @@ export function MetaInsightsPanel({
     void load();
   }, [load]);
 
-  const tableColCount = level === 'campaigns' ? 15 : 14;
+  const tableColCount = level === 'campaigns' ? 16 : 15;
 
   const setCampaignStatusOnMeta = useCallback(
     async (campaignId: string, name: string, next: 'PAUSED' | 'ACTIVE') => {
@@ -622,7 +706,10 @@ export function MetaInsightsPanel({
         </select>
         <button
           type="button"
-          onClick={() => void load()}
+          onClick={() => {
+            void load();
+            void loadShopifyPedidosCounts();
+          }}
           disabled={loading}
           style={{
             marginLeft: 'auto',
@@ -756,9 +843,15 @@ export function MetaInsightsPanel({
                 'CPC',
                 'ROAS',
                 'ROAS SHOPIFY',
+                'Pedidos Shopify',
               ].map((h) => (
                 <th
                   key={h}
+                  title={
+                    h === 'Pedidos Shopify'
+                      ? 'Cantidad de pedidos en Shopify en el período seleccionado que incluyen al menos un producto vinculado a la campaña en KOVO (máx. 250 pedidos devueltos por la API).'
+                      : undefined
+                  }
                   style={{
                     padding: '11px 16px',
                     fontWeight: 500,
@@ -802,9 +895,11 @@ export function MetaInsightsPanel({
                 </td>
               </tr>
             ) : (
-              filteredRows.map((row) => {
+                           filteredRows.map((row) => {
                 const ev = buildRowTargetEvaluation(row, level, campaignProductLinks, targetsByProduct);
                 const rowBg = insightRowBg(ev.rowHighlight);
+                const campId = campaignIdForInsightRow(row, level);
+                const pedidosShopify = shopifyPedidosAvailable ? shopifyPedidosByCampaign[campId] ?? 0 : null;
                 return (
                   <tr
                     key={`${row.adAccountId}-${row.id}`}
@@ -865,6 +960,9 @@ export function MetaInsightsPanel({
                     </td>
                     <td style={{ padding: '12px 16px' }}>
                       {row.spend > 0 && row.revenue > 0 ? formatRoasMeta(row.revenue / row.spend) : '—'}
+                    </td>
+                    <td style={{ padding: '12px 16px' }} title="Pedidos Shopify: cantidad de pedidos">
+                      {pedidosShopify === null ? '—' : formatNumber(pedidosShopify)}
                     </td>
                   </tr>
                 );
