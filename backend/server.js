@@ -2252,12 +2252,25 @@ const SHOPIFY_MOTICO_STATUSES = new Set([
 ]);
 
 const SHOPIFY_ORDER_LIST_FIELDS =
-  'id,name,phone,email,created_at,total_price,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address,billing_address';
+  'id,name,phone,email,created_at,total_price,total_outstanding,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address,billing_address';
+
+/** Total a pagar por defecto (Shopify): pagado → 0; si no, total_outstanding o total del pedido. */
+function shopifyDefaultTotalAPagar(o) {
+  const fin = String(o.financialStatus || '').toLowerCase();
+  if (fin === 'paid') return 0;
+  const outRaw = o.totalOutstanding;
+  if (outRaw != null && String(outRaw).trim() !== '') {
+    const out = Number.parseFloat(String(outRaw));
+    if (Number.isFinite(out) && out >= 0) return out;
+  }
+  const t = Number.parseFloat(String(o.total || '0'));
+  return Number.isFinite(t) && t >= 0 ? t : 0;
+}
 
 async function loadLocalFieldsMap(organizationId, orderIds) {
   if (!orderIds.length) return new Map();
   const { rows } = await pool.query(
-    `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status
+    `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, total_a_pagar_override
      FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = ANY($2::bigint[])`,
     [organizationId, orderIds],
   );
@@ -2646,6 +2659,15 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       const moticoRaw = lf?.motico_status;
       const motico_status =
         typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : 'confirmado';
+      const total_a_pagar_default = shopifyDefaultTotalAPagar(o);
+      const total_a_pagar_override =
+        lf?.total_a_pagar_override != null && lf.total_a_pagar_override !== ''
+          ? Number(lf.total_a_pagar_override)
+          : null;
+      const total_a_pagar =
+        total_a_pagar_override != null && Number.isFinite(total_a_pagar_override)
+          ? total_a_pagar_override
+          : total_a_pagar_default;
       return {
         ...o,
         internal_status: lf?.internal_status || 'sin_confirmar',
@@ -2655,6 +2677,11 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
           lf?.quantity_override != null && lf.quantity_override !== '' ? Number(lf.quantity_override) : null,
         mensajero: lf?.mensajero || null,
         motico_status,
+        total_a_pagar_default,
+        total_a_pagar_override: total_a_pagar_override != null && Number.isFinite(total_a_pagar_override)
+          ? total_a_pagar_override
+          : null,
+        total_a_pagar,
         shopifyTotal: o.total,
         shopifyQuantity: o.defaultQuantity,
       };
@@ -2694,7 +2721,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
     }
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const { rows: existing } = await pool.query(
-      `SELECT internal_status, price_override, quantity_override, mensajero, motico_status
+      `SELECT internal_status, price_override, quantity_override, mensajero, motico_status, total_a_pagar_override
        FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = $2`,
       [req.organizationId, orderId],
     );
@@ -2753,14 +2780,28 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       motico_status = ms;
     }
 
-    const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+    let total_a_pagar_override = cur.total_a_pagar_override != null ? Number(cur.total_a_pagar_override) : null;
+    if (total_a_pagar_override != null && !Number.isFinite(total_a_pagar_override)) total_a_pagar_override = null;
+    if (body.total_a_pagar_override !== undefined) {
+      if (body.total_a_pagar_override === null) total_a_pagar_override = null;
+      else {
+        const bal = Number(body.total_a_pagar_override);
+        if (!Number.isFinite(bal) || bal < 0) {
+          return res.status(400).json({ error: 'Total a pagar no válido' });
+        }
+        total_a_pagar_override = bal;
+      }
+    }
+
+    const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, total_a_pagar_override)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        ON CONFLICT (organization_id, shopify_order_id) DO UPDATE SET
          internal_status = EXCLUDED.internal_status,
          price_override = EXCLUDED.price_override,
          quantity_override = EXCLUDED.quantity_override,
          mensajero = EXCLUDED.mensajero,
          motico_status = EXCLUDED.motico_status,
+         total_a_pagar_override = EXCLUDED.total_a_pagar_override,
          updated_at = now()`;
     const insertParams = [
       req.organizationId,
@@ -2770,6 +2811,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       quantity_override,
       mensajero,
       motico_status,
+      total_a_pagar_override,
     ];
 
     const syncToShopify = body.sync_to_shopify === true;
@@ -2822,6 +2864,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       quantity_override,
       mensajero,
       motico_status,
+      total_a_pagar_override,
     });
   } catch (e) {
     console.error(e);

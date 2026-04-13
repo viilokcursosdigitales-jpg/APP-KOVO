@@ -122,6 +122,9 @@ async function initDb(pool) {
     `UPDATE shopify_order_local_fields SET motico_status = 'confirmado' WHERE motico_status IS NULL`,
   );
   await pool.query(
+    `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS total_a_pagar_override NUMERIC(14, 4)`,
+  );
+  await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_shopify_order_local_org ON shopify_order_local_fields (organization_id)`,
   );
 

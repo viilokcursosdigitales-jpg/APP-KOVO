@@ -372,6 +372,10 @@ function normalizeShopifyOrdersForApp(apiData) {
       total: o.total_price,
       currency: o.currency || '',
       financialStatus: o.financial_status || '',
+      totalOutstanding:
+        o.total_outstanding != null && String(o.total_outstanding).trim() !== ''
+          ? String(o.total_outstanding)
+          : null,
       fulfillmentStatus: o.fulfillment_status || '',
       label: b.label,
       badgeVariant: b.variant,

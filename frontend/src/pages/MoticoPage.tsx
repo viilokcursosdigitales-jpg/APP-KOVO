@@ -19,6 +19,7 @@ import {
 } from '../utils/moticoPrintGuide';
 
 const POLL_MS = 25_000;
+const MOTICO_TOTAL_APAGAR_DEBOUNCE_MS = 450;
 const MAX_LOGO_BYTES = 400_000;
 /** Vista previa ~proporción de la celda del logo en la guía (≈18% del ancho × altura de franja 1.88in). */
 const MOTICO_GUIDE_LOGO_PREVIEW_W_PX = 118;
@@ -111,6 +112,13 @@ type MoticoOrderRow = {
   defaultQuantity: number;
   /** Solo dígitos, sin +57 (API Pedidos / Shopify). */
   phoneLocal?: string;
+  financialStatus?: string;
+  totalOutstanding?: string | null;
+  /** Pendiente según Shopify (pagado → 0; si no, total_outstanding o total). */
+  total_a_pagar_default: number;
+  total_a_pagar_override: number | null;
+  /** Valor mostrado: override ?? default. */
+  total_a_pagar: number;
 };
 
 type ShopifyProduct = { id: number; title: string };
@@ -126,19 +134,18 @@ const filterCtl: CSSProperties = {
   minWidth: 0,
 };
 
-/** Separación horizontal entre columnas de la tabla Motico. */
-const MOTICO_COL_GAP_PX = 10;
+/** Separación entre celdas (alineado con padding 5px). */
+const MOTICO_COL_GAP_PX = 5;
 
-/** Padding horizontal 18px (rango 16–20px pedido) en la tabla Pedidos Motico. */
-const MOTICO_CELL_H_PAD = 18;
+/** Padding horizontal 5px: celda = texto más largo + 5px a cada lado. */
+const MOTICO_CELL_H_PAD = 5;
 const moticoThPad: CSSProperties = { padding: `11px ${MOTICO_CELL_H_PAD}px` };
 const moticoTdPad: CSSProperties = { padding: `12px ${MOTICO_CELL_H_PAD}px` };
 
-/** Columna Estado: ancho según contenido; 10px extra a la derecha (padding). */
+/** Columna Estado: ancho mínimo al contenido. */
 const moticoEstadoThTd: CSSProperties = {
   verticalAlign: 'middle',
   width: '0.01%',
-  paddingRight: 10,
 };
 
 const moticoEstadoActionsRow: CSSProperties = {
@@ -199,19 +206,60 @@ const moticoStickyEstadoTdBase: CSSProperties = {
   boxShadow: '6px 0 12px -8px rgba(15, 23, 42, 0.18)',
 };
 
-/** Columna Teléfono: ancho al número + 5px lateral (mismo criterio que Pedidos). */
-const moticoPhoneColumnTh: CSSProperties = {
-  ...moticoThPad,
+/** Columnas que encogen al texto (una sola línea). */
+const moticoColFitNowrap: CSSProperties = {
   width: '1%',
   whiteSpace: 'nowrap',
-  padding: '11px 5px',
+};
+
+const moticoPhoneColumnTh: CSSProperties = {
+  ...moticoThPad,
+  ...moticoColFitNowrap,
 };
 
 const moticoPhoneColumnTd: CSSProperties = {
   ...moticoTdPad,
-  width: '1%',
-  whiteSpace: 'nowrap',
-  padding: '12px 5px',
+  ...moticoColFitNowrap,
+};
+
+const moticoEditColTh: CSSProperties = {
+  ...moticoThPad,
+  ...moticoColFitNowrap,
+};
+
+const moticoTableStyle: CSSProperties = {
+  ...tableBase,
+  tableLayout: 'auto',
+  width: 'max-content',
+  borderCollapse: 'separate',
+  borderSpacing: `${MOTICO_COL_GAP_PX}px 0`,
+};
+
+const moticoOrderEditIconBtn: CSSProperties = {
+  flexShrink: 0,
+  padding: 6,
+  borderRadius: 8,
+  border: `1px solid ${ds.borderCard}`,
+  background: ds.bgCard,
+  color: ds.brand,
+  cursor: 'pointer',
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  lineHeight: 0,
+};
+
+const moticoTotalAPagarInputStyle: CSSProperties = {
+  width: '100%',
+  maxWidth: 128,
+  padding: '6px 8px',
+  borderRadius: 8,
+  border: `1px solid ${ds.borderCard}`,
+  background: ds.bgCard,
+  color: ds.textPrimary,
+  fontSize: 12,
+  fontWeight: 600,
+  boxSizing: 'border-box',
 };
 
 const modalFieldStyle: CSSProperties = {
@@ -281,6 +329,23 @@ function formatMoneyFromString(total: string, currency: string) {
   return formatMoneyAmount(n, currency);
 }
 
+/** Si el API aún no envía total_a_pagar_default (backend antiguo). */
+function computedTotalAPagarDefaultFromRow(o: {
+  financialStatus?: string;
+  totalOutstanding?: string | null;
+  total?: string;
+}): number {
+  const fin = String(o.financialStatus || '').toLowerCase();
+  if (fin === 'paid') return 0;
+  const outRaw = o.totalOutstanding;
+  if (outRaw != null && String(outRaw).trim() !== '') {
+    const out = Number.parseFloat(String(outRaw));
+    if (Number.isFinite(out) && out >= 0) return out;
+  }
+  const t = Number.parseFloat(String(o.total || '0'));
+  return Number.isFinite(t) && t >= 0 ? t : 0;
+}
+
 function formatDate(iso: string) {
   try {
     return new Date(iso).toLocaleString('es-ES', { dateStyle: 'medium', timeStyle: 'short' });
@@ -319,6 +384,22 @@ function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
     shopifyQuantity: Number(o.shopifyQuantity ?? o.defaultQuantity) || 0,
     defaultQuantity: Number(o.defaultQuantity) || 0,
     phoneLocal: typeof o.phoneLocal === 'string' ? o.phoneLocal.trim() : '',
+    financialStatus: String(o.financialStatus || ''),
+    totalOutstanding: o.totalOutstanding != null ? String(o.totalOutstanding) : null,
+    total_a_pagar_default:
+      o.total_a_pagar_default != null && Number.isFinite(Number(o.total_a_pagar_default))
+        ? Number(o.total_a_pagar_default)
+        : computedTotalAPagarDefaultFromRow(o),
+    total_a_pagar_override:
+      o.total_a_pagar_override != null && Number.isFinite(Number(o.total_a_pagar_override))
+        ? Number(o.total_a_pagar_override)
+        : null,
+    total_a_pagar:
+      o.total_a_pagar != null && Number.isFinite(Number(o.total_a_pagar))
+        ? Number(o.total_a_pagar)
+        : o.total_a_pagar_override != null && Number.isFinite(Number(o.total_a_pagar_override))
+          ? Number(o.total_a_pagar_override)
+          : computedTotalAPagarDefaultFromRow(o),
   };
 }
 
@@ -353,6 +434,9 @@ export default function MoticoPage() {
   const [phoneCopyToastVisible, setPhoneCopyToastVisible] = useState(false);
   const phoneCopyToastTimerRef = useRef<number | null>(null);
 
+  const [totalAPagarDraft, setTotalAPagarDraft] = useState<Record<number, string>>({});
+  const totalAPagarTimers = useRef<Map<number, number>>(new Map());
+
   const copyPhoneToClipboard = useCallback((digits: string) => {
     const t = digits.trim();
     if (!t) return;
@@ -377,6 +461,8 @@ export default function MoticoPage() {
   useEffect(() => {
     return () => {
       if (phoneCopyToastTimerRef.current != null) window.clearTimeout(phoneCopyToastTimerRef.current);
+      for (const t of totalAPagarTimers.current.values()) window.clearTimeout(t);
+      totalAPagarTimers.current.clear();
     };
   }, []);
 
@@ -489,6 +575,7 @@ export default function MoticoPage() {
           setShopifyConnected(true);
           setShopDomain(data.shop_domain || null);
           setFetchedAt(data.fetchedAt || null);
+          setTotalAPagarDraft({});
           setOrders(data.orders.map((o) => normalizeRow(o as MoticoOrderRow)));
         }
       } catch {
@@ -512,6 +599,7 @@ export default function MoticoPage() {
       motico_status?: string;
       price_override?: number | null;
       quantity_override?: number | null;
+      total_a_pagar_override?: number | null;
     };
     if (!res.ok) {
       setSyncError(typeof data.error === 'string' ? data.error : 'Error al guardar');
@@ -519,27 +607,28 @@ export default function MoticoPage() {
     }
     setSyncError('');
     setOrders((prev) =>
-      prev.map((o) =>
-        o.id === orderId
-          ? {
-              ...o,
-              motico_status: data.motico_status !== undefined ? String(data.motico_status) : o.motico_status,
-              price_override: data.price_override !== undefined ? data.price_override : o.price_override,
-              quantity_override: data.quantity_override !== undefined ? data.quantity_override : o.quantity_override,
-            }
-          : o,
-      ),
+      prev.map((o) => {
+        if (o.id !== orderId) return o;
+        const nextOverride =
+          data.total_a_pagar_override !== undefined ? data.total_a_pagar_override : o.total_a_pagar_override;
+        const nextTotalAPagar =
+          data.total_a_pagar_override !== undefined
+            ? data.total_a_pagar_override === null
+              ? o.total_a_pagar_default
+              : Number(data.total_a_pagar_override)
+            : o.total_a_pagar;
+        return {
+          ...o,
+          motico_status: data.motico_status !== undefined ? String(data.motico_status) : o.motico_status,
+          price_override: data.price_override !== undefined ? data.price_override : o.price_override,
+          quantity_override: data.quantity_override !== undefined ? data.quantity_override : o.quantity_override,
+          total_a_pagar_override: nextOverride === undefined ? o.total_a_pagar_override : nextOverride,
+          total_a_pagar: Number.isFinite(nextTotalAPagar) ? nextTotalAPagar : o.total_a_pagar,
+        };
+      }),
     );
-    const touchedPriceQty =
-      Object.prototype.hasOwnProperty.call(body, 'price_override') ||
-      Object.prototype.hasOwnProperty.call(body, 'quantity_override');
-    if (touchedPriceQty) {
-      setPriceDraft((d) => {
-        const n = { ...d };
-        delete n[orderId];
-        return n;
-      });
-      setQtyDraft((d) => {
+    if (Object.prototype.hasOwnProperty.call(body, 'total_a_pagar_override')) {
+      setTotalAPagarDraft((d) => {
         const n = { ...d };
         delete n[orderId];
         return n;
@@ -547,6 +636,27 @@ export default function MoticoPage() {
     }
     return true;
   }, []);
+
+  const scheduleTotalAPagarSave = useCallback(
+    (orderId: number, raw: string) => {
+      const prev = totalAPagarTimers.current.get(orderId);
+      if (prev != null) window.clearTimeout(prev);
+      const tid = window.setTimeout(() => {
+        totalAPagarTimers.current.delete(orderId);
+        const t = raw.trim();
+        if (t === '') {
+          void patchLocalFields(orderId, { total_a_pagar_override: null });
+          return;
+        }
+        const normalized = t.replace(',', '.');
+        const n = Number.parseFloat(normalized);
+        if (!Number.isFinite(n) || n < 0) return;
+        void patchLocalFields(orderId, { total_a_pagar_override: n });
+      }, MOTICO_TOTAL_APAGAR_DEBOUNCE_MS);
+      totalAPagarTimers.current.set(orderId, tid);
+    },
+    [patchLocalFields],
+  );
 
   const buildLabelFromOrder = useCallback(
     (o: MoticoOrderRow): MoticoGuideLabelData => {
@@ -1188,14 +1298,7 @@ export default function MoticoPage() {
           </div>
         ) : (
           <div style={orderListTableScrollWrapperStyle}>
-            <table
-              style={{
-                ...tableBase,
-                borderCollapse: 'separate',
-                borderSpacing: `${MOTICO_COL_GAP_PX}px 0`,
-                minWidth: 1700 + 12 * MOTICO_COL_GAP_PX,
-              }}
-            >
+            <table style={moticoTableStyle}>
               <thead>
                 <tr>
                   <Th
@@ -1238,7 +1341,11 @@ export default function MoticoPage() {
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Precio</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Cant.</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Total a pagar</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Productos</Th>
+                  <Th style={{ ...moticoEditColTh, ...orderListTheadStickyCell }} title="Editar pedido">
+                    <IconPencil size={14} style={{ opacity: 0.4, display: 'block' }} aria-hidden />
+                  </Th>
                 </tr>
               </thead>
               <tbody>
@@ -1307,26 +1414,6 @@ export default function MoticoPage() {
                               ))}
                             </select>
                           </div>
-                          <button
-                            type="button"
-                            aria-label={`Editar pedido ${o.orderName}: dirección, precio y cantidad`}
-                            onClick={() => openOrderEditor(o)}
-                            style={{
-                              flexShrink: 0,
-                              padding: 6,
-                              borderRadius: 8,
-                              border: `1px solid ${ds.borderCard}`,
-                              background: ds.bgCard,
-                              color: ds.brand,
-                              cursor: 'pointer',
-                              display: 'inline-flex',
-                              alignItems: 'center',
-                              justifyContent: 'center',
-                              lineHeight: 0,
-                            }}
-                          >
-                            <IconPencil size={16} />
-                          </button>
                           {shopDomain ? (
                             <a
                               href={`https://${shopDomain}/admin/orders/${o.id}`}
@@ -1401,7 +1488,6 @@ export default function MoticoPage() {
                         <div
                           style={{
                             fontSize: 11,
-                            maxWidth: 220,
                             wordBreak: 'break-word',
                             lineHeight: 1.35,
                             color: ds.textSecondary,
@@ -1424,9 +1510,40 @@ export default function MoticoPage() {
                         <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <div style={{ fontSize: 11, color: ds.textSecondary, maxWidth: 200, lineHeight: 1.35 }}>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          style={moticoTotalAPagarInputStyle}
+                          value={
+                            totalAPagarDraft[o.id] !== undefined
+                              ? totalAPagarDraft[o.id]!
+                              : String(o.total_a_pagar)
+                          }
+                          onChange={(e) => {
+                            const v = e.target.value;
+                            setTotalAPagarDraft((d) => ({ ...d, [o.id]: v }));
+                            scheduleTotalAPagarSave(o.id, v);
+                          }}
+                          aria-label={`Total a pagar pedido ${o.orderName}`}
+                        />
+                        <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4, lineHeight: 1.3 }}>
+                          Calculado Shopify: {formatMoneyAmount(o.total_a_pagar_default, o.currency)}
+                        </div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <div style={{ fontSize: 11, color: ds.textSecondary, lineHeight: 1.35 }}>
                           {summarizeProducts(o.productIds)}
                         </div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={{ ...moticoTdPad, ...moticoColFitNowrap }}>
+                        <button
+                          type="button"
+                          aria-label={`Editar pedido ${o.orderName}: dirección, precio y cantidad`}
+                          onClick={() => openOrderEditor(o)}
+                          style={moticoOrderEditIconBtn}
+                        >
+                          <IconPencil size={16} />
+                        </button>
                       </Td>
                     </tr>
                   );
