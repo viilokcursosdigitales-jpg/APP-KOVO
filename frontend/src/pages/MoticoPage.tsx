@@ -132,11 +132,11 @@ const MOTICO_CELL_H_PAD = 18;
 const moticoThPad: CSSProperties = { padding: `11px ${MOTICO_CELL_H_PAD}px` };
 const moticoTdPad: CSSProperties = { padding: `12px ${MOTICO_CELL_H_PAD}px` };
 
-/** Columna Estado: ancho según contenido; 20px extra a la derecha (padding). */
+/** Columna Estado: ancho según contenido; 10px extra a la derecha (padding). */
 const moticoEstadoThTd: CSSProperties = {
   verticalAlign: 'middle',
   width: '0.01%',
-  paddingRight: 20,
+  paddingRight: 10,
 };
 
 const moticoEstadoActionsRow: CSSProperties = {
