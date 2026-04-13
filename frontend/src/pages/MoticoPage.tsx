@@ -109,6 +109,8 @@ type MoticoOrderRow = {
   shopifyTotal: string;
   shopifyQuantity: number;
   defaultQuantity: number;
+  /** Solo dígitos, sin +57 (API Pedidos / Shopify). */
+  phoneLocal?: string;
 };
 
 type ShopifyProduct = { id: number; title: string };
@@ -167,15 +169,49 @@ const moticoEstadoSelectStyle: CSSProperties = {
   maxWidth: 'none',
 };
 
+/** Ancho de la columna checkbox; el sticky de Estado usa el mismo valor en `left`. */
+const MOTICO_STICKY_CHECKBOX_COL_PX = 52;
+
 /** Primera columna (checkbox): fija al hacer scroll horizontal. */
 const moticoStickySelectCol: CSSProperties = {
   position: 'sticky',
   left: 0,
-  width: 52,
-  minWidth: 52,
-  maxWidth: 52,
+  width: MOTICO_STICKY_CHECKBOX_COL_PX,
+  minWidth: MOTICO_STICKY_CHECKBOX_COL_PX,
+  maxWidth: MOTICO_STICKY_CHECKBOX_COL_PX,
   boxSizing: 'border-box',
   boxShadow: '6px 0 12px -8px rgba(15, 23, 42, 0.25)',
+};
+
+/** Columna Estado junto al checkbox: fija al scroll horizontal. */
+const moticoStickyEstadoTh: CSSProperties = {
+  ...orderListTheadStickyCell,
+  left: MOTICO_STICKY_CHECKBOX_COL_PX,
+  zIndex: 9,
+  background: ds.bgApp,
+  boxShadow: '6px 0 12px -8px rgba(15, 23, 42, 0.22)',
+};
+
+const moticoStickyEstadoTdBase: CSSProperties = {
+  position: 'sticky',
+  left: MOTICO_STICKY_CHECKBOX_COL_PX,
+  zIndex: 4,
+  boxShadow: '6px 0 12px -8px rgba(15, 23, 42, 0.18)',
+};
+
+/** Columna Teléfono: ancho al número + 5px lateral (mismo criterio que Pedidos). */
+const moticoPhoneColumnTh: CSSProperties = {
+  ...moticoThPad,
+  width: '1%',
+  whiteSpace: 'nowrap',
+  padding: '11px 5px',
+};
+
+const moticoPhoneColumnTd: CSSProperties = {
+  ...moticoTdPad,
+  width: '1%',
+  whiteSpace: 'nowrap',
+  padding: '12px 5px',
 };
 
 const modalFieldStyle: CSSProperties = {
@@ -282,6 +318,7 @@ function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
     quantity_override: o.quantity_override != null ? Number(o.quantity_override) : null,
     shopifyQuantity: Number(o.shopifyQuantity ?? o.defaultQuantity) || 0,
     defaultQuantity: Number(o.defaultQuantity) || 0,
+    phoneLocal: typeof o.phoneLocal === 'string' ? o.phoneLocal.trim() : '',
   };
 }
 
@@ -312,6 +349,36 @@ export default function MoticoPage() {
   const [editorOrder, setEditorOrder] = useState<MoticoOrderRow | null>(null);
   const [editorDraft, setEditorDraft] = useState<MoticoEditorDraft>(() => emptyEditorDraft());
   const [editorSaving, setEditorSaving] = useState(false);
+
+  const [phoneCopyToastVisible, setPhoneCopyToastVisible] = useState(false);
+  const phoneCopyToastTimerRef = useRef<number | null>(null);
+
+  const copyPhoneToClipboard = useCallback((digits: string) => {
+    const t = digits.trim();
+    if (!t) return;
+    if (phoneCopyToastTimerRef.current != null) {
+      window.clearTimeout(phoneCopyToastTimerRef.current);
+      phoneCopyToastTimerRef.current = null;
+    }
+    void navigator.clipboard.writeText(t).then(
+      () => {
+        setPhoneCopyToastVisible(true);
+        phoneCopyToastTimerRef.current = window.setTimeout(() => {
+          setPhoneCopyToastVisible(false);
+          phoneCopyToastTimerRef.current = null;
+        }, 2600);
+      },
+      () => {
+        window.alert('No se pudo copiar. Comprueba los permisos del navegador.');
+      },
+    );
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (phoneCopyToastTimerRef.current != null) window.clearTimeout(phoneCopyToastTimerRef.current);
+    };
+  }, []);
 
   const dateQuery = useMemo(
     () => buildDateRange(datePreset, customFrom, customTo),
@@ -1126,7 +1193,7 @@ export default function MoticoPage() {
                 ...tableBase,
                 borderCollapse: 'separate',
                 borderSpacing: `${MOTICO_COL_GAP_PX}px 0`,
-                minWidth: 1600 + 11 * MOTICO_COL_GAP_PX,
+                minWidth: 1700 + 12 * MOTICO_COL_GAP_PX,
               }}
             >
               <thead>
@@ -1151,9 +1218,20 @@ export default function MoticoPage() {
                       style={{ width: 16, height: 16, cursor: filteredOrders.length ? 'pointer' : 'not-allowed' }}
                     />
                   </Th>
+                  <Th
+                    style={{
+                      ...moticoThPad,
+                      ...moticoEstadoThTd,
+                      ...moticoStickyEstadoTh,
+                      borderRight: `1px solid ${ds.borderCard}`,
+                    }}
+                  >
+                    Estado
+                  </Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pedido</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Fecha</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Cliente</Th>
+                  <Th style={{ ...moticoPhoneColumnTh, ...orderListTheadStickyCell }}>Teléfono</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Departamento</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Ciudad</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Dirección</Th>
@@ -1161,7 +1239,6 @@ export default function MoticoPage() {
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Cant.</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Productos</Th>
-                  <Th style={{ ...moticoThPad, ...moticoEstadoThTd, ...orderListTheadStickyCell }}>Estado</Th>
                 </tr>
               </thead>
               <tbody>
@@ -1200,54 +1277,16 @@ export default function MoticoPage() {
                           style={{ width: 16, height: 16, cursor: 'pointer' }}
                         />
                       </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
-                        <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        {formatDate(o.createdAt)}
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        {o.client}
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <span style={{ fontSize: 11 }}>{sa?.province?.trim() || '—'}</span>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <span style={{ fontSize: 11 }}>{sa?.city?.trim() || '—'}</span>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <div
-                          style={{
-                            fontSize: 11,
-                            maxWidth: 220,
-                            wordBreak: 'break-word',
-                            lineHeight: 1.35,
-                            color: ds.textSecondary,
-                          }}
-                        >
-                          {dirLine || '—'}
-                        </div>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>{showPrice}</div>
-                        <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
-                          Shopify: {formatMoneyFromString(o.shopifyTotal, o.currency)}
-                        </div>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>{showQty}</div>
-                        <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>Shopify: {o.shopifyQuantity}</div>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <div style={{ fontSize: 11, color: ds.textSecondary, maxWidth: 200, lineHeight: 1.35 }}>
-                          {summarizeProducts(o.productIds)}
-                        </div>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={{ ...moticoTdPad, ...moticoEstadoThTd }}>
+                      <Td
+                        isLast={i === arr.length - 1}
+                        style={{
+                          ...moticoTdPad,
+                          ...moticoEstadoThTd,
+                          ...moticoStickyEstadoTdBase,
+                          background: `${meta.chipBg}22`,
+                          borderRight: `1px solid ${ds.borderRow}`,
+                        }}
+                      >
                         <div style={moticoEstadoActionsRow}>
                           <div style={moticoEstadoSelectShell}>
                             <select
@@ -1304,6 +1343,89 @@ export default function MoticoPage() {
                               Shopify
                             </a>
                           ) : null}
+                        </div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
+                        <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        {formatDate(o.createdAt)}
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        {o.client}
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoPhoneColumnTd}>
+                        {o.phoneLocal ? (
+                          <button
+                            type="button"
+                            onClick={() => copyPhoneToClipboard(o.phoneLocal || '')}
+                            aria-label={`Copiar teléfono ${o.phoneLocal} al portapapeles`}
+                            title="Clic para copiar"
+                            style={{
+                              margin: 0,
+                              padding: '4px 0',
+                              borderRadius: 8,
+                              border: 'none',
+                              background: 'transparent',
+                              font: 'inherit',
+                              fontSize: 12,
+                              fontWeight: 600,
+                              fontVariantNumeric: 'tabular-nums',
+                              letterSpacing: '0.02em',
+                              color: ds.brand,
+                              cursor: 'pointer',
+                              textAlign: 'left',
+                              whiteSpace: 'nowrap',
+                              lineHeight: 1.35,
+                              textDecoration: 'underline',
+                              textDecorationStyle: 'dotted',
+                              textUnderlineOffset: 3,
+                              width: 'max-content',
+                              maxWidth: 'none',
+                            }}
+                          >
+                            {o.phoneLocal}
+                          </button>
+                        ) : (
+                          <span style={{ fontSize: 11, color: ds.textMuted }}>—</span>
+                        )}
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <span style={{ fontSize: 11 }}>{sa?.province?.trim() || '—'}</span>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <span style={{ fontSize: 11 }}>{sa?.city?.trim() || '—'}</span>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <div
+                          style={{
+                            fontSize: 11,
+                            maxWidth: 220,
+                            wordBreak: 'break-word',
+                            lineHeight: 1.35,
+                            color: ds.textSecondary,
+                          }}
+                        >
+                          {dirLine || '—'}
+                        </div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>{showPrice}</div>
+                        <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
+                          Shopify: {formatMoneyFromString(o.shopifyTotal, o.currency)}
+                        </div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>{showQty}</div>
+                        <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>Shopify: {o.shopifyQuantity}</div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <div style={{ fontSize: 11, color: ds.textSecondary, maxWidth: 200, lineHeight: 1.35 }}>
+                          {summarizeProducts(o.productIds)}
                         </div>
                       </Td>
                     </tr>
@@ -1500,6 +1622,30 @@ export default function MoticoPage() {
               </button>
             </div>
           </div>
+        </div>
+      ) : null}
+      {phoneCopyToastVisible ? (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: 'fixed',
+            bottom: 28,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 10000,
+            padding: '11px 20px',
+            borderRadius: 12,
+            background: '#dcfce7',
+            border: '1px solid #86efac',
+            color: '#14532d',
+            fontSize: 13,
+            fontWeight: 600,
+            boxShadow: '0 12px 32px rgba(15, 23, 42, 0.14)',
+            pointerEvents: 'none',
+          }}
+        >
+          Copiado en portapapeles
         </div>
       ) : null}
     </>
