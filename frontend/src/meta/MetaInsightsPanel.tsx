@@ -128,28 +128,72 @@ function digitsOnlyKey(s: string): string {
   return String(s || '').replace(/\D/g, '');
 }
 
-/**
- * Id de anuncio en UTMs del pedido Shopify: en enlaces de Meta suele ir en
- * utm_content; utm_term a menudo viene vacío. Si el valor parece id numérico
- * largo, se agrupa por solo dígitos para coincidir con row.id de Graph.
- */
-function shopifyUtmAdAttributionKey(utm: ShopifyOrderAttribution['utm']): string | null {
-  if (!utm || typeof utm !== 'object') return null;
-  const term = String(utm['utm_term'] || '').trim();
-  const content = String(utm['utm_content'] || '').trim();
-  const raw = term || content;
-  if (!raw) return null;
-  const d = digitsOnlyKey(raw);
-  if (d.length >= 10) return d;
-  return raw;
+/** Query params de una URL (igual criterio que backend: landing pisa referrer en claves repetidas). */
+function collectQueryParamsFromUrl(raw: string | undefined): Record<string, string> {
+  const out: Record<string, string> = {};
+  const s = String(raw || '').trim();
+  if (!s) return out;
+  try {
+    const href =
+      s.startsWith('http://') || s.startsWith('https://')
+        ? s
+        : `https://shop.local${s.startsWith('/') ? '' : '/'}${s}`;
+    const u = new URL(href);
+    u.searchParams.forEach((v, k) => {
+      const lk = k.toLowerCase();
+      try {
+        out[lk] = decodeURIComponent(String(v).replace(/\+/g, ' '));
+      } catch {
+        out[lk] = String(v);
+      }
+    });
+  } catch {
+    /* ignore */
+  }
+  return out;
 }
 
-function shopifyComprasCountForAdId(counts: Record<string, number>, rowId: string): number {
-  const id = String(rowId || '').trim();
-  if (!id) return 0;
-  const d = digitsOnlyKey(id);
-  if (counts[id]) return counts[id];
-  if (d && counts[d]) return counts[d];
+/**
+ * Una clave por pedido para agrupar “compras por anuncio”: Meta a veces manda
+ * id en h_ad_id, utm_content o utm_term; si solo está en la URL y no en el
+ * objeto utm del backend, se lee desde landing_site / referring_site.
+ */
+function shopifyOrderPrimaryAdKey(o: ShopifyOrderAttribution): string | null {
+  const merged: Record<string, string> = {
+    ...collectQueryParamsFromUrl(o.referringSite),
+    ...collectQueryParamsFromUrl(o.landingSite),
+    ...(o.utm && typeof o.utm === 'object' ? o.utm : {}),
+  };
+  const ordered = ['h_ad_id', 'utm_content', 'utm_term'];
+  for (const k of ordered) {
+    const raw = String(merged[k] || '').trim();
+    if (!raw) continue;
+    const d = digitsOnlyKey(raw);
+    if (d.length >= 10) return d;
+    return raw;
+  }
+  for (const [k, v] of Object.entries(merged)) {
+    if (!k.startsWith('utm_')) continue;
+    const d = digitsOnlyKey(String(v));
+    if (d.length >= 12) return d;
+  }
+  return null;
+}
+
+function shopifyComprasCountForAdRow(counts: Record<string, number>, row: InsightRow): number {
+  const keys = [
+    row.id,
+    digitsOnlyKey(row.id),
+    row.adsetId,
+    digitsOnlyKey(row.adsetId),
+    row.campaignId,
+    digitsOnlyKey(row.campaignId),
+  ]
+    .map((x) => String(x || '').trim())
+    .filter(Boolean);
+  for (const k of keys) {
+    if (counts[k]) return counts[k];
+  }
   return 0;
 }
 
@@ -546,7 +590,7 @@ export function MetaInsightsPanel({
 
       const countsByAd: Record<string, number> = {};
       for (const o of orders) {
-        const key = shopifyUtmAdAttributionKey(o.utm);
+        const key = shopifyOrderPrimaryAdKey(o);
         if (key) {
           countsByAd[key] = (countsByAd[key] || 0) + 1;
         }
@@ -989,7 +1033,7 @@ export function MetaInsightsPanel({
                   key={h}
                   title={
                     h === 'Compras Shopify'
-                      ? 'Pedidos de Shopify cuyo utm_term o utm_content (en landing/referring) coincide con el ID del anuncio; valores numéricos largos se comparan solo por dígitos.'
+                      ? 'Pedidos cuyo h_ad_id o utm_content / utm_term (URL del pedido) coincide con el id del anuncio, adset o campaña (Graph). Ids largos se comparan por dígitos.'
                       : undefined
                   }
                   style={{
@@ -1102,10 +1146,10 @@ export function MetaInsightsPanel({
                     {level === 'ads' && (
                       <td
                         style={{ padding: '12px 16px' }}
-                        title="Compras Shopify: pedidos con utm_term o utm_content alineado al id del anuncio"
+                        title="Compras Shopify: cruce por h_ad_id / UTMs en la URL del pedido vs id de anuncio, adset o campaña"
                       >
                         {shopifyPedidosAvailable
-                          ? formatNumber(shopifyComprasCountForAdId(shopifyComprasByAd, row.id))
+                          ? formatNumber(shopifyComprasCountForAdRow(shopifyComprasByAd, row))
                           : '—'}
                       </td>
                     )}
