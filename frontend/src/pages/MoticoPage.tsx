@@ -76,6 +76,9 @@ const MOTICO_STATUS_OPTIONS = [
   },
 ] as const;
 
+/** Caracteres del estado con texto más largo (ancho mínimo del &lt;select&gt; sin dejar hueco extra). */
+const MOTICO_ESTADO_LONGEST_LABEL_LEN = Math.max(...MOTICO_STATUS_OPTIONS.map((o) => o.label.length));
+
 /** Solo pedidos en este estado pueden generar guías (vista previa / impresión). */
 const MOTICO_STATUS_FOR_GUIDE_PRINT = 'imprimir_guia';
 
@@ -121,18 +124,6 @@ const filterCtl: CSSProperties = {
   minWidth: 0,
 };
 
-const selectStyle: CSSProperties = {
-  width: '100%',
-  minWidth: 260,
-  maxWidth: 340,
-  padding: '6px 8px',
-  borderRadius: 8,
-  border: `1px solid ${ds.borderCard}`,
-  color: ds.textPrimary,
-  fontSize: 12,
-  fontWeight: 600,
-};
-
 /** Separación horizontal entre columnas de la tabla Motico. */
 const MOTICO_COL_GAP_PX = 10;
 
@@ -141,11 +132,11 @@ const MOTICO_CELL_H_PAD = 18;
 const moticoThPad: CSSProperties = { padding: `11px ${MOTICO_CELL_H_PAD}px` };
 const moticoTdPad: CSSProperties = { padding: `12px ${MOTICO_CELL_H_PAD}px` };
 
-/** Columna Estado: select + lápiz + Shopify en fila; ancho mínimo para evitar solapes. */
+/** Columna Estado: ancho según contenido; 20px extra a la derecha (padding). */
 const moticoEstadoThTd: CSSProperties = {
-  minWidth: 460,
-  width: 460,
   verticalAlign: 'middle',
+  width: '0.01%',
+  paddingRight: 20,
 };
 
 const moticoEstadoActionsRow: CSSProperties = {
@@ -153,22 +144,27 @@ const moticoEstadoActionsRow: CSSProperties = {
   alignItems: 'center',
   gap: 8,
   flexWrap: 'nowrap',
-  minWidth: 0,
+  width: 'max-content',
+  maxWidth: '100%',
 };
 
-/** Área del desplegable de estado: ancho mínimo fijo tipo “badge” y tope para no comer el lápiz. */
+/** Select acotado al texto más largo + flecha/padding internos. */
 const moticoEstadoSelectShell: CSSProperties = {
-  flex: '1 1 auto',
-  minWidth: 240,
-  maxWidth: 300,
+  flex: '0 0 auto',
+  minWidth: 0,
 };
 
 const moticoEstadoSelectStyle: CSSProperties = {
-  ...selectStyle,
-  width: '100%',
-  minWidth: 0,
-  maxWidth: '100%',
+  padding: '6px 8px',
+  borderRadius: 8,
+  border: `1px solid ${ds.borderCard}`,
+  color: ds.textPrimary,
+  fontSize: 12,
+  fontWeight: 600,
   boxSizing: 'border-box',
+  width: 'auto',
+  minWidth: `calc(${MOTICO_ESTADO_LONGEST_LABEL_LEN}ch + 36px)`,
+  maxWidth: 'none',
 };
 
 /** Primera columna (checkbox): fija al hacer scroll horizontal. */
@@ -1130,7 +1126,7 @@ export default function MoticoPage() {
                 ...tableBase,
                 borderCollapse: 'separate',
                 borderSpacing: `${MOTICO_COL_GAP_PX}px 0`,
-                minWidth: 1760 + 11 * MOTICO_COL_GAP_PX,
+                minWidth: 1600 + 11 * MOTICO_COL_GAP_PX,
               }}
             >
               <thead>
