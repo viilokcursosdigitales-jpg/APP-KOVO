@@ -107,19 +107,6 @@ function cityKeyFromRow(row: ShopifyOrderRow) {
     .toLowerCase();
 }
 
-const copyPhoneBtnStyle: CSSProperties = {
-  padding: '4px 8px',
-  borderRadius: 6,
-  border: `1px solid ${ds.borderCard}`,
-  background: ds.bgCard,
-  color: ds.brand,
-  fontWeight: 600,
-  fontSize: 10,
-  cursor: 'pointer',
-  flexShrink: 0,
-  whiteSpace: 'nowrap',
-};
-
 function orderMatchesCityFilter(row: ShopifyOrderRow, selectedKeys: string[]) {
   if (!selectedKeys.length) return true;
   const k = cityKeyFromRow(row);
@@ -250,8 +237,8 @@ export default function PedidosPage() {
   const [cityMenuOpen, setCityMenuOpen] = useState(false);
   const cityFilterWrapRef = useRef<HTMLDivElement>(null);
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
-  const [copiedPhoneOrderId, setCopiedPhoneOrderId] = useState<number | null>(null);
-  const copiedPhoneTimerRef = useRef<number | null>(null);
+  const [phoneCopyToastVisible, setPhoneCopyToastVisible] = useState(false);
+  const phoneCopyToastTimerRef = useRef<number | null>(null);
 
   const bulkActionBusy = bulkStatusApplying || bulkMensajeroApplying;
 
@@ -286,25 +273,31 @@ export default function PedidosPage() {
     };
   }, []);
 
-  const copyOrderPhone = useCallback((orderId: number, digits: string) => {
+  const copyPhoneToClipboard = useCallback((digits: string) => {
     const t = digits.trim();
     if (!t) return;
-    if (copiedPhoneTimerRef.current != null) {
-      window.clearTimeout(copiedPhoneTimerRef.current);
-      copiedPhoneTimerRef.current = null;
+    if (phoneCopyToastTimerRef.current != null) {
+      window.clearTimeout(phoneCopyToastTimerRef.current);
+      phoneCopyToastTimerRef.current = null;
     }
     void navigator.clipboard.writeText(t).then(
       () => {
-        setCopiedPhoneOrderId(orderId);
-        copiedPhoneTimerRef.current = window.setTimeout(() => {
-          setCopiedPhoneOrderId((cur) => (cur === orderId ? null : cur));
-          copiedPhoneTimerRef.current = null;
-        }, 2000);
+        setPhoneCopyToastVisible(true);
+        phoneCopyToastTimerRef.current = window.setTimeout(() => {
+          setPhoneCopyToastVisible(false);
+          phoneCopyToastTimerRef.current = null;
+        }, 2600);
       },
       () => {
-        window.alert('No se pudo copiar. Selecciona el número manualmente.');
+        window.alert('No se pudo copiar. Comprueba los permisos del navegador.');
       },
     );
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (phoneCopyToastTimerRef.current != null) window.clearTimeout(phoneCopyToastTimerRef.current);
+    };
   }, []);
 
   const loadShopifyOrders = useCallback(
@@ -1182,39 +1175,35 @@ export default function PedidosPage() {
                           <Td isLast={i === arr.length - 1}>{o.client}</Td>
                           <Td isLast={i === arr.length - 1}>
                             {o.phoneLocal ? (
-                              <div
+                              <button
+                                type="button"
+                                onClick={() => copyPhoneToClipboard(o.phoneLocal || '')}
+                                aria-label={`Copiar teléfono ${o.phoneLocal} al portapapeles`}
+                                title="Clic para copiar"
                                 style={{
-                                  display: 'flex',
-                                  flexDirection: 'column',
-                                  alignItems: 'flex-start',
-                                  gap: 6,
                                   maxWidth: 200,
+                                  margin: 0,
+                                  padding: '4px 6px',
+                                  borderRadius: 8,
+                                  border: 'none',
+                                  background: 'transparent',
+                                  font: 'inherit',
+                                  fontSize: 12,
+                                  fontWeight: 600,
+                                  fontVariantNumeric: 'tabular-nums',
+                                  letterSpacing: '0.02em',
+                                  color: ds.brand,
+                                  cursor: 'pointer',
+                                  textAlign: 'left',
+                                  wordBreak: 'break-all',
+                                  lineHeight: 1.35,
+                                  textDecoration: 'underline',
+                                  textDecorationStyle: 'dotted',
+                                  textUnderlineOffset: 3,
                                 }}
                               >
-                                <span
-                                  style={{
-                                    fontSize: 12,
-                                    fontWeight: 600,
-                                    fontVariantNumeric: 'tabular-nums',
-                                    letterSpacing: '0.02em',
-                                    userSelect: 'all',
-                                    cursor: 'text',
-                                    wordBreak: 'break-all',
-                                    lineHeight: 1.3,
-                                  }}
-                                  title="Selecciona o usa Copiar"
-                                >
-                                  {o.phoneLocal}
-                                </span>
-                                <button
-                                  type="button"
-                                  onClick={() => copyOrderPhone(o.id, o.phoneLocal || '')}
-                                  style={copyPhoneBtnStyle}
-                                  aria-label={`Copiar teléfono ${o.phoneLocal}`}
-                                >
-                                  {copiedPhoneOrderId === o.id ? 'Copiado' : 'Copiar'}
-                                </button>
-                              </div>
+                                {o.phoneLocal}
+                              </button>
                             ) : (
                               <span style={{ fontSize: 11, color: ds.textMuted }}>—</span>
                             )}
@@ -1351,6 +1340,30 @@ export default function PedidosPage() {
           <div style={{ padding: 16, fontSize: 13, color: ds.textMuted }}>No hay pedidos en este filtro.</div>
         ) : null}
       </DataTable>
+      {phoneCopyToastVisible ? (
+        <div
+          role="status"
+          aria-live="polite"
+          style={{
+            position: 'fixed',
+            bottom: 28,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 10000,
+            padding: '11px 20px',
+            borderRadius: 12,
+            background: '#dcfce7',
+            border: '1px solid #86efac',
+            color: '#14532d',
+            fontSize: 13,
+            fontWeight: 600,
+            boxShadow: '0 12px 32px rgba(15, 23, 42, 0.14)',
+            pointerEvents: 'none',
+          }}
+        >
+          Copiado en portapapeles
+        </div>
+      ) : null}
     </>
   );
 }
