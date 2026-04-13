@@ -321,6 +321,37 @@ function phoneWithoutColombia57(input) {
 }
 
 /**
+ * Extrae parámetros utm_* de la query de una URL o ruta (p. ej. landing_site de Shopify).
+ * @param {string} rawUrl * @returns {Record<string, string>} claves en minúsculas (utm_campaign, …)
+ */
+function extractUtmParamsFromUrl(rawUrl) {
+  const raw = String(rawUrl || '').trim();
+  if (!raw) return {};
+  try {
+    const href =
+      raw.startsWith('http://') || raw.startsWith('https://')
+        ? raw
+        : `https://shop.local${raw.startsWith('/') ? '' : '/'}${raw}`;
+    const u = new URL(href);
+    /** @type {Record<string, string>} */
+    const out = {};
+    u.searchParams.forEach((v, k) => {
+      const lk = k.toLowerCase();
+      if (lk.startsWith('utm_')) {
+        try {
+          out[lk] = decodeURIComponent(String(v).replace(/\+/g, ' '));
+        } catch {
+          out[lk] = String(v);
+        }
+      }
+    });
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
  * Mapea pedidos REST Admin a filas listas para el front (Pedidos KOVO).
  * @param {object|null} apiData cuerpo JSON de orders.json
  * @returns {object[]}
@@ -372,6 +403,12 @@ function normalizeShopifyOrdersForApp(apiData) {
       (customer.phone != null ? String(customer.phone).trim() : '') ||
       '';
     const phoneLocal = phoneWithoutColombia57(rawPhone);
+    const landingSite = o.landing_site != null ? String(o.landing_site) : '';
+    const referringSite = o.referring_site != null ? String(o.referring_site) : '';
+    const sourceName = o.source_name != null ? String(o.source_name) : '';
+    const utmFromReferrer = extractUtmParamsFromUrl(referringSite);
+    const utmFromLanding = extractUtmParamsFromUrl(landingSite);
+    const utm = { ...utmFromReferrer, ...utmFromLanding };
     return {
       id: o.id,
       orderName,
@@ -396,6 +433,10 @@ function normalizeShopifyOrdersForApp(apiData) {
       shippingAddressLine: shippingAddressLine || '',
       phoneLocal: phoneLocal || '',
       lineItemsDetail,
+      landingSite,
+      referringSite,
+      sourceName,
+      utm,
     };
   });
 }
@@ -422,6 +463,7 @@ module.exports = {
   shopifyUpdateOrderShippingAddress,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
+  extractUtmParamsFromUrl,
   mapFinancialToBadge,
   DEFAULT_API_VERSION,
 };

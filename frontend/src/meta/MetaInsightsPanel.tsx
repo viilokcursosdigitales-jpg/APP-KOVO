@@ -112,6 +112,109 @@ type Totals = {
   cpa: number;
 };
 
+type ShopifyOrderAttribution = {
+  productIds?: number[];
+  utm?: Record<string, string>;
+  landingSite?: string;
+  referringSite?: string;
+  sourceName?: string;
+};
+
+function normalizeAttributionKey(s: string): string {
+  return s.trim().toLowerCase().replace(/\s+/g, ' ');
+}
+
+function digitsOnlyKey(s: string): string {
+  return String(s || '').replace(/\D/g, '');
+}
+
+/** Campañas únicas presentes en insights (nombre solo en nivel campañas). */
+function campaignsFromInsightRows(rows: InsightRow[], level: InsightLevel): { id: string; name: string }[] {
+  const map = new Map<string, string>();
+  for (const r of rows) {
+    const cid = campaignIdForInsightRow(r, level);
+    if (!cid) continue;
+    if (level === 'campaigns') {
+      map.set(cid, r.name || '');
+    } else if (!map.has(cid)) {
+      map.set(cid, '');
+    }
+  }
+  return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+}
+
+/**
+ * Cruza utm_campaign / utm_content de Shopify con id o nombre de campaña Meta.
+ * utm_content solo se usa para coincidencia por id (muchas tiendas guardan ahí el id dinámico).
+ */
+function campaignsMatchedByUtm(
+  utm: Record<string, string>,
+  campaignRows: { id: string; name: string }[],
+): Set<string> {
+  const matched = new Set<string>();
+  const campRaw = (utm['utm_campaign'] || '').trim();
+  const contentRaw = (utm['utm_content'] || '').trim();
+
+  for (const c of campaignRows) {
+    const idStr = String(c.id || '').trim();
+    if (!idStr) continue;
+    const nameNorm = c.name ? normalizeAttributionKey(c.name) : '';
+
+    if (campRaw) {
+      const tNorm = normalizeAttributionKey(campRaw);
+      const tDig = digitsOnlyKey(campRaw);
+      const idDig = digitsOnlyKey(idStr);
+      if (campRaw === idStr || (tDig.length > 0 && tDig === idDig)) {
+        matched.add(idStr);
+        continue;
+      }
+      if (nameNorm && tNorm && nameNorm === tNorm) {
+        matched.add(idStr);
+        continue;
+      }
+      if (nameNorm && tNorm && nameNorm.length >= 6 && tNorm.length >= 6) {
+        if (tNorm.includes(nameNorm) || nameNorm.includes(tNorm)) {
+          matched.add(idStr);
+          continue;
+        }
+      }
+    }
+
+    if (contentRaw) {
+      const cDig = digitsOnlyKey(contentRaw);
+      const idDig = digitsOnlyKey(idStr);
+      if (contentRaw === idStr || (cDig.length > 0 && cDig === idDig)) {
+        matched.add(idStr);
+      }
+    }
+  }
+
+  return matched;
+}
+
+function productCampaignMatches(productIds: number[], productToCampaigns: Map<number, string[]>): Set<string> {
+  const matched = new Set<string>();
+  for (const pid of productIds) {
+    for (const cid of productToCampaigns.get(pid) || []) {
+      matched.add(cid);
+    }
+  }
+  return matched;
+}
+
+/** Prioridad: UTMs en landing/referring (servidor); si no hay match, productos vinculados en KOVO. */
+function attributeOrderToCampaigns(
+  order: ShopifyOrderAttribution,
+  campaignRows: { id: string; name: string }[],
+  productToCampaigns: Map<number, string[]>,
+): Set<string> {
+  const utm = order.utm && typeof order.utm === 'object' ? order.utm : {};
+  const byUtm = campaignsMatchedByUtm(utm, campaignRows);
+  if (byUtm.size > 0) return byUtm;
+  const pids = Array.isArray(order.productIds) ? order.productIds : [];
+  return productCampaignMatches(pids, productToCampaigns);
+}
+
 /** effective_status de Meta: ACTIVE → pausar; PAUSED → reactivar. */
 function campaignMetaControlKind(status: string): 'pause' | 'activate' | null {
   const u = String(status || '').toUpperCase();
@@ -386,7 +489,10 @@ export function MetaInsightsPanel({
         created_at_max: range.max,
       });
       const res = await apiFetch(`/api/shopify/orders?${qs.toString()}`);
-      const raw = (await res.json().catch(() => ({}))) as { code?: string; orders?: { productIds?: number[] }[] };
+      const raw = (await res.json().catch(() => ({}))) as {
+        code?: string;
+        orders?: ShopifyOrderAttribution[];
+      };
       if (!res.ok) {
         setShopifyPedidosByCampaign({});
         setShopifyPedidosAvailable(false);
@@ -400,15 +506,10 @@ export function MetaInsightsPanel({
           productToCampaigns.get(pid)!.push(cid);
         }
       }
+      const campaignRows = campaignsFromInsightRows(rows, level);
       const counts: Record<string, number> = {};
       for (const o of orders) {
-        const pids = Array.isArray(o.productIds) ? o.productIds : [];
-        const matchedCampaigns = new Set<string>();
-        for (const pid of pids) {
-          for (const c of productToCampaigns.get(pid) || []) {
-            matchedCampaigns.add(c);
-          }
-        }
+        const matchedCampaigns = attributeOrderToCampaigns(o, campaignRows, productToCampaigns);
         for (const c of matchedCampaigns) {
           counts[c] = (counts[c] || 0) + 1;
         }
@@ -419,7 +520,7 @@ export function MetaInsightsPanel({
       setShopifyPedidosByCampaign({});
       setShopifyPedidosAvailable(false);
     }
-  }, [period, campaignProductLinks]);
+  }, [period, campaignProductLinks, rows, level]);
 
   useEffect(() => {
     void loadShopifyPedidosCounts();
@@ -849,7 +950,7 @@ export function MetaInsightsPanel({
                   key={h}
                   title={
                     h === 'Pedidos Shopify'
-                      ? 'Cantidad de pedidos en Shopify en el período seleccionado que incluyen al menos un producto vinculado a la campaña en KOVO (máx. 250 pedidos devueltos por la API).'
+                      ? 'Atribución por UTMs de landing_site/referring_site del pedido (utm_campaign e id en utm_content) frente a campañas Meta; si no hay match, se usan productos vinculados en KOVO. Máx. 250 pedidos por petición.'
                       : undefined
                   }
                   style={{
@@ -961,7 +1062,10 @@ export function MetaInsightsPanel({
                     <td style={{ padding: '12px 16px' }}>
                       {row.spend > 0 && row.revenue > 0 ? formatRoasMeta(row.revenue / row.spend) : '—'}
                     </td>
-                    <td style={{ padding: '12px 16px' }} title="Pedidos Shopify: cantidad de pedidos">
+                    <td
+                      style={{ padding: '12px 16px' }}
+                      title="Pedidos atribuidos por UTM (Shopify) o por productos vinculados a la campaña"
+                    >
                       {pedidosShopify === null ? '—' : formatNumber(pedidosShopify)}
                     </td>
                   </tr>
