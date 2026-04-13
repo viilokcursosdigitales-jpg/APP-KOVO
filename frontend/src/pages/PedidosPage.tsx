@@ -1177,7 +1177,6 @@ export default function PedidosPage() {
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
-                            <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
                           </Td>
                           <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
                           <Td isLast={i === arr.length - 1}>{o.client}</Td>
@@ -1332,7 +1331,6 @@ export default function PedidosPage() {
                       <tr key={o.id}>
                         <Td isLast={i === arr.length - 1}>
                           <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.id}</div>
-                          <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
                         </Td>
                         <Td isLast={i === arr.length - 1}>{o.date}</Td>
                         <Td isLast={i === arr.length - 1}>{o.client}</Td>
