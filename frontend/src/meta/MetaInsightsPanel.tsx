@@ -153,31 +153,80 @@ function collectQueryParamsFromUrl(raw: string | undefined): Record<string, stri
   return out;
 }
 
-/**
- * Una clave por pedido para agrupar “compras por anuncio”: Meta a veces manda
- * id en h_ad_id, utm_content o utm_term; si solo está en la URL y no en el
- * objeto utm del backend, se lee desde landing_site / referring_site.
- */
-function shopifyOrderPrimaryAdKey(o: ShopifyOrderAttribution): string | null {
-  const merged: Record<string, string> = {
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Texto amplio donde puede aparecer el id de Meta (URL cruda + params parseados). */
+function buildShopifyAttributionHaystack(o: ShopifyOrderAttribution): string {
+  const merged = {
     ...collectQueryParamsFromUrl(o.referringSite),
     ...collectQueryParamsFromUrl(o.landingSite),
     ...(o.utm && typeof o.utm === 'object' ? o.utm : {}),
   };
-  const ordered = ['h_ad_id', 'utm_content', 'utm_term'];
-  for (const k of ordered) {
-    const raw = String(merged[k] || '').trim();
-    if (!raw) continue;
-    const d = digitsOnlyKey(raw);
-    if (d.length >= 10) return d;
-    return raw;
+  const valueParts = Object.values(merged).map((v) => String(v));
+  const blobs = [
+    o.landingSite,
+    o.referringSite,
+    JSON.stringify(o.utm || {}),
+    ...valueParts,
+  ].filter(Boolean) as string[];
+  let s = blobs.join(' ').toLowerCase();
+  try {
+    s = decodeURIComponent(s.replace(/\+/g, ' '));
+  } catch {
+    /* ignore */
   }
-  for (const [k, v] of Object.entries(merged)) {
-    if (!k.startsWith('utm_')) continue;
-    const d = digitsOnlyKey(String(v));
-    if (d.length >= 12) return d;
+  return s;
+}
+
+/** Evita coincidencias parciales entre ids numéricos distintos (límites no-dígito). */
+function haystackContainsMetaEntityId(hay: string, metaId: string | undefined): boolean {
+  const raw = String(metaId || '').trim();
+  if (!raw || !hay) return false;
+  if (hay.includes(raw.toLowerCase())) return true;
+  const digits = digitsOnlyKey(raw);
+  if (digits.length < 10) return false;
+  try {
+    const re = new RegExp(`(^|[^0-9])${escapeRegExp(digits)}([^0-9]|$)`);
+    return re.test(hay);
+  } catch {
+    return hay.includes(digits);
   }
-  return null;
+}
+
+/**
+ * Cuenta pedidos por id de anuncio (clave = row.id de Graph).
+ * 1) Si en el pedido aparece el id del anuncio → +1 a ese anuncio.
+ * 2) Si no, pero aparece adset o campaña de esa fila → +1 a cada anuncio que comparta ese adset/campaña (aprox.).
+ */
+function buildCountsByAdFromOrders(rows: InsightRow[], orders: ShopifyOrderAttribution[]): Record<string, number> {
+  const countsByAd: Record<string, number> = {};
+  if (rows.length === 0 || orders.length === 0) return countsByAd;
+
+  for (const o of orders) {
+    const hay = buildShopifyAttributionHaystack(o);
+    if (!hay) continue;
+
+    const direct = rows.find((r) => {
+      const adId = String(r.id || '').trim();
+      return adId && haystackContainsMetaEntityId(hay, adId);
+    });
+    if (direct) {
+      const adId = String(direct.id).trim();
+      countsByAd[adId] = (countsByAd[adId] || 0) + 1;
+      continue;
+    }
+
+    for (const r of rows) {
+      const adId = String(r.id || '').trim();
+      if (!adId) continue;
+      if (haystackContainsMetaEntityId(hay, r.adsetId) || haystackContainsMetaEntityId(hay, r.campaignId)) {
+        countsByAd[adId] = (countsByAd[adId] || 0) + 1;
+      }
+    }
+  }
+  return countsByAd;
 }
 
 function shopifyComprasCountForAdRow(counts: Record<string, number>, row: InsightRow): number {
@@ -588,13 +637,7 @@ export function MetaInsightsPanel({
       }
       setShopifyPedidosByCampaign(counts);
 
-      const countsByAd: Record<string, number> = {};
-      for (const o of orders) {
-        const key = shopifyOrderPrimaryAdKey(o);
-        if (key) {
-          countsByAd[key] = (countsByAd[key] || 0) + 1;
-        }
-      }
+      const countsByAd = level === 'ads' ? buildCountsByAdFromOrders(rows, orders) : {};
       setShopifyComprasByAd(countsByAd);
 
       setShopifyPedidosAvailable(true);
@@ -1033,7 +1076,7 @@ export function MetaInsightsPanel({
                   key={h}
                   title={
                     h === 'Compras Shopify'
-                      ? 'Pedidos cuyo h_ad_id o utm_content / utm_term (URL del pedido) coincide con el id del anuncio, adset o campaña (Graph). Ids largos se comparan por dígitos.'
+                      ? 'Pedidos cuyo landing_site / referring_site / UTMs contienen el id del anuncio (Graph); si no, el id de adset o campaña de esa fila. Ids numéricos con límites para evitar coincidencias parciales.'
                       : undefined
                   }
                   style={{
@@ -1146,7 +1189,7 @@ export function MetaInsightsPanel({
                     {level === 'ads' && (
                       <td
                         style={{ padding: '12px 16px' }}
-                        title="Compras Shopify: cruce por h_ad_id / UTMs en la URL del pedido vs id de anuncio, adset o campaña"
+                        title="Compras Shopify: pedidos cuyo texto de atribución (URL + UTMs) incluye el id del anuncio, o en su defecto el adset/campaña de la fila"
                       >
                         {shopifyPedidosAvailable
                           ? formatNumber(shopifyComprasCountForAdRow(shopifyComprasByAd, row))
