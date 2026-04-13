@@ -128,6 +128,31 @@ function digitsOnlyKey(s: string): string {
   return String(s || '').replace(/\D/g, '');
 }
 
+/**
+ * Id de anuncio en UTMs del pedido Shopify: en enlaces de Meta suele ir en
+ * utm_content; utm_term a menudo viene vacío. Si el valor parece id numérico
+ * largo, se agrupa por solo dígitos para coincidir con row.id de Graph.
+ */
+function shopifyUtmAdAttributionKey(utm: ShopifyOrderAttribution['utm']): string | null {
+  if (!utm || typeof utm !== 'object') return null;
+  const term = String(utm['utm_term'] || '').trim();
+  const content = String(utm['utm_content'] || '').trim();
+  const raw = term || content;
+  if (!raw) return null;
+  const d = digitsOnlyKey(raw);
+  if (d.length >= 10) return d;
+  return raw;
+}
+
+function shopifyComprasCountForAdId(counts: Record<string, number>, rowId: string): number {
+  const id = String(rowId || '').trim();
+  if (!id) return 0;
+  const d = digitsOnlyKey(id);
+  if (counts[id]) return counts[id];
+  if (d && counts[d]) return counts[d];
+  return 0;
+}
+
 /** Campañas únicas presentes en insights (nombre solo en nivel campañas). */
 function campaignsFromInsightRows(rows: InsightRow[], level: InsightLevel): { id: string; name: string }[] {
   const map = new Map<string, string>();
@@ -521,9 +546,9 @@ export function MetaInsightsPanel({
 
       const countsByAd: Record<string, number> = {};
       for (const o of orders) {
-        const adId = o.utm?.utm_term?.trim();
-        if (adId) {
-          countsByAd[adId] = (countsByAd[adId] || 0) + 1;
+        const key = shopifyUtmAdAttributionKey(o.utm);
+        if (key) {
+          countsByAd[key] = (countsByAd[key] || 0) + 1;
         }
       }
       setShopifyComprasByAd(countsByAd);
@@ -964,7 +989,7 @@ export function MetaInsightsPanel({
                   key={h}
                   title={
                     h === 'Compras Shopify'
-                      ? 'Pedidos de Shopify con utm_term igual al ID del anuncio de Meta'
+                      ? 'Pedidos de Shopify cuyo utm_term o utm_content (en landing/referring) coincide con el ID del anuncio; valores numéricos largos se comparan solo por dígitos.'
                       : undefined
                   }
                   style={{
@@ -1077,10 +1102,10 @@ export function MetaInsightsPanel({
                     {level === 'ads' && (
                       <td
                         style={{ padding: '12px 16px' }}
-                        title="Compras atribuidas por utm_term del anuncio (Shopify)"
+                        title="Compras Shopify: pedidos con utm_term o utm_content alineado al id del anuncio"
                       >
                         {shopifyPedidosAvailable
-                          ? formatNumber(shopifyComprasByAd[row.id] ?? 0)
+                          ? formatNumber(shopifyComprasCountForAdId(shopifyComprasByAd, row.id))
                           : '—'}
                       </td>
                     )}
