@@ -360,6 +360,7 @@ export function MetaInsightsPanel({
     text: string;
   } | null>(null);
   const [shopifyPedidosByCampaign, setShopifyPedidosByCampaign] = useState<Record<string, number>>({});
+  const [shopifyComprasByAd, setShopifyComprasByAd] = useState<Record<string, number>>({});
   const [shopifyPedidosAvailable, setShopifyPedidosAvailable] = useState(false);
 
   useEffect(() => {
@@ -479,6 +480,7 @@ export function MetaInsightsPanel({
     const range = shopifyDateRangeForMetaPeriod(period);
     if (!range) {
       setShopifyPedidosByCampaign({});
+      setShopifyComprasByAd({});
       setShopifyPedidosAvailable(false);
       return;
     }
@@ -495,6 +497,7 @@ export function MetaInsightsPanel({
       };
       if (!res.ok) {
         setShopifyPedidosByCampaign({});
+        setShopifyComprasByAd({});
         setShopifyPedidosAvailable(false);
         return;
       }
@@ -515,9 +518,20 @@ export function MetaInsightsPanel({
         }
       }
       setShopifyPedidosByCampaign(counts);
+
+      const countsByAd: Record<string, number> = {};
+      for (const o of orders) {
+        const adId = o.utm?.utm_term?.trim();
+        if (adId) {
+          countsByAd[adId] = (countsByAd[adId] || 0) + 1;
+        }
+      }
+      setShopifyComprasByAd(countsByAd);
+
       setShopifyPedidosAvailable(true);
     } catch {
       setShopifyPedidosByCampaign({});
+      setShopifyComprasByAd({});
       setShopifyPedidosAvailable(false);
     }
   }, [period, campaignProductLinks, rows, level]);
@@ -608,7 +622,7 @@ export function MetaInsightsPanel({
     void load();
   }, [load]);
 
-  const tableColCount = level === 'campaigns' ? 16 : 15;
+  const tableColCount = level === 'campaigns' ? 15 : level === 'ads' ? 15 : 14;
 
   const setCampaignStatusOnMeta = useCallback(
     async (campaignId: string, name: string, next: 'PAUSED' | 'ACTIVE') => {
@@ -944,13 +958,13 @@ export function MetaInsightsPanel({
                 'CPC',
                 'ROAS',
                 'ROAS SHOPIFY',
-                'Pedidos Shopify',
+                ...(level === 'ads' ? ['Compras Shopify'] : []),
               ].map((h) => (
                 <th
                   key={h}
                   title={
-                    h === 'Pedidos Shopify'
-                      ? 'Atribución por UTMs de landing_site/referring_site del pedido (utm_campaign e id en utm_content) frente a campañas Meta; si no hay match, se usan productos vinculados en KOVO. Máx. 250 pedidos por petición.'
+                    h === 'Compras Shopify'
+                      ? 'Pedidos de Shopify con utm_term igual al ID del anuncio de Meta'
                       : undefined
                   }
                   style={{
@@ -999,8 +1013,6 @@ export function MetaInsightsPanel({
                            filteredRows.map((row) => {
                 const ev = buildRowTargetEvaluation(row, level, campaignProductLinks, targetsByProduct);
                 const rowBg = insightRowBg(ev.rowHighlight);
-                const campId = campaignIdForInsightRow(row, level);
-                const pedidosShopify = shopifyPedidosAvailable ? shopifyPedidosByCampaign[campId] ?? 0 : null;
                 return (
                   <tr
                     key={`${row.adAccountId}-${row.id}`}
@@ -1062,12 +1074,16 @@ export function MetaInsightsPanel({
                     <td style={{ padding: '12px 16px' }}>
                       {row.spend > 0 && row.revenue > 0 ? formatRoasMeta(row.revenue / row.spend) : '—'}
                     </td>
-                    <td
-                      style={{ padding: '12px 16px' }}
-                      title="Pedidos atribuidos por UTM (Shopify) o por productos vinculados a la campaña"
-                    >
-                      {pedidosShopify === null ? '—' : formatNumber(pedidosShopify)}
-                    </td>
+                    {level === 'ads' && (
+                      <td
+                        style={{ padding: '12px 16px' }}
+                        title="Compras atribuidas por utm_term del anuncio (Shopify)"
+                      >
+                        {shopifyPedidosAvailable
+                          ? formatNumber(shopifyComprasByAd[row.id] ?? 0)
+                          : '—'}
+                      </td>
+                    )}
                   </tr>
                 );
               })
