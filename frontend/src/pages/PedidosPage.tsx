@@ -6,6 +6,8 @@ import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
 import {
   orderListStickyCheckboxTd,
   orderListStickyCheckboxTh,
+  orderListStickyEstadoTd,
+  orderListStickyEstadoTh,
   orderListTableScrollWrapperStyle,
   orderListTheadStickyCell,
 } from '../design-system/orderListTableScroll';
@@ -132,6 +134,21 @@ const selectStyle: CSSProperties = {
   color: ds.textPrimary,
   fontSize: 11,
   fontWeight: 600,
+};
+
+/** Columna teléfono: solo el ancho del número (+ padding 5px a cada lado en la celda). */
+const phoneColumnThStyle: CSSProperties = {
+  ...orderListTheadStickyCell,
+  width: '1%',
+  whiteSpace: 'nowrap',
+  padding: '11px 5px',
+};
+
+const phoneColumnTdStyle: CSSProperties = {
+  width: '1%',
+  whiteSpace: 'nowrap',
+  padding: '12px 5px',
+  verticalAlign: 'middle',
 };
 
 /** Select Estado en tabla: ancho según texto, sin tope artificial. */
@@ -1149,12 +1166,22 @@ export default function PedidosPage() {
                       />
                     </Th>
                   ) : null}
+                  <Th
+                    style={{
+                      ...(useLive ? orderListStickyEstadoTh : orderListTheadStickyCell),
+                      padding: 8,
+                      borderRadius: 8,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Estado
+                  </Th>
                   <Th style={orderListTheadStickyCell}>Pedido</Th>
                   <Th style={orderListTheadStickyCell}>Fecha</Th>
                   <Th style={orderListTheadStickyCell}>Cliente</Th>
                   {useLive ? (
                     <>
-                      <Th style={orderListTheadStickyCell}>Teléfono</Th>
+                      <Th style={phoneColumnThStyle}>Teléfono</Th>
                       <Th style={orderListTheadStickyCell}>Ciudad</Th>
                       <Th style={orderListTheadStickyCell}>Departamento</Th>
                       <Th style={orderListTheadStickyCell}>Dirección</Th>
@@ -1163,16 +1190,6 @@ export default function PedidosPage() {
                   <Th style={orderListTheadStickyCell}>Precio</Th>
                   <Th style={orderListTheadStickyCell}>Cant.</Th>
                   <Th style={orderListTheadStickyCell}>Pago (Shopify)</Th>
-                  <Th
-                    style={{
-                      ...orderListTheadStickyCell,
-                      padding: 8,
-                      borderRadius: 8,
-                      whiteSpace: 'nowrap',
-                    }}
-                  >
-                    Estado
-                  </Th>
                   <Th style={orderListTheadStickyCell}>Mensajero</Th>
                   {useLive ? <Th style={orderListTheadStickyCell} /> : null}
                 </tr>
@@ -1198,12 +1215,40 @@ export default function PedidosPage() {
                               style={{ accentColor: ds.brand, width: 16, height: 16, cursor: 'pointer' }}
                             />
                           </Td>
+                          <Td
+                            isLast={i === arr.length - 1}
+                            style={{
+                              ...orderListStickyEstadoTd,
+                              padding: 8,
+                              verticalAlign: 'middle',
+                              borderRadius: 8,
+                            }}
+                          >
+                            <select
+                              style={{
+                                ...estadoSelectInTableStyle,
+                                ...estadoSelectStyle(o.internal_status),
+                              }}
+                              value={o.internal_status}
+                              onChange={(e) => void patchLocalFields(o.id, { internal_status: e.target.value })}
+                            >
+                              {INTERNAL_OPTIONS.map((opt) => (
+                                <option
+                                  key={opt.value}
+                                  value={opt.value}
+                                  style={estadoOptionStyle(opt.value)}
+                                >
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </Td>
                           <Td isLast={i === arr.length - 1}>
                             <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
                           </Td>
                           <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
                           <Td isLast={i === arr.length - 1}>{o.client}</Td>
-                          <Td isLast={i === arr.length - 1}>
+                          <Td isLast={i === arr.length - 1} style={phoneColumnTdStyle}>
                             {o.phoneLocal ? (
                               <button
                                 type="button"
@@ -1211,9 +1256,8 @@ export default function PedidosPage() {
                                 aria-label={`Copiar teléfono ${o.phoneLocal} al portapapeles`}
                                 title="Clic para copiar"
                                 style={{
-                                  maxWidth: 200,
                                   margin: 0,
-                                  padding: '4px 6px',
+                                  padding: '4px 0',
                                   borderRadius: 8,
                                   border: 'none',
                                   background: 'transparent',
@@ -1225,11 +1269,13 @@ export default function PedidosPage() {
                                   color: ds.brand,
                                   cursor: 'pointer',
                                   textAlign: 'left',
-                                  wordBreak: 'break-all',
+                                  whiteSpace: 'nowrap',
                                   lineHeight: 1.35,
                                   textDecoration: 'underline',
                                   textDecorationStyle: 'dotted',
                                   textUnderlineOffset: 3,
+                                  width: 'max-content',
+                                  maxWidth: 'none',
                                 }}
                               >
                                 {o.phoneLocal}
@@ -1293,33 +1339,6 @@ export default function PedidosPage() {
                           <Td isLast={i === arr.length - 1}>
                             <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
                           </Td>
-                          <Td
-                            isLast={i === arr.length - 1}
-                            style={{
-                              padding: 8,
-                              verticalAlign: 'middle',
-                              borderRadius: 8,
-                            }}
-                          >
-                            <select
-                              style={{
-                                ...estadoSelectInTableStyle,
-                                ...estadoSelectStyle(o.internal_status),
-                              }}
-                              value={o.internal_status}
-                              onChange={(e) => void patchLocalFields(o.id, { internal_status: e.target.value })}
-                            >
-                              {INTERNAL_OPTIONS.map((opt) => (
-                                <option
-                                  key={opt.value}
-                                  value={opt.value}
-                                  style={estadoOptionStyle(opt.value)}
-                                >
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
-                          </Td>
                           <Td isLast={i === arr.length - 1}>
                             <select
                               style={{ ...selectStyle, ...mensajeroSelectStyle(o.mensajero) }}
@@ -1358,6 +1377,9 @@ export default function PedidosPage() {
                     })
                   : filteredDemo.map((o, i, arr) => (
                       <tr key={o.id}>
+                        <Td isLast={i === arr.length - 1} style={{ padding: 8, borderRadius: 8 }}>
+                          —
+                        </Td>
                         <Td isLast={i === arr.length - 1}>
                           <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.id}</div>
                         </Td>
@@ -1367,9 +1389,6 @@ export default function PedidosPage() {
                         <Td isLast={i === arr.length - 1}>—</Td>
                         <Td isLast={i === arr.length - 1}>
                           <StatusBadge variant={o.st}>{o.lb}</StatusBadge>
-                        </Td>
-                        <Td isLast={i === arr.length - 1} style={{ padding: 8, borderRadius: 8 }}>
-                          —
                         </Td>
                         <Td isLast={i === arr.length - 1}>—</Td>
                       </tr>

@@ -50,3 +50,26 @@ export const orderListStickyCheckboxTd: CSSProperties = {
   background: ds.bgCard,
   boxShadow: STICKY_CHECKBOX_COL_SHADOW,
 };
+
+/**
+ * Posición `left` (px) de la columna fija que va justo después del checkbox.
+ * Debe coincidir con el ancho real de la columna del checkbox en Pedidos.
+ */
+export const ORDER_LIST_STICKY_ESTADO_LEFT = 64;
+
+/** Columna Estado junto al checkbox: fija al scroll horizontal. */
+export const orderListStickyEstadoTh: CSSProperties = {
+  ...orderListTheadStickyCell,
+  left: ORDER_LIST_STICKY_ESTADO_LEFT,
+  zIndex: 5,
+  background: ds.bgApp,
+  boxShadow: `${STICKY_CHECKBOX_COL_SHADOW}, 0 1px 0 ${ds.borderCard}`,
+};
+
+export const orderListStickyEstadoTd: CSSProperties = {
+  position: 'sticky',
+  left: ORDER_LIST_STICKY_ESTADO_LEFT,
+  zIndex: 3,
+  background: ds.bgCard,
+  boxShadow: STICKY_CHECKBOX_COL_SHADOW,
+};
