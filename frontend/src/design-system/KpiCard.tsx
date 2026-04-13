@@ -10,7 +10,7 @@ export function KpiCard({
 }: {
   variant: KpiVariant;
   label: string;
-  value: string;
+  value: ReactNode;
   icon: ReactNode;
   badge?: ReactNode;
 }) {
@@ -43,6 +43,10 @@ export function KpiCard({
       </div>
       <div
         style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'baseline',
+          gap: '0 4px',
           fontSize: 22,
           fontWeight: 700,
           color: ds.textPrimary,

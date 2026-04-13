@@ -64,6 +64,13 @@ type RecentRow = {
 
 type ShopifyProduct = { id: number; title: string };
 
+/** Mismo tamaño y color que la etiqueta inferior del KPI (p. ej. «Pedidos despachados»). */
+const kpiPctSuffixStyle: CSSProperties = {
+  fontSize: 11,
+  fontWeight: 500,
+  color: ds.textMuted,
+};
+
 const filterCtl: CSSProperties = {
   padding: '7px 12px',
   borderRadius: 8,
@@ -385,13 +392,29 @@ export default function DashboardHome() {
           <KpiCard
             variant="stock"
             label="Pedidos despachados"
-            value={`${t.orders_despachados} · ${t.despachados_pct.toFixed(1)} %`}
+            value={
+              <>
+                <span>{t.orders_despachados}</span>
+                <span style={kpiPctSuffixStyle}>
+                  {' · '}
+                  {t.despachados_pct.toFixed(1)} %
+                </span>
+              </>
+            }
             icon={<IconCart />}
           />
           <KpiCard
             variant="alert"
             label="Pedidos cancelados / anulados / reembolsados"
-            value={`${t.orders_cancelados} · ${t.cancelados_pct.toFixed(1)} %`}
+            value={
+              <>
+                <span>{t.orders_cancelados}</span>
+                <span style={kpiPctSuffixStyle}>
+                  {' · '}
+                  {t.cancelados_pct.toFixed(1)} %
+                </span>
+              </>
+            }
             icon={<IconCart />}
           />
         </div>
