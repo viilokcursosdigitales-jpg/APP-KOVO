@@ -3,7 +3,12 @@ import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { alpha, ds } from '../design-system/ds';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
-import { orderListTableScrollWrapperStyle, orderListTheadStickyCell } from '../design-system/orderListTableScroll';
+import {
+  orderListStickyCheckboxTd,
+  orderListStickyCheckboxTh,
+  orderListTableScrollWrapperStyle,
+  orderListTheadStickyCell,
+} from '../design-system/orderListTableScroll';
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
@@ -25,6 +30,9 @@ const INTERNAL_OPTIONS = [
   { value: 'despachado', label: 'Despachado' },
   { value: 'cancelado', label: 'Cancelado' },
 ] as const;
+
+/** Ancho mínimo del desplegable Estado según la etiqueta más larga (+ flecha). */
+const ESTADO_SELECT_MIN_WIDTH_CH = Math.max(...INTERNAL_OPTIONS.map((o) => o.label.length), 1) + 3;
 
 type InternalStatusValue = (typeof INTERNAL_OPTIONS)[number]['value'];
 
@@ -124,6 +132,15 @@ const selectStyle: CSSProperties = {
   color: ds.textPrimary,
   fontSize: 11,
   fontWeight: 600,
+};
+
+/** Select Estado en tabla: ancho según texto, sin tope artificial. */
+const estadoSelectInTableStyle: CSSProperties = {
+  ...selectStyle,
+  width: 'auto',
+  maxWidth: 'none',
+  minWidth: `${ESTADO_SELECT_MIN_WIDTH_CH}ch`,
+  boxSizing: 'border-box',
 };
 
 /** Colores del desplegable Estado (valor seleccionado). */
@@ -1108,13 +1125,13 @@ export default function PedidosPage() {
           <div style={{ padding: 24, color: ds.textMuted, fontSize: 13 }}>Cargando pedidos de Shopify…</div>
         ) : (
           <div style={orderListTableScrollWrapperStyle}>
-            <table style={{ ...tableBase, minWidth: useLive ? 1588 : 1080 }}>
+            <table style={{ ...tableBase, tableLayout: 'auto', minWidth: useLive ? 1588 : 1080 }}>
               <thead>
                 <tr>
                   {useLive ? (
                     <Th
                       style={{
-                        ...orderListTheadStickyCell,
+                        ...orderListStickyCheckboxTh,
                         width: 44,
                         textAlign: 'center',
                         paddingLeft: 12,
@@ -1146,7 +1163,16 @@ export default function PedidosPage() {
                   <Th style={orderListTheadStickyCell}>Precio</Th>
                   <Th style={orderListTheadStickyCell}>Cant.</Th>
                   <Th style={orderListTheadStickyCell}>Pago (Shopify)</Th>
-                  <Th style={orderListTheadStickyCell}>Estado</Th>
+                  <Th
+                    style={{
+                      ...orderListTheadStickyCell,
+                      padding: 8,
+                      borderRadius: 8,
+                      whiteSpace: 'nowrap',
+                    }}
+                  >
+                    Estado
+                  </Th>
                   <Th style={orderListTheadStickyCell}>Mensajero</Th>
                   {useLive ? <Th style={orderListTheadStickyCell} /> : null}
                 </tr>
@@ -1158,7 +1184,11 @@ export default function PedidosPage() {
                         <tr key={o.id}>
                           <Td
                             isLast={i === arr.length - 1}
-                            style={{ textAlign: 'center', verticalAlign: 'middle' }}
+                            style={{
+                              ...orderListStickyCheckboxTd,
+                              textAlign: 'center',
+                              verticalAlign: 'middle',
+                            }}
                           >
                             <input
                               type="checkbox"
@@ -1263,9 +1293,19 @@ export default function PedidosPage() {
                           <Td isLast={i === arr.length - 1}>
                             <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
                           </Td>
-                          <Td isLast={i === arr.length - 1}>
+                          <Td
+                            isLast={i === arr.length - 1}
+                            style={{
+                              padding: 8,
+                              verticalAlign: 'middle',
+                              borderRadius: 8,
+                            }}
+                          >
                             <select
-                              style={{ ...selectStyle, ...estadoSelectStyle(o.internal_status) }}
+                              style={{
+                                ...estadoSelectInTableStyle,
+                                ...estadoSelectStyle(o.internal_status),
+                              }}
                               value={o.internal_status}
                               onChange={(e) => void patchLocalFields(o.id, { internal_status: e.target.value })}
                             >
@@ -1328,7 +1368,9 @@ export default function PedidosPage() {
                         <Td isLast={i === arr.length - 1}>
                           <StatusBadge variant={o.st}>{o.lb}</StatusBadge>
                         </Td>
-                        <Td isLast={i === arr.length - 1}>—</Td>
+                        <Td isLast={i === arr.length - 1} style={{ padding: 8, borderRadius: 8 }}>
+                          —
+                        </Td>
                         <Td isLast={i === arr.length - 1}>—</Td>
                       </tr>
                     ))}
