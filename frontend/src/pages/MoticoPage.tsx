@@ -9,6 +9,7 @@ import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
 import { labelStyle } from './authStyles';
+import { downloadMoticoGuidesOrdersExcel } from '../utils/moticoGuidesExcelExport';
 import {
   buildMoticoGuideLabelData,
   GUIAS_POR_HOJA,
@@ -745,6 +746,57 @@ export default function MoticoPage() {
     }
   }, [logoDataUrl, orders, selectedIds, buildLabelFromOrder]);
 
+  const handleDownloadGuidesExcel = useCallback(() => {
+    setGuideHint('');
+    const set = new Set(selectedIds);
+    const list = orders.filter((o) => set.has(o.id));
+    if (!list.length) {
+      setGuideHint('Marca los pedidos con la casilla de la primera columna.');
+      return;
+    }
+    const eligible = list.filter((o) => o.motico_status === MOTICO_STATUS_FOR_GUIDE_PRINT);
+    if (!eligible.length) {
+      setGuideHint(
+        'Solo se exportan pedidos en estado «Imprimir guía». Cambia el estado o marca solo esos pedidos.',
+      );
+      return;
+    }
+    const skipped = list.length - eligible.length;
+    if (skipped > 0) {
+      setGuideHint(
+        skipped === 1
+          ? 'Se omitió 1 pedido que no está en «Imprimir guía». El Excel incluye el resto.'
+          : `Se omitieron ${skipped} pedidos que no están en «Imprimir guía». Excel con ${eligible.length} filas.`,
+      );
+    }
+    const rows = eligible.map((o) => {
+      const sa = o.shippingAddress;
+      const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
+      const showPrice = formatMoneyFromString(String(o.price_override ?? o.shopifyTotal ?? ''), o.currency);
+      const showQty = String(o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity);
+      const moticoLabel = STATUS_META[o.motico_status]?.label ?? o.motico_status;
+      return {
+        'ID Shopify': o.id,
+        Pedido: o.orderName,
+        Cliente: o.client,
+        Email: o.email,
+        Teléfono: o.phoneLocal || '',
+        Departamento: sa?.province?.trim() || '',
+        Ciudad: sa?.city?.trim() || '',
+        Dirección: dirLine,
+        Productos: summarizeProducts(o.productIds),
+        'Precio (KOVO)': showPrice,
+        Cantidad: showQty,
+        'Pago Shopify': o.label,
+        'Total a pagar': o.total_a_pagar,
+        Moneda: o.currency,
+        'Fecha pedido': formatDate(o.createdAt),
+        'Estado Motico': moticoLabel,
+      };
+    });
+    downloadMoticoGuidesOrdersExcel(rows);
+  }, [orders, selectedIds, summarizeProducts]);
+
   const onMoticoStatusChange = useCallback(
     async (o: MoticoOrderRow, next: string) => {
       setGuideHint('');
@@ -1167,6 +1219,31 @@ export default function MoticoPage() {
               }}
             >
               Imprimir guías ({printableSelectedCount}) · {GUIAS_POR_HOJA}/hoja
+            </button>
+            <button
+              type="button"
+              disabled={!printableSelectedCount}
+              title={
+                !selectedIds.length
+                  ? 'Marca pedidos con la casilla de la primera columna'
+                  : !printableSelectedCount
+                    ? 'Solo se exportan pedidos en estado «Imprimir guía»'
+                    : 'Descargar Excel con la relación de pedidos de estas guías'
+              }
+              onClick={handleDownloadGuidesExcel}
+              style={{
+                padding: '7px 14px',
+                borderRadius: 8,
+                border: `1px solid ${ds.brand}`,
+                background: ds.brandBg,
+                color: ds.brand,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: printableSelectedCount ? 'pointer' : 'not-allowed',
+                opacity: printableSelectedCount ? 1 : 0.5,
+              }}
+            >
+              Excel guías ({printableSelectedCount})
             </button>
             <button
               type="button"
