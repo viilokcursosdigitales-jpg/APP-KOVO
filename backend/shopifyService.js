@@ -324,6 +324,35 @@ function phoneWithoutColombia57(input) {
  * Extrae parámetros utm_* de la query de una URL o ruta (p. ej. landing_site de Shopify).
  * @param {string} rawUrl * @returns {Record<string, string>} claves en minúsculas (utm_campaign, …)
  */
+/**
+ * Atributos de nota del pedido donde Shopify guarda a menudo UTMs
+ * (pantalla «Información adicional» en el admin).
+ * @param {unknown} noteAttributes
+ * @returns {Record<string, string>}
+ */
+function utmFromNoteAttributes(noteAttributes) {
+  if (!Array.isArray(noteAttributes)) return {};
+  /** @type {Record<string, string>} */
+  const out = {};
+  for (const na of noteAttributes) {
+    if (!na || typeof na !== 'object') continue;
+    let n = String(na.name != null ? na.name : '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '_');
+    if (!n.startsWith('utm_')) continue;
+    let v = na.value != null ? String(na.value).trim() : '';
+    if (!v) continue;
+    try {
+      v = decodeURIComponent(v.replace(/\+/g, ' '));
+    } catch {
+      /* keep raw */
+    }
+    out[n] = v;
+  }
+  return out;
+}
+
 function extractUtmParamsFromUrl(rawUrl) {
   const raw = String(rawUrl || '').trim();
   if (!raw) return {};
@@ -408,7 +437,8 @@ function normalizeShopifyOrdersForApp(apiData) {
     const sourceName = o.source_name != null ? String(o.source_name) : '';
     const utmFromReferrer = extractUtmParamsFromUrl(referringSite);
     const utmFromLanding = extractUtmParamsFromUrl(landingSite);
-    const utm = { ...utmFromReferrer, ...utmFromLanding };
+    const utmFromNotes = utmFromNoteAttributes(o.note_attributes);
+    const utm = { ...utmFromReferrer, ...utmFromLanding, ...utmFromNotes };
     return {
       id: o.id,
       orderName,
@@ -464,6 +494,7 @@ module.exports = {
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
   extractUtmParamsFromUrl,
+  utmFromNoteAttributes,
   mapFinancialToBadge,
   DEFAULT_API_VERSION,
 };

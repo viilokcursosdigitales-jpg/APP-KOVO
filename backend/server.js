@@ -2252,7 +2252,7 @@ const SHOPIFY_MOTICO_STATUSES = new Set([
 ]);
 
 const SHOPIFY_ORDER_LIST_FIELDS =
-  'id,name,phone,email,created_at,total_price,total_outstanding,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address,billing_address,landing_site,referring_site,source_name';
+  'id,name,phone,email,created_at,total_price,total_outstanding,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address,billing_address,landing_site,referring_site,source_name,note_attributes';
 
 /** Total a pagar por defecto (Shopify): pagado → 0; si no, total_outstanding o total del pedido. */
 function shopifyDefaultTotalAPagar(o) {
