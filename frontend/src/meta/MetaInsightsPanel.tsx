@@ -423,7 +423,7 @@ export function MetaInsightsPanel({
     void load();
   }, [load]);
 
-  const tableColCount = level === 'campaigns' ? 14 : 13;
+  const tableColCount = level === 'campaigns' ? 15 : 14;
 
   const setCampaignStatusOnMeta = useCallback(
     async (campaignId: string, name: string, next: 'PAUSED' | 'ACTIVE') => {
@@ -755,6 +755,7 @@ export function MetaInsightsPanel({
                 'CTR',
                 'CPC',
                 'ROAS',
+                'ROAS SHOPIFY',
               ].map((h) => (
                 <th
                   key={h}
@@ -861,6 +862,9 @@ export function MetaInsightsPanel({
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpc) }}>{formatMoney2(row.cpc)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.roas) }}>
                       {formatRoasMeta(row.roas)}
+                    </td>
+                    <td style={{ padding: '12px 16px' }}>
+                      {row.spend > 0 && row.revenue > 0 ? formatRoasMeta(row.revenue / row.spend) : '—'}
                     </td>
                   </tr>
                 );
