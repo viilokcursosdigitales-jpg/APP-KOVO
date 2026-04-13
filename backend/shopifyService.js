@@ -308,6 +308,18 @@ async function registerUninstallWebhook(shop, accessToken) {
   }
 }
 
+/** Quita indicativo Colombia (+57 / 57) y deja solo dígitos locales para copiar/pegar. */
+function phoneWithoutColombia57(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  const digits = raw.replace(/\D/g, '');
+  if (!digits) return '';
+  if (digits.startsWith('57') && digits.length >= 11) {
+    return digits.slice(2);
+  }
+  return digits;
+}
+
 /**
  * Mapea pedidos REST Admin a filas listas para el front (Pedidos KOVO).
  * @param {object|null} apiData cuerpo JSON de orders.json
@@ -345,6 +357,12 @@ function normalizeShopifyOrdersForApp(apiData) {
     const shippingProvince = (shippingAddress && shippingAddress.province) || '';
     const shippingAddressLine =
       shippingAddress && [shippingAddress.address1, shippingAddress.address2].filter(Boolean).join(' · ').trim();
+    const rawPhone =
+      (shippingAddress && String(shippingAddress.phone || '').trim()) ||
+      (o.phone != null ? String(o.phone).trim() : '') ||
+      (customer.phone != null ? String(customer.phone).trim() : '') ||
+      '';
+    const phoneLocal = phoneWithoutColombia57(rawPhone);
     return {
       id: o.id,
       orderName,
@@ -363,6 +381,7 @@ function normalizeShopifyOrdersForApp(apiData) {
       shippingCity,
       shippingProvince,
       shippingAddressLine: shippingAddressLine || '',
+      phoneLocal: phoneLocal || '',
       lineItemsDetail,
     };
   });

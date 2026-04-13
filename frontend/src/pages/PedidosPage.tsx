@@ -60,6 +60,8 @@ type ShopifyOrderRow = {
   shippingCity?: string;
   shippingProvince?: string;
   shippingAddressLine?: string;
+  /** Solo dígitos, sin +57 (viene del backend). */
+  phoneLocal?: string;
 };
 
 type ShopifyOrdersPayload = {
@@ -104,6 +106,19 @@ function cityKeyFromRow(row: ShopifyOrderRow) {
     .trim()
     .toLowerCase();
 }
+
+const copyPhoneBtnStyle: CSSProperties = {
+  padding: '4px 8px',
+  borderRadius: 6,
+  border: `1px solid ${ds.borderCard}`,
+  background: ds.bgCard,
+  color: ds.brand,
+  fontWeight: 600,
+  fontSize: 10,
+  cursor: 'pointer',
+  flexShrink: 0,
+  whiteSpace: 'nowrap',
+};
 
 function orderMatchesCityFilter(row: ShopifyOrderRow, selectedKeys: string[]) {
   if (!selectedKeys.length) return true;
@@ -235,6 +250,8 @@ export default function PedidosPage() {
   const [cityMenuOpen, setCityMenuOpen] = useState(false);
   const cityFilterWrapRef = useRef<HTMLDivElement>(null);
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
+  const [copiedPhoneOrderId, setCopiedPhoneOrderId] = useState<number | null>(null);
+  const copiedPhoneTimerRef = useRef<number | null>(null);
 
   const bulkActionBusy = bulkStatusApplying || bulkMensajeroApplying;
 
@@ -265,7 +282,29 @@ export default function PedidosPage() {
       shippingCity: o.shippingCity || '',
       shippingProvince: o.shippingProvince || '',
       shippingAddressLine: o.shippingAddressLine || '',
+      phoneLocal: typeof o.phoneLocal === 'string' ? o.phoneLocal.trim() : '',
     };
+  }, []);
+
+  const copyOrderPhone = useCallback((orderId: number, digits: string) => {
+    const t = digits.trim();
+    if (!t) return;
+    if (copiedPhoneTimerRef.current != null) {
+      window.clearTimeout(copiedPhoneTimerRef.current);
+      copiedPhoneTimerRef.current = null;
+    }
+    void navigator.clipboard.writeText(t).then(
+      () => {
+        setCopiedPhoneOrderId(orderId);
+        copiedPhoneTimerRef.current = window.setTimeout(() => {
+          setCopiedPhoneOrderId((cur) => (cur === orderId ? null : cur));
+          copiedPhoneTimerRef.current = null;
+        }, 2000);
+      },
+      () => {
+        window.alert('No se pudo copiar. Selecciona el número manualmente.');
+      },
+    );
   }, []);
 
   const loadShopifyOrders = useCallback(
@@ -1076,7 +1115,7 @@ export default function PedidosPage() {
           <div style={{ padding: 24, color: ds.textMuted, fontSize: 13 }}>Cargando pedidos de Shopify…</div>
         ) : (
           <div style={orderListTableScrollWrapperStyle}>
-            <table style={{ ...tableBase, minWidth: useLive ? 1464 : 1080 }}>
+            <table style={{ ...tableBase, minWidth: useLive ? 1588 : 1080 }}>
               <thead>
                 <tr>
                   {useLive ? (
@@ -1105,6 +1144,7 @@ export default function PedidosPage() {
                   <Th style={orderListTheadStickyCell}>Cliente</Th>
                   {useLive ? (
                     <>
+                      <Th style={orderListTheadStickyCell}>Teléfono</Th>
                       <Th style={orderListTheadStickyCell}>Ciudad</Th>
                       <Th style={orderListTheadStickyCell}>Departamento</Th>
                       <Th style={orderListTheadStickyCell}>Dirección</Th>
@@ -1141,6 +1181,45 @@ export default function PedidosPage() {
                           </Td>
                           <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
                           <Td isLast={i === arr.length - 1}>{o.client}</Td>
+                          <Td isLast={i === arr.length - 1}>
+                            {o.phoneLocal ? (
+                              <div
+                                style={{
+                                  display: 'flex',
+                                  flexDirection: 'column',
+                                  alignItems: 'flex-start',
+                                  gap: 6,
+                                  maxWidth: 200,
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    fontSize: 12,
+                                    fontWeight: 600,
+                                    fontVariantNumeric: 'tabular-nums',
+                                    letterSpacing: '0.02em',
+                                    userSelect: 'all',
+                                    cursor: 'text',
+                                    wordBreak: 'break-all',
+                                    lineHeight: 1.3,
+                                  }}
+                                  title="Selecciona o usa Copiar"
+                                >
+                                  {o.phoneLocal}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => copyOrderPhone(o.id, o.phoneLocal || '')}
+                                  style={copyPhoneBtnStyle}
+                                  aria-label={`Copiar teléfono ${o.phoneLocal}`}
+                                >
+                                  {copiedPhoneOrderId === o.id ? 'Copiado' : 'Copiar'}
+                                </button>
+                              </div>
+                            ) : (
+                              <span style={{ fontSize: 11, color: ds.textMuted }}>—</span>
+                            )}
+                          </Td>
                           <Td isLast={i === arr.length - 1}>
                             <span style={{ fontSize: 11 }}>{o.shippingCity?.trim() || '—'}</span>
                           </Td>

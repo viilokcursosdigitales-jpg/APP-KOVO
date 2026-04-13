@@ -2246,7 +2246,7 @@ const SHOPIFY_MOTICO_STATUSES = new Set([
 ]);
 
 const SHOPIFY_ORDER_LIST_FIELDS =
-  'id,name,email,created_at,total_price,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address,billing_address';
+  'id,name,phone,email,created_at,total_price,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address,billing_address';
 
 async function loadLocalFieldsMap(organizationId, orderIds) {
   if (!orderIds.length) return new Map();
