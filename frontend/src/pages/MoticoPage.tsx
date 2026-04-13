@@ -22,10 +22,6 @@ import {
 const POLL_MS = 25_000;
 const MOTICO_TOTAL_APAGAR_DEBOUNCE_MS = 450;
 const MAX_LOGO_BYTES = 400_000;
-/** Vista previa ~proporción de la celda del logo en la guía (≈18% del ancho × altura de franja 1.88in). */
-const MOTICO_GUIDE_LOGO_PREVIEW_W_PX = 118;
-const MOTICO_GUIDE_LOGO_PREVIEW_H_PX = 152;
-
 const MOTICO_STATUS_OPTIONS = [
   {
     value: 'confirmado',
@@ -427,6 +423,8 @@ export default function MoticoPage() {
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
   const [logoSaving, setLogoSaving] = useState(false);
   const [logoMessage, setLogoMessage] = useState('');
+  const [logoPanelOpen, setLogoPanelOpen] = useState(false);
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
 
   const [editorOrder, setEditorOrder] = useState<MoticoOrderRow | null>(null);
   const [editorDraft, setEditorDraft] = useState<MoticoEditorDraft>(() => emptyEditorDraft());
@@ -911,46 +909,73 @@ export default function MoticoPage() {
     return () => window.removeEventListener('keydown', onKey);
   }, [editorOrder]);
 
-  const onLogoFile = useCallback(
-    (file: File | null) => {
-      setLogoMessage('');
-      if (!file) return;
-      if (!/^image\/(png|jpeg)$/i.test(file.type)) {
-        setLogoMessage('Usa PNG o JPEG.');
-        return;
-      }
-      if (file.size > MAX_LOGO_BYTES) {
-        setLogoMessage('Archivo demasiado grande (máx. ~400 KB).');
-        return;
-      }
-      const reader = new FileReader();
-      reader.onload = () => {
-        const r = reader.result;
-        if (typeof r !== 'string') return;
-        void (async () => {
-          setLogoSaving(true);
-          try {
-            const res = await apiFetch('/api/motico/settings', {
-              method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ logo_data_url: r }),
-            });
-            const data = (await res.json().catch(() => ({}))) as { error?: string };
-            if (!res.ok) {
-              setLogoMessage(typeof data.error === 'string' ? data.error : 'No se pudo guardar');
-              return;
-            }
-            setLogoDataUrl(r);
-            setLogoMessage(`Logo guardado. Se usará en las guías impresas (hasta ${GUIAS_POR_HOJA} por hoja).`);
-          } finally {
-            setLogoSaving(false);
+  useEffect(() => {
+    if (!logoPanelOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLogoPanelOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [logoPanelOpen]);
+
+  const onLogoFile = useCallback((file: File | null) => {
+    setLogoMessage('');
+    if (!file) return;
+    if (!/^image\/(png|jpeg)$/i.test(file.type)) {
+      setLogoMessage('Usa PNG o JPEG.');
+      return;
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      setLogoMessage('Archivo demasiado grande (máx. ~400 KB).');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const r = reader.result;
+      if (typeof r !== 'string') return;
+      void (async () => {
+        setLogoSaving(true);
+        try {
+          const res = await apiFetch('/api/motico/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ logo_data_url: r }),
+          });
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          if (!res.ok) {
+            setLogoMessage(typeof data.error === 'string' ? data.error : 'No se pudo guardar');
+            return;
           }
-        })();
-      };
-      reader.readAsDataURL(file);
-    },
-    [],
-  );
+          setLogoDataUrl(r);
+          setLogoMessage(`Logo guardado. Se usará en las guías (hasta ${GUIAS_POR_HOJA} por hoja carta).`);
+        } finally {
+          setLogoSaving(false);
+        }
+      })();
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  const removeLogo = useCallback(async () => {
+    setLogoMessage('');
+    setLogoSaving(true);
+    try {
+      const res = await apiFetch('/api/motico/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ logo_data_url: null }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setLogoMessage(typeof data.error === 'string' ? data.error : 'No se pudo eliminar el logo');
+        return;
+      }
+      setLogoDataUrl(null);
+      setLogoMessage('Logo eliminado.');
+    } finally {
+      setLogoSaving(false);
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -1028,51 +1053,95 @@ export default function MoticoPage() {
       />
 
       {useLive ? (
+        <div style={{ marginBottom: 18 }}>
+          <button
+            type="button"
+            onClick={() => {
+              setLogoMessage('');
+              setLogoPanelOpen(true);
+            }}
+            style={{
+              padding: 0,
+              border: 'none',
+              background: 'none',
+              color: ds.brand,
+              fontSize: 14,
+              fontWeight: 700,
+              cursor: 'pointer',
+              textDecoration: 'underline',
+              textUnderlineOffset: 3,
+            }}
+          >
+            Agregar logo
+          </button>
+        </div>
+      ) : null}
+
+      {useLive && logoPanelOpen ? (
         <div
           style={{
-            marginBottom: 18,
-            padding: '14px 16px',
-            borderRadius: 12,
-            border: `1px solid ${ds.borderCard}`,
-            background: ds.bgCard,
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.18)',
             display: 'flex',
-            flexWrap: 'wrap',
-            gap: 14,
             alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+            zIndex: 95,
+          }}
+          role="dialog"
+          aria-modal
+          aria-labelledby="motico-logo-panel-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setLogoPanelOpen(false);
           }}
         >
-          <div style={{ flex: '1 1 220px' }}>
-            <div style={{ fontSize: 11, fontWeight: 700, color: ds.textMuted, marginBottom: 6, textTransform: 'uppercase' }}>
-              Logo para guías (carta)
-            </div>
-            <div style={{ fontSize: 12, color: ds.textSecondary, marginBottom: 8, lineHeight: 1.4 }}>
-              Sube PNG o JPEG. Marca pedidos en estado «Imprimir guía» e imprime: hasta {GUIAS_POR_HOJA} guías por hoja
-              carta
-              (Letter), diseño con logo y datos de envío.
-            </div>
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 10, cursor: logoSaving ? 'wait' : 'pointer' }}>
-              <input
-                type="file"
-                accept="image/png,image/jpeg"
-                disabled={logoSaving}
-                style={{ fontSize: 12 }}
-                onChange={(e) => onLogoFile(e.target.files?.[0] ?? null)}
-              />
-            </label>
-            {logoSaving ? <span style={{ fontSize: 12, color: ds.textMuted }}>Guardando…</span> : null}
-            {logoMessage ? (
-              <div style={{ fontSize: 12, color: logoMessage.includes('guardado') ? ds.brand : ds.dangerText, marginTop: 6 }}>
-                {logoMessage}
-              </div>
-            ) : null}
-          </div>
-          {logoDataUrl ? (
+          <div
+            style={{
+              background: ds.bgCard,
+              borderRadius: 16,
+              padding: 24,
+              width: '100%',
+              maxWidth: 420,
+              border: `1px solid ${ds.borderCard}`,
+              maxHeight: '90vh',
+              overflowY: 'auto',
+              boxShadow: '0 20px 50px rgba(15, 23, 42, 0.12)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2
+              id="motico-logo-panel-title"
+              style={{ margin: '0 0 12px', fontSize: 17, fontWeight: 700, color: ds.textPrimary }}
+            >
+              Agregar logo
+            </h2>
+            <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.55 }}>
+              Formato <strong>PNG</strong> o <strong>JPEG</strong>. Tamaño recomendado: imagen horizontal, ancho entre{' '}
+              <strong>400 y 1200 px</strong>; que el diseño importante quede centrado. Peso máximo aprox.{' '}
+              <strong>400 KB</strong>. El logo se verá en la parte superior de cada guía (carta / Letter); hasta{' '}
+              {GUIAS_POR_HOJA} guías por hoja.
+            </p>
+
+            <input
+              ref={logoFileInputRef}
+              type="file"
+              accept="image/png,image/jpeg"
+              disabled={logoSaving}
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                onLogoFile(e.target.files?.[0] ?? null);
+                e.target.value = '';
+              }}
+            />
+
             <div
               style={{
-                width: MOTICO_GUIDE_LOGO_PREVIEW_W_PX,
-                height: MOTICO_GUIDE_LOGO_PREVIEW_H_PX,
-                flexShrink: 0,
-                borderRadius: 8,
+                width: '100%',
+                maxWidth: 280,
+                height: 180,
+                margin: '0 auto 18px',
+                borderRadius: 12,
                 border: `1px solid ${ds.borderCard}`,
                 overflow: 'hidden',
                 background: '#fff',
@@ -1081,33 +1150,91 @@ export default function MoticoPage() {
                 justifyContent: 'center',
               }}
             >
-              <img
-                src={logoDataUrl}
-                alt="Logo Motico"
-                style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', display: 'block' }}
-              />
+              {logoDataUrl ? (
+                <img
+                  src={logoDataUrl}
+                  alt="Vista previa del logo para guías Motico"
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', display: 'block' }}
+                />
+              ) : (
+                <span style={{ fontSize: 12, color: ds.textHint, padding: 16, textAlign: 'center' }}>
+                  Aún no hay logo. Usa «Elegir archivo» para cargar uno.
+                </span>
+              )}
             </div>
-          ) : (
-            <div
+
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+              <button
+                type="button"
+                disabled={logoSaving}
+                onClick={() => logoFileInputRef.current?.click()}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.brand}`,
+                  background: ds.brandBg,
+                  color: ds.brand,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: logoSaving ? 'wait' : 'pointer',
+                }}
+              >
+                {logoDataUrl ? 'Cambiar logo' : 'Elegir archivo'}
+              </button>
+              {logoDataUrl ? (
+                <button
+                  type="button"
+                  disabled={logoSaving}
+                  onClick={() => void removeLogo()}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    background: ds.bgSubtle,
+                    color: ds.dangerText,
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: logoSaving ? 'wait' : 'pointer',
+                  }}
+                >
+                  Eliminar logo
+                </button>
+              ) : null}
+            </div>
+
+            {logoSaving ? (
+              <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 10 }}>Guardando…</div>
+            ) : null}
+            {logoMessage ? (
+              <div
+                style={{
+                  fontSize: 12,
+                  marginBottom: 14,
+                  color:
+                    logoMessage.includes('guardado') || logoMessage.includes('eliminado') ? ds.brand : ds.dangerText,
+                }}
+              >
+                {logoMessage}
+              </div>
+            ) : null}
+
+            <button
+              type="button"
+              onClick={() => setLogoPanelOpen(false)}
               style={{
-                width: MOTICO_GUIDE_LOGO_PREVIEW_W_PX,
-                height: MOTICO_GUIDE_LOGO_PREVIEW_H_PX,
-                flexShrink: 0,
+                padding: '8px 16px',
                 borderRadius: 8,
-                border: `2px dashed ${ds.borderCard}`,
-                fontSize: 11,
-                color: ds.textHint,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                textAlign: 'center',
-                padding: 6,
-                boxSizing: 'border-box',
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.bgCard,
+                color: ds.textSecondary,
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: 'pointer',
               }}
             >
-              Sin logo
-            </div>
-          )}
+              Cerrar
+            </button>
+          </div>
         </div>
       ) : null}
 
