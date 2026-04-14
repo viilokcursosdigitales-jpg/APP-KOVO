@@ -315,7 +315,6 @@ function emptyEditorDraft(): MoticoEditorDraft {
 type ManualCreateDraft = {
   client_name: string;
   client_email: string;
-  order_name: string;
   phone: string;
   /** Valor input type=date (YYYY-MM-DD); vacío = fecha/hora actual en el servidor. Si hay fecha, hora fija 8:00 local. */
   created_at: string;
@@ -351,7 +350,6 @@ function emptyManualDraft(): ManualCreateDraft {
   return {
     client_name: '',
     client_email: '',
-    order_name: 'Whatsapp',
     phone: '',
     created_at: `${yyyy}-${mm}-${dd}`,
     product_summary: '',
@@ -364,6 +362,21 @@ function emptyManualDraft(): ManualCreateDraft {
     address2: '',
     country: 'COLOMBIA',
   };
+}
+
+function getNextManualWhatsappOrderNumber(rows: MoticoOrderRow[]): number {
+  let maxUsed = 0;
+  for (const row of rows) {
+    if (!(row.is_motico_manual || row.id < 0)) continue;
+    const byName = String(row.orderName || '').match(/^whatsapp\s*#\s*(\d+)$/i);
+    if (byName) {
+      const n = parseInt(byName[1], 10);
+      if (Number.isFinite(n) && n > maxUsed) maxUsed = n;
+    }
+    const byId = Math.abs(Number(row.id));
+    if (Number.isFinite(byId) && byId > maxUsed) maxUsed = byId;
+  }
+  return maxUsed + 1;
 }
 
 function draftFromOrder(o: MoticoOrderRow): MoticoEditorDraft {
@@ -502,6 +515,7 @@ export default function MoticoPage() {
 
   const [manualModalOpen, setManualModalOpen] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualCreateDraft>(() => emptyManualDraft());
+  const [manualOrderNamePreview, setManualOrderNamePreview] = useState('Whatsapp #1');
   const [manualSaving, setManualSaving] = useState(false);
   const [manualError, setManualError] = useState('');
 
@@ -999,7 +1013,7 @@ export default function MoticoPage() {
       const payload: Record<string, unknown> = {
         client_name: manualDraft.client_name.trim(),
         client_email: manualDraft.client_email.trim(),
-        order_name: manualDraft.order_name.trim(),
+        order_name: manualOrderNamePreview,
         phone: manualDraft.phone.trim(),
         product_summary: manualDraft.product_summary.trim(),
         total: manualDraft.total.trim(),
@@ -1038,7 +1052,7 @@ export default function MoticoPage() {
     } finally {
       setManualSaving(false);
     }
-  }, [manualDraft, loadData]);
+  }, [manualDraft, manualOrderNamePreview, loadData]);
 
   useEffect(() => {
     if (!editorOrder) return;
@@ -1188,6 +1202,7 @@ export default function MoticoPage() {
                 type="button"
                 disabled={refreshing || loading || manualSaving}
                 onClick={() => {
+                  setManualOrderNamePreview(`Whatsapp #${getNextManualWhatsappOrderNumber(orders)}`);
                   setManualError('');
                   setManualDraft(emptyManualDraft());
                   setManualModalOpen(true);
@@ -2165,9 +2180,24 @@ export default function MoticoPage() {
               Nuevo pedido manual
             </h3>
             <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted, lineHeight: 1.45 }}>
-              El pedido queda solo en KOVO (Motico), no en Shopify. La referencia es opcional; si la dejas vacía se
-              genera una automática (por ejemplo M-42).
+              El pedido queda solo en KOVO (Motico), no en Shopify.
             </p>
+            <div
+              style={{
+                margin: '0 0 14px',
+                padding: '10px 12px',
+                borderRadius: 10,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.bgSubtle,
+              }}
+            >
+              <span style={{ display: 'block', fontSize: 11, fontWeight: 700, color: ds.textSecondary, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+                Número único
+              </span>
+              <span style={{ display: 'block', marginTop: 4, fontSize: 14, fontWeight: 700, color: ds.textPrimary }}>
+                {manualOrderNamePreview}
+              </span>
+            </div>
             {manualError ? (
               <p style={{ margin: '0 0 12px', fontSize: 13, color: ds.dangerText }}>{manualError}</p>
             ) : null}
@@ -2211,16 +2241,6 @@ export default function MoticoPage() {
                 onChange={(e) => setManualDraft((d) => ({ ...d, client_email: e.target.value }))}
                 style={modalFieldStyle}
                 autoComplete="email"
-              />
-            </label>
-            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
-              Referencia del pedido (opcional)
-              <input
-                type="text"
-                value={manualDraft.order_name}
-                onChange={(e) => setManualDraft((d) => ({ ...d, order_name: e.target.value }))}
-                style={modalFieldStyle}
-                placeholder="Ej. WhatsApp 12 mar"
               />
             </label>
             <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>

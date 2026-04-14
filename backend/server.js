@@ -3737,7 +3737,6 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
     if (!currency) currency = 'USD';
 
     const client_email = String(body.client_email || '').trim().slice(0, 320);
-    const order_name_in = String(body.order_name || '').trim().slice(0, 64);
     const province = String(body.province || '').trim();
     const city = String(body.city || '').trim();
     const address1 = String(body.address1 || '').trim();
@@ -3778,7 +3777,7 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
       createdAtParam = new Date(t).toISOString();
     }
 
-    const initialOrderName = order_name_in || 'M';
+    const initialOrderName = 'WHATSAPP_PENDING';
     const { rows: insRows } = await pool.query(
       `INSERT INTO motico_manual_orders (
         organization_id,
@@ -3811,14 +3810,12 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
       ],
     );
     const row = insRows[0];
-    if (!order_name_in) {
-      const finalName = `M-${row.id}`;
-      await pool.query(
-        `UPDATE motico_manual_orders SET order_name = $1, updated_at = now() WHERE id = $2 AND organization_id = $3`,
-        [finalName, row.id, req.organizationId],
-      );
-      row.order_name = finalName;
-    }
+    const finalName = `Whatsapp #${row.id}`;
+    await pool.query(
+      `UPDATE motico_manual_orders SET order_name = $1, updated_at = now() WHERE id = $2 AND organization_id = $3`,
+      [finalName, row.id, req.organizationId],
+    );
+    row.order_name = finalName;
 
     res.status(201).json({ ok: true, order: mapMoticoManualOrderRowFromDb(row) });
   } catch (e) {
