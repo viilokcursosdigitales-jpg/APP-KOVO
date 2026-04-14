@@ -93,6 +93,17 @@ function parsePercentInput(raw: string): number {
   return n;
 }
 
+/** Misma utilidad que muestra la tabla por día: API − % admin sobre ventas entregadas. */
+function utilidadMostradaPorDia(
+  row: SeriesDayRow,
+  comparable: boolean | undefined,
+  adminPercent: number,
+): number | null {
+  if (!comparable || row.utilidad == null || !Number.isFinite(row.utilidad)) return null;
+  const ve = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
+  return (row.utilidad as number) - ve * (adminPercent / 100);
+}
+
 function metaAllocForProductDay(row: SeriesDayRow, productKey: string): number {
   const slice = row.by_product?.[productKey];
   if (!slice) return 0;
@@ -339,7 +350,7 @@ export default function GananciaDiariaPage() {
     let ga = 0;
     let g = 0;
     let ganSum = 0;
-    let utiSum = 0;
+    let utiDisplayedSum = 0;
     for (const row of days) {
       v += row.ventas_despachadas_total;
       ve += row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
@@ -351,8 +362,10 @@ export default function GananciaDiariaPage() {
       ga += (row.ventas_entregadas_total || row.ventas_despachadas_total || 0) * (adminPercent / 100);
       g += row.gasto_publicitario_total;
       if (row.ganancia != null && Number.isFinite(row.ganancia)) ganSum += row.ganancia;
-      if (row.utilidad != null && Number.isFinite(row.utilidad)) utiSum += row.utilidad;
+      const um = utilidadMostradaPorDia(row, comparable, adminPercent);
+      if (um != null && Number.isFinite(um)) utiDisplayedSum += um;
     }
+    const utilidadAgregada = comparable ? Math.round(utiDisplayedSum * 100) / 100 : null;
     return {
       ventas: v,
       ventasEntregadas: ve,
@@ -364,11 +377,8 @@ export default function GananciaDiariaPage() {
       gastoAdministrativo: ga,
       gasto: g,
       ganancia: comparable ? Math.round(ganSum * 100) / 100 : null,
-      utilidad: comparable ? Math.round(utiSum * 100) / 100 : null,
-      utilidadNeta:
-        comparable
-          ? Math.round((ve - g - cpe - cf - ga) * 100) / 100
-          : null,
+      utilidad: utilidadAgregada,
+      utilidadNeta: utilidadAgregada,
     };
   }, [days, comparable, adminPercent]);
 
@@ -728,10 +738,7 @@ export default function GananciaDiariaPage() {
                       const ventasEntregadasRow = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
                       const costoProductoEntregadoRow =
                         row.costo_producto_entregado_total || row.costo_producto_total || 0;
-                      const utilidadRow =
-                        comparable && Number.isFinite(row.utilidad as number)
-                          ? (row.utilidad as number) - ventasEntregadasRow * (adminPercent / 100)
-                          : null;
+                      const utilidadRow = utilidadMostradaPorDia(row, comparable, adminPercent);
                       const rowBg =
                         utilidadRow == null
                           ? 'transparent'
