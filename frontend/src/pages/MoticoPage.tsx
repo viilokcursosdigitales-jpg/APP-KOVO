@@ -91,12 +91,15 @@ const STATUS_META = Object.fromEntries(MOTICO_STATUS_OPTIONS.map((o) => [o.value
 
 type LineItemDetail = {
   id: number;
+  product_id?: number | null;
+  variant_id?: number | null;
   title: string;
   quantity: number;
   price: string;
   name?: string;
   variant_title?: string;
   sku?: string;
+  barcode?: string;
   properties?: { name: string; value: string }[];
 };
 
@@ -308,6 +311,11 @@ type MoticoEditorDraft = {
   phone: string;
   price: string;
   quantity: string;
+  line_items: {
+    product_id: string;
+    variant_id: string;
+    quantity: string;
+  }[];
 };
 
 function emptyEditorDraft(): MoticoEditorDraft {
@@ -320,6 +328,7 @@ function emptyEditorDraft(): MoticoEditorDraft {
     phone: '',
     price: '',
     quantity: '',
+    line_items: [emptyManualLine()],
   };
 }
 
@@ -435,6 +444,21 @@ function normalizeShopifyProducts(raw: unknown): ShopifyProduct[] {
 
 function draftFromOrder(o: MoticoOrderRow): MoticoEditorDraft {
   const sa = o.shippingAddress;
+  const line_items = Array.isArray(o.lineItemsDetail)
+    ? o.lineItemsDetail
+        .map((li) => {
+          const pid = Number(li.product_id);
+          const vid = Number(li.variant_id);
+          const qty = Number(li.quantity);
+          if (!Number.isFinite(pid) || pid <= 0) return null;
+          return {
+            product_id: String(pid),
+            variant_id: Number.isFinite(vid) && vid > 0 ? String(vid) : '',
+            quantity: Number.isFinite(qty) && qty > 0 ? String(qty) : '1',
+          };
+        })
+        .filter(Boolean) as MoticoEditorDraft['line_items']
+    : [];
   return {
     province: sa?.province || '',
     city: sa?.city || '',
@@ -444,6 +468,7 @@ function draftFromOrder(o: MoticoOrderRow): MoticoEditorDraft {
     phone: sa?.phone || '',
     price: String(o.price_override ?? o.shopifyTotal ?? ''),
     quantity: String(o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity ?? 0),
+    line_items: line_items.length ? line_items : [emptyManualLine()],
   };
 }
 
@@ -1067,17 +1092,47 @@ export default function MoticoPage() {
       }
       if (editorOrder.id < 0 || editorOrder.is_motico_manual) {
         patchBody.sync_to_shopify = false;
+        const normalizedItems = editorDraft.line_items
+          .map((line) => {
+            const pid = Number(line.product_id);
+            if (!Number.isFinite(pid) || pid <= 0) return null;
+            const product = productById.get(pid);
+            if (!product) return null;
+            const variants = Array.isArray(product.variants) ? product.variants : [];
+            const selectedVariant =
+              variants.find((v) => String(v.id) === String(line.variant_id)) || variants[0] || null;
+            const qty = parseInt(String(line.quantity || '1'), 10);
+            if (!Number.isFinite(qty) || qty < 1) return null;
+            return {
+              product_id: pid,
+              variant_id: selectedVariant ? Number(selectedVariant.id) : null,
+              title: String(product.title || 'Producto').trim() || 'Producto',
+              variant_title: selectedVariant ? String(selectedVariant.title || '').trim() : '',
+              sku: selectedVariant ? String(selectedVariant.sku || '').trim() : '',
+              barcode: selectedVariant ? String(selectedVariant.barcode || '').trim() : '',
+              quantity: qty,
+            };
+          })
+          .filter(Boolean);
+        if (!normalizedItems.length) {
+          setSyncError('Selecciona al menos un producto del inventario.');
+          return;
+        }
+        patchBody.line_items = normalizedItems;
       }
 
       const okLocal = await patchLocalFields(editorOrder.id, patchBody);
       if (!okLocal) return;
+      if (editorOrder.id < 0 || editorOrder.is_motico_manual) {
+        await loadData(true);
+      }
 
       setEditorOrder(null);
       setEditorDraft(emptyEditorDraft());
     } finally {
       setEditorSaving(false);
     }
-  }, [editorOrder, editorDraft, patchLocalFields]);
+  }, [editorOrder, editorDraft, patchLocalFields, productById, loadData]);
 
   const updateManualLine = useCallback(
     (idx: number, patch: Partial<ManualCreateDraft['line_items'][number]>) => {
@@ -1105,6 +1160,37 @@ export default function MoticoPage() {
 
   const removeManualLine = useCallback((idx: number) => {
     setManualDraft((d) => {
+      const next = d.line_items.filter((_, i) => i !== idx);
+      return { ...d, line_items: next.length ? next : [emptyManualLine()] };
+    });
+  }, []);
+
+  const updateEditorLine = useCallback(
+    (idx: number, patch: Partial<MoticoEditorDraft['line_items'][number]>) => {
+      setEditorDraft((d) => ({
+        ...d,
+        line_items: d.line_items.map((line, i) => (i === idx ? { ...line, ...patch } : line)),
+      }));
+    },
+    [],
+  );
+
+  const updateEditorLineProduct = useCallback(
+    (idx: number, nextProductId: string) => {
+      const pid = Number(nextProductId);
+      const product = Number.isFinite(pid) ? productById.get(pid) : undefined;
+      const firstVariantId = product?.variants?.[0]?.id ? String(product.variants[0].id) : '';
+      updateEditorLine(idx, { product_id: nextProductId, variant_id: firstVariantId });
+    },
+    [productById, updateEditorLine],
+  );
+
+  const addEditorLine = useCallback(() => {
+    setEditorDraft((d) => ({ ...d, line_items: [...d.line_items, emptyManualLine()] }));
+  }, []);
+
+  const removeEditorLine = useCallback((idx: number) => {
+    setEditorDraft((d) => {
       const next = d.line_items.filter((_, i) => i !== idx);
       return { ...d, line_items: next.length ? next : [emptyManualLine()] };
     });
@@ -2241,6 +2327,118 @@ export default function MoticoPage() {
                 style={modalFieldStyle}
               />
             </label>
+            {editorOrder.is_motico_manual || editorOrder.id < 0 ? (
+              <div style={{ marginTop: 14 }}>
+                <p
+                  style={{
+                    margin: '0 0 8px',
+                    fontSize: 11,
+                    fontWeight: 700,
+                    color: ds.textSecondary,
+                    textTransform: 'uppercase',
+                    letterSpacing: '0.4px',
+                  }}
+                >
+                  Productos del inventario
+                </p>
+                {editorDraft.line_items.map((line, idx) => {
+                  const selectedProduct = productById.get(Number(line.product_id));
+                  const variants = selectedProduct?.variants || [];
+                  const canRemove = editorDraft.line_items.length > 1;
+                  return (
+                    <div
+                      key={`editor-line-${idx}`}
+                      style={{
+                        border: `1px solid ${ds.borderCard}`,
+                        borderRadius: 10,
+                        background: ds.bgSubtle,
+                        padding: 10,
+                        marginBottom: 10,
+                      }}
+                    >
+                      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 92px', gap: 8 }}>
+                        <label style={{ ...labelStyle, display: 'block' }}>
+                          Producto
+                          <select
+                            value={line.product_id}
+                            onChange={(e) => updateEditorLineProduct(idx, e.target.value)}
+                            style={{ ...modalFieldStyle, marginTop: 6, cursor: 'pointer' }}
+                          >
+                            <option value="">Selecciona producto</option>
+                            {products.map((p) => (
+                              <option key={p.id} value={String(p.id)}>
+                                {p.title}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label style={{ ...labelStyle, display: 'block' }}>
+                          Variante
+                          <select
+                            value={line.variant_id}
+                            onChange={(e) => updateEditorLine(idx, { variant_id: e.target.value })}
+                            style={{ ...modalFieldStyle, marginTop: 6, cursor: 'pointer' }}
+                            disabled={!line.product_id || variants.length === 0}
+                          >
+                            <option value="">{variants.length ? 'Selecciona variante' : 'Sin variantes'}</option>
+                            {variants.map((v) => (
+                              <option key={v.id} value={String(v.id)}>
+                                {v.title || 'Variante'}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                        <label style={{ ...labelStyle, display: 'block' }}>
+                          Cant.
+                          <input
+                            type="text"
+                            inputMode="numeric"
+                            value={line.quantity}
+                            onChange={(e) => updateEditorLine(idx, { quantity: e.target.value })}
+                            style={{ ...modalFieldStyle, marginTop: 6 }}
+                          />
+                        </label>
+                      </div>
+                      {canRemove ? (
+                        <button
+                          type="button"
+                          onClick={() => removeEditorLine(idx)}
+                          style={{
+                            marginTop: 8,
+                            padding: '6px 10px',
+                            borderRadius: 8,
+                            border: `1px solid ${ds.borderCard}`,
+                            background: ds.bgCard,
+                            color: ds.textSecondary,
+                            fontSize: 11,
+                            fontWeight: 600,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          Quitar producto
+                        </button>
+                      ) : null}
+                    </div>
+                  );
+                })}
+                <button
+                  type="button"
+                  onClick={addEditorLine}
+                  style={{
+                    padding: '8px 12px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.brand}`,
+                    background: ds.brandBg,
+                    color: ds.brand,
+                    fontWeight: 700,
+                    fontSize: 12,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Agregar otro producto
+                </button>
+              </div>
+            ) : null}
             <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
               <button
                 type="button"

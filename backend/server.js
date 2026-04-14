@@ -2410,12 +2410,17 @@ function mapMoticoManualOrderRowFromDb(r) {
     lineItemsRaw.length > 0
       ? lineItemsRaw.map((li, idx) => ({
           id: Number(li.id) && Number.isFinite(Number(li.id)) ? Number(li.id) : idx + 1,
+          product_id:
+            li.product_id != null && Number.isFinite(Number(li.product_id)) ? Number(li.product_id) : null,
+          variant_id:
+            li.variant_id != null && Number.isFinite(Number(li.variant_id)) ? Number(li.variant_id) : null,
           title: String(li.title || li.name || 'Producto').trim() || 'Producto',
           name: String(li.name || '').trim(),
           variant_title: li.variant_title != null ? String(li.variant_title).trim() : '',
           quantity: parseInt(String(li.quantity), 10) || 0,
           price: li.price != null ? String(li.price) : '',
           sku: li.sku != null ? String(li.sku).trim() : '',
+          barcode: li.barcode != null ? String(li.barcode).trim() : '',
           properties: Array.isArray(li.properties)
             ? li.properties
                 .filter((p) => p && typeof p === 'object')
@@ -3674,7 +3679,9 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       }
       const manualId = -orderIdRaw;
       const { rows: mrows } = await pool.query(
-        `SELECT id, price_override, quantity_override, motico_status, total_a_pagar_override FROM motico_manual_orders WHERE id = $1 AND organization_id = $2`,
+        `SELECT id, price_override, quantity_override, motico_status, total_a_pagar_override, total_price, product_summary, line_items_json
+         FROM motico_manual_orders
+         WHERE id = $1 AND organization_id = $2`,
         [manualId, req.organizationId],
       );
       if (!mrows.length) {
@@ -3725,15 +3732,84 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           total_a_pagar_override = bal;
         }
       }
+      let line_items_json = Array.isArray(cur.line_items_json) ? cur.line_items_json : [];
+      if (typeof cur.line_items_json === 'string') {
+        try {
+          const parsed = JSON.parse(cur.line_items_json);
+          line_items_json = Array.isArray(parsed) ? parsed : [];
+        } catch {
+          line_items_json = [];
+        }
+      }
+      let product_summary = String(cur.product_summary || '').trim();
+      if (body.line_items !== undefined) {
+        if (!Array.isArray(body.line_items) || body.line_items.length === 0) {
+          return res.status(400).json({ error: 'Envía al menos un producto válido' });
+        }
+        const parsedLines = [];
+        for (const raw of body.line_items) {
+          if (!raw || typeof raw !== 'object') continue;
+          const li = raw;
+          const title = String(li.title || li.name || '').trim();
+          if (!title) continue;
+          const q = parseInt(String(li.quantity != null ? li.quantity : '1'), 10);
+          if (!Number.isFinite(q) || q < 1) continue;
+          parsedLines.push({
+            product_id: li.product_id != null ? Number(li.product_id) || null : null,
+            variant_id: li.variant_id != null ? Number(li.variant_id) || null : null,
+            title,
+            variant_title: String(li.variant_title || '').trim(),
+            sku: String(li.sku || '').trim(),
+            barcode: String(li.barcode || '').trim(),
+            quantity: q,
+          });
+        }
+        if (!parsedLines.length) {
+          return res.status(400).json({ error: 'Envía al menos un producto válido' });
+        }
+        const effectiveTotal =
+          price_override != null && Number.isFinite(Number(price_override))
+            ? Number(price_override)
+            : Number(cur.total_price || 0);
+        const qtyTotal = parsedLines.reduce((acc, li) => acc + li.quantity, 0) || 1;
+        const unitPrice = Math.round((effectiveTotal / qtyTotal) * 10000) / 10000;
+        line_items_json = parsedLines.map((li, idx) => ({
+          id: idx + 1,
+          product_id: li.product_id,
+          variant_id: li.variant_id,
+          title: li.title,
+          variant_title: li.variant_title,
+          sku: li.sku,
+          barcode: li.barcode,
+          quantity: li.quantity,
+          price: String(unitPrice),
+          properties: [],
+        }));
+        product_summary = parsedLines
+          .map((li) => (li.variant_title ? `${li.title} (${li.variant_title})` : li.title))
+          .join(' + ')
+          .slice(0, 600);
+      }
       await pool.query(
         `UPDATE motico_manual_orders SET
           price_override = $1,
           quantity_override = $2,
           motico_status = $3,
           total_a_pagar_override = $4,
+          line_items_json = $5::jsonb,
+          product_summary = $6,
           updated_at = now()
-        WHERE id = $5 AND organization_id = $6`,
-        [price_override, quantity_override, motico_status, total_a_pagar_override, manualId, req.organizationId],
+        WHERE id = $7 AND organization_id = $8`,
+        [
+          price_override,
+          quantity_override,
+          motico_status,
+          total_a_pagar_override,
+          JSON.stringify(line_items_json),
+          product_summary,
+          manualId,
+          req.organizationId,
+        ],
       );
       return res.json({
         ok: true,
