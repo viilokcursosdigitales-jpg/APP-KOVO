@@ -107,8 +107,6 @@ const tableStyle: CSSProperties = {
   width: '100%',
   borderCollapse: 'collapse',
   tableLayout: 'fixed',
-  border: '1px solid #6c47ff',
-  boxSizing: 'border-box',
 };
 
 const tdStyle: CSSProperties = {
@@ -484,6 +482,7 @@ export default function GananciaDiariaPage() {
               ...cardBase,
               padding: 0,
               overflow: 'hidden',
+              border: '1px solid #6c47ff',
             }}
           >
             {seriesLoading ? (
