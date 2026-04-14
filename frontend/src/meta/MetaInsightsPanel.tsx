@@ -770,6 +770,12 @@ export function MetaInsightsPanel({
     return { ...base, cpm, cpc, ctr, roas, cpa };
   }, [filteredRows]);
 
+  /** Pedidos Shopify atribuidos a cualquier anuncio de la lista (cada pedido cuenta una vez en total). */
+  const shopifyComprasTotalAttributed = useMemo(
+    () => Object.values(shopifyComprasByAd).reduce((a, n) => a + (Number(n) || 0), 0),
+    [shopifyComprasByAd],
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -866,17 +872,37 @@ export function MetaInsightsPanel({
 
   const periods: MetaInsightPeriod[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'custom'];
 
-  const metricCards = [
-    { label: 'Impresiones', value: formatNumber(displayTotals.impressions) },
-    { label: 'Clics', value: formatNumber(displayTotals.clicks) },
-    { label: 'Compras', value: formatNumber(displayTotals.purchases) },
-    { label: 'CPA', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
-    { label: 'Gasto', value: formatMoney2(displayTotals.spend) },
-    { label: 'CPM', value: formatMoney2(displayTotals.cpm) },
-    { label: 'CPC', value: formatMoney2(displayTotals.cpc) },
-    { label: 'CTR', value: formatPct(displayTotals.ctr) },
-    { label: 'ROAS', value: formatRoasMeta(displayTotals.roas) },
-  ];
+  type MetricCard = { label: string; value: string; title?: string };
+
+  const metricCards: MetricCard[] = useMemo(() => {
+    const metaComprasTitle =
+      level === 'ads'
+        ? 'Compras de sitio web que Meta atribuye a los anuncios de esta tabla (periodo del selector). Suele ser mayor que Shopify: ventana de atribución, view-through, modelado y conversiones sin pedido enlazable aquí. Para comparar con Ads Manager usa la misma pestaña (Campañas vs Anuncios) y los mismos filtros.'
+        : 'Compras de sitio web que Meta atribuye a las filas visibles en este periodo.';
+
+    const cards: MetricCard[] = [
+      { label: 'Impresiones', value: formatNumber(displayTotals.impressions) },
+      { label: 'Clics', value: formatNumber(displayTotals.clicks) },
+      { label: 'Compras', value: formatNumber(displayTotals.purchases), title: metaComprasTitle },
+    ];
+    if (level === 'ads' && shopifyPedidosAvailable) {
+      cards.push({
+        label: 'Comp. Shopify (Σ)',
+        value: formatNumber(shopifyComprasTotalAttributed),
+        title:
+          'Total de pedidos Shopify del periodo (calendario de la tienda) que se pudieron enlazar a algún anuncio de esta lista (UTMs, URL, nombre). Cada pedido cuenta una vez. No incluye pedidos sin señal clara ni anuncios fuera de la lista.',
+      });
+    }
+    cards.push(
+      { label: 'CPA', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
+      { label: 'Gasto', value: formatMoney2(displayTotals.spend) },
+      { label: 'CPM', value: formatMoney2(displayTotals.cpm) },
+      { label: 'CPC', value: formatMoney2(displayTotals.cpc) },
+      { label: 'CTR', value: formatPct(displayTotals.ctr) },
+      { label: 'ROAS', value: formatRoasMeta(displayTotals.roas) },
+    );
+    return cards;
+  }, [displayTotals, level, shopifyPedidosAvailable, shopifyComprasTotalAttributed]);
 
   const levelTabs: { id: InsightLevel; label: string }[] = [
     { id: 'campaigns', label: 'Campañas' },
@@ -1080,6 +1106,16 @@ export function MetaInsightsPanel({
         </p>
       ) : null}
 
+      {level === 'ads' ? (
+        <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textMuted, maxWidth: 900, lineHeight: 1.45 }}>
+          La columna <strong style={{ color: ds.textSecondary }}>Compras</strong> es la de Meta (píxel / conversiones
+          del periodo). <strong>Compras Shopify</strong> es otra cosa: pedidos del checkout enlazados a cada anuncio por
+          UTMs o URL. Por eso el total de Shopify suele ser <strong>menor</strong> que el de Meta (view-through, ventana
+          de atribución, compras sin UTMs en el pedido, anuncios que no están en esta tabla, etc.). Si comparas con Ads
+          Manager, revisa la misma vista (Campañas vs Anuncios) y filtros activos.
+        </p>
+      ) : null}
+
       {campaignStatusBanner ? (
         <div
           style={{
@@ -1111,6 +1147,7 @@ export function MetaInsightsPanel({
           {metricCards.map((m) => (
             <div
               key={m.label}
+              title={m.title}
               style={{
                 background: ds.bgCard,
                 borderRadius: 14,
