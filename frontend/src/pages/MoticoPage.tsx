@@ -133,7 +133,18 @@ type MoticoOrderRow = {
   is_motico_manual?: boolean;
 };
 
-type ShopifyProduct = { id: number; title: string };
+type ShopifyProductVariant = {
+  id: number;
+  title: string;
+  sku?: string;
+  barcode?: string;
+};
+
+type ShopifyProduct = {
+  id: number;
+  title: string;
+  variants?: ShopifyProductVariant[];
+};
 
 const filterCtl: CSSProperties = {
   padding: '7px 12px',
@@ -318,9 +329,12 @@ type ManualCreateDraft = {
   phone: string;
   /** Valor input type=date (YYYY-MM-DD); vacío = fecha/hora actual en el servidor. Si hay fecha, hora fija 8:00 local. */
   created_at: string;
-  product_summary: string;
   total: string;
-  quantity: string;
+  line_items: {
+    product_id: string;
+    variant_id: string;
+    quantity: string;
+  }[];
   financial_status: 'paid' | 'pending' | 'unpaid';
   province: string;
   city: string;
@@ -328,6 +342,14 @@ type ManualCreateDraft = {
   address2: string;
   country: string;
 };
+
+function emptyManualLine() {
+  return {
+    product_id: '',
+    variant_id: '',
+    quantity: '1',
+  };
+}
 
 /** Fecha de creación manual: solo día; se envía como 8:00 a. m. hora local. */
 function creationDateAt8amLocalToIso(ymd: string): string | null {
@@ -352,9 +374,8 @@ function emptyManualDraft(): ManualCreateDraft {
     client_email: '',
     phone: '',
     created_at: `${yyyy}-${mm}-${dd}`,
-    product_summary: '',
     total: '',
-    quantity: '1',
+    line_items: [emptyManualLine()],
     financial_status: 'pending',
     province: 'CUNDINAMARCA',
     city: 'BOGOTA',
@@ -377,6 +398,37 @@ function getNextManualWhatsappOrderNumber(rows: MoticoOrderRow[]): number {
     if (Number.isFinite(byId) && byId > maxUsed) maxUsed = byId;
   }
   return maxUsed + 1;
+}
+
+function normalizeShopifyProducts(raw: unknown): ShopifyProduct[] {
+  const list =
+    raw && typeof raw === 'object' && Array.isArray((raw as { products?: unknown[] }).products)
+      ? (raw as { products: unknown[] }).products
+      : [];
+  const out: ShopifyProduct[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as Record<string, unknown>;
+    const variants = Array.isArray(row.variants)
+      ? row.variants
+          .filter((v) => v && typeof v === 'object')
+          .map((v) => {
+            const vv = v as Record<string, unknown>;
+            return {
+              id: Number(vv.id) || 0,
+              title: String(vv.title || ''),
+              sku: String(vv.sku || ''),
+              barcode: String(vv.barcode || ''),
+            } satisfies ShopifyProductVariant;
+          })
+      : [];
+    out.push({
+      id: Number(row.id) || 0,
+      title: String(row.title || ''),
+      variants,
+    });
+  }
+  return out;
 }
 
 function draftFromOrder(o: MoticoOrderRow): MoticoEditorDraft {
@@ -565,6 +617,12 @@ export default function MoticoPage() {
     return m;
   }, [products]);
 
+  const productById = useMemo(() => {
+    const m = new Map<number, ShopifyProduct>();
+    for (const p of products) m.set(p.id, p);
+    return m;
+  }, [products]);
+
   const summarizeProducts = useCallback(
     (ids: number[]) => {
       if (!ids.length) return '—';
@@ -634,8 +692,8 @@ export default function MoticoPage() {
         ]);
 
         if (prodRes.ok) {
-          const pdata = (await prodRes.json()) as { products?: ShopifyProduct[] };
-          setProducts(Array.isArray(pdata.products) ? pdata.products : []);
+          const pdata = (await prodRes.json().catch(() => ({}))) as { products?: unknown[] };
+          setProducts(normalizeShopifyProducts(pdata));
         }
 
         const data = (await ordRes.json().catch(() => ({}))) as {
@@ -1006,18 +1064,89 @@ export default function MoticoPage() {
     }
   }, [editorOrder, editorDraft, patchLocalFields]);
 
+  const updateManualLine = useCallback(
+    (idx: number, patch: Partial<ManualCreateDraft['line_items'][number]>) => {
+      setManualDraft((d) => ({
+        ...d,
+        line_items: d.line_items.map((line, i) => (i === idx ? { ...line, ...patch } : line)),
+      }));
+    },
+    [],
+  );
+
+  const updateManualLineProduct = useCallback(
+    (idx: number, nextProductId: string) => {
+      const pid = Number(nextProductId);
+      const product = Number.isFinite(pid) ? productById.get(pid) : undefined;
+      const firstVariantId = product?.variants?.[0]?.id ? String(product.variants[0].id) : '';
+      updateManualLine(idx, { product_id: nextProductId, variant_id: firstVariantId });
+    },
+    [productById, updateManualLine],
+  );
+
+  const addManualLine = useCallback(() => {
+    setManualDraft((d) => ({ ...d, line_items: [...d.line_items, emptyManualLine()] }));
+  }, []);
+
+  const removeManualLine = useCallback((idx: number) => {
+    setManualDraft((d) => {
+      const next = d.line_items.filter((_, i) => i !== idx);
+      return { ...d, line_items: next.length ? next : [emptyManualLine()] };
+    });
+  }, []);
+
   const submitManualOrder = useCallback(async () => {
     setManualError('');
     setManualSaving(true);
     try {
+      const normalizedItems = manualDraft.line_items
+        .map((line) => {
+          const pid = Number(line.product_id);
+          if (!Number.isFinite(pid) || pid <= 0) return null;
+          const product = productById.get(pid);
+          if (!product) return null;
+          const variants = Array.isArray(product.variants) ? product.variants : [];
+          const selectedVariant =
+            variants.find((v) => String(v.id) === String(line.variant_id)) || variants[0] || null;
+          const qty = parseInt(String(line.quantity || '1'), 10);
+          if (!Number.isFinite(qty) || qty < 1) return null;
+          return {
+            product_id: pid,
+            variant_id: selectedVariant ? Number(selectedVariant.id) : null,
+            title: String(product.title || 'Producto').trim() || 'Producto',
+            variant_title: selectedVariant ? String(selectedVariant.title || '').trim() : '',
+            sku: selectedVariant ? String(selectedVariant.sku || '').trim() : '',
+            barcode: selectedVariant ? String(selectedVariant.barcode || '').trim() : '',
+            quantity: qty,
+          };
+        })
+        .filter(Boolean) as Array<{
+        product_id: number;
+        variant_id: number | null;
+        title: string;
+        variant_title: string;
+        sku: string;
+        barcode: string;
+        quantity: number;
+      }>;
+
+      if (!normalizedItems.length) {
+        setManualError('Selecciona al menos un producto del inventario.');
+        return;
+      }
+
       const payload: Record<string, unknown> = {
         client_name: manualDraft.client_name.trim(),
         client_email: manualDraft.client_email.trim(),
         order_name: manualOrderNamePreview,
         phone: manualDraft.phone.trim(),
-        product_summary: manualDraft.product_summary.trim(),
+        product_summary: normalizedItems
+          .map((x) => (x.variant_title ? `${x.title} (${x.variant_title})` : x.title))
+          .join(' + ')
+          .slice(0, 600),
+        line_items: normalizedItems,
         total: manualDraft.total.trim(),
-        quantity: manualDraft.quantity.trim() || '1',
+        quantity: String(normalizedItems.reduce((sum, x) => sum + x.quantity, 0)),
         financial_status: manualDraft.financial_status,
         province: manualDraft.province.trim(),
         city: manualDraft.city.trim(),
@@ -1052,7 +1181,7 @@ export default function MoticoPage() {
     } finally {
       setManualSaving(false);
     }
-  }, [manualDraft, manualOrderNamePreview, loadData]);
+  }, [manualDraft, manualOrderNamePreview, productById, loadData]);
 
   useEffect(() => {
     if (!editorOrder) return;
@@ -2243,16 +2372,117 @@ export default function MoticoPage() {
                 autoComplete="email"
               />
             </label>
-            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
-              Producto / descripción *
-              <input
-                type="text"
-                value={manualDraft.product_summary}
-                onChange={(e) => setManualDraft((d) => ({ ...d, product_summary: e.target.value }))}
-                style={modalFieldStyle}
-              />
-            </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 14 }}>
+            <div style={{ marginTop: 14 }}>
+              <p
+                style={{
+                  margin: '0 0 8px',
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: ds.textSecondary,
+                  textTransform: 'uppercase',
+                  letterSpacing: '0.4px',
+                }}
+              >
+                Productos del inventario *
+              </p>
+              {manualDraft.line_items.map((line, idx) => {
+                const selectedProduct = productById.get(Number(line.product_id));
+                const variants = selectedProduct?.variants || [];
+                const canRemove = manualDraft.line_items.length > 1;
+                return (
+                  <div
+                    key={`manual-line-${idx}`}
+                    style={{
+                      border: `1px solid ${ds.borderCard}`,
+                      borderRadius: 10,
+                      background: ds.bgSubtle,
+                      padding: 10,
+                      marginBottom: 10,
+                    }}
+                  >
+                    <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 92px', gap: 8 }}>
+                      <label style={{ ...labelStyle, display: 'block' }}>
+                        Producto
+                        <select
+                          value={line.product_id}
+                          onChange={(e) => updateManualLineProduct(idx, e.target.value)}
+                          style={{ ...modalFieldStyle, marginTop: 6, cursor: 'pointer' }}
+                        >
+                          <option value="">Selecciona producto</option>
+                          {products.map((p) => (
+                            <option key={p.id} value={String(p.id)}>
+                              {p.title}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label style={{ ...labelStyle, display: 'block' }}>
+                        Variante
+                        <select
+                          value={line.variant_id}
+                          onChange={(e) => updateManualLine(idx, { variant_id: e.target.value })}
+                          style={{ ...modalFieldStyle, marginTop: 6, cursor: 'pointer' }}
+                          disabled={!line.product_id || variants.length === 0}
+                        >
+                          <option value="">{variants.length ? 'Selecciona variante' : 'Sin variantes'}</option>
+                          {variants.map((v) => (
+                            <option key={v.id} value={String(v.id)}>
+                              {v.title || 'Variante'}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                      <label style={{ ...labelStyle, display: 'block' }}>
+                        Cant.
+                        <input
+                          type="text"
+                          inputMode="numeric"
+                          value={line.quantity}
+                          onChange={(e) => updateManualLine(idx, { quantity: e.target.value })}
+                          style={{ ...modalFieldStyle, marginTop: 6 }}
+                        />
+                      </label>
+                    </div>
+                    {canRemove ? (
+                      <button
+                        type="button"
+                        onClick={() => removeManualLine(idx)}
+                        style={{
+                          marginTop: 8,
+                          padding: '6px 10px',
+                          borderRadius: 8,
+                          border: `1px solid ${ds.borderCard}`,
+                          background: ds.bgCard,
+                          color: ds.textSecondary,
+                          fontSize: 11,
+                          fontWeight: 600,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Quitar producto
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+              <button
+                type="button"
+                onClick={addManualLine}
+                style={{
+                  padding: '8px 12px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.brand}`,
+                  background: ds.brandBg,
+                  color: ds.brand,
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                Agregar otro producto
+              </button>
+            </div>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginTop: 14 }}>
               <label style={{ ...labelStyle, display: 'block' }}>
                 Total *
                 <input
@@ -2260,16 +2490,6 @@ export default function MoticoPage() {
                   inputMode="decimal"
                   value={manualDraft.total}
                   onChange={(e) => setManualDraft((d) => ({ ...d, total: e.target.value }))}
-                  style={modalFieldStyle}
-                />
-              </label>
-              <label style={{ ...labelStyle, display: 'block' }}>
-                Cantidad
-                <input
-                  type="text"
-                  inputMode="numeric"
-                  value={manualDraft.quantity}
-                  onChange={(e) => setManualDraft((d) => ({ ...d, quantity: e.target.value }))}
                   style={modalFieldStyle}
                 />
               </label>

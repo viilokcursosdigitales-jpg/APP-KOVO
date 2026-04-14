@@ -3705,21 +3705,42 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
   try {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
     const client_name = String(body.client_name || '').trim();
-    const product_summary = String(body.product_summary || '').trim();
+    const product_summary_in = String(body.product_summary || '').trim();
     if (!client_name) {
       return res.status(400).json({ error: 'El nombre del cliente es obligatorio' });
-    }
-    if (!product_summary) {
-      return res.status(400).json({ error: 'La descripción del producto o pedido es obligatoria' });
     }
     const total = Number.parseFloat(String(body.total != null ? body.total : '').replace(',', '.'));
     if (!Number.isFinite(total) || total < 0) {
       return res.status(400).json({ error: 'Total no válido' });
     }
-    const qty = parseInt(String(body.quantity != null ? body.quantity : '1'), 10);
-    if (!Number.isFinite(qty) || qty < 1) {
-      return res.status(400).json({ error: 'La cantidad debe ser al menos 1' });
+    const line_items_in = Array.isArray(body.line_items) ? body.line_items : [];
+    const parsedLines = [];
+    for (const raw of line_items_in) {
+      if (!raw || typeof raw !== 'object') continue;
+      const li = raw;
+      const title = String(li.title || li.name || '').trim();
+      if (!title) continue;
+      const q = parseInt(String(li.quantity != null ? li.quantity : '1'), 10);
+      if (!Number.isFinite(q) || q < 1) continue;
+      parsedLines.push({
+        product_id: li.product_id != null ? Number(li.product_id) || null : null,
+        variant_id: li.variant_id != null ? Number(li.variant_id) || null : null,
+        title,
+        variant_title: String(li.variant_title || '').trim(),
+        sku: String(li.sku || '').trim(),
+        barcode: String(li.barcode || '').trim(),
+        quantity: q,
+      });
     }
+    if (!parsedLines.length && !product_summary_in) {
+      return res.status(400).json({ error: 'Selecciona al menos un producto del inventario' });
+    }
+    const qtyFallback = parseInt(String(body.quantity != null ? body.quantity : '1'), 10);
+    const qty = parsedLines.length
+      ? parsedLines.reduce((acc, li) => acc + li.quantity, 0)
+      : Number.isFinite(qtyFallback) && qtyFallback > 0
+        ? qtyFallback
+        : 1;
     const fin = String(body.financial_status || 'pending').toLowerCase();
     const allowedFin = new Set(['paid', 'pending', 'unpaid', 'partially_paid', 'authorized', 'voided']);
     const financial_status = allowedFin.has(fin) ? fin : 'pending';
@@ -3756,7 +3777,25 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
       phone,
     };
     const unitPrice = qty > 0 ? Math.round((total / qty) * 10000) / 10000 : total;
-    const line_items_json = [{ id: 1, title: product_summary, quantity: qty, price: String(unitPrice) }];
+    const line_items_json = parsedLines.length
+      ? parsedLines.map((li, idx) => ({
+          id: idx + 1,
+          product_id: li.product_id,
+          variant_id: li.variant_id,
+          title: li.title,
+          variant_title: li.variant_title,
+          sku: li.sku,
+          barcode: li.barcode,
+          quantity: li.quantity,
+          price: String(unitPrice),
+        }))
+      : [{ id: 1, title: product_summary_in || 'Producto', quantity: qty, price: String(unitPrice) }];
+    const product_summary = parsedLines.length
+      ? parsedLines
+          .map((li) => (li.variant_title ? `${li.title} (${li.variant_title})` : li.title))
+          .join(' + ')
+          .slice(0, 600)
+      : (product_summary_in || 'Producto').slice(0, 600);
     const total_outstanding = financial_status === 'paid' ? 0 : total;
 
     let createdAtParam = null;
