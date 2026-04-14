@@ -179,18 +179,37 @@ const thHeadPad: CSSProperties = {
 
 const thColHeadLeft: CSSProperties = { ...thStyle, ...thHeadPad };
 const thColHeadRight: CSSProperties = { ...thRight, ...thHeadPad };
-const tdColLeft: CSSProperties = { ...tdStyle, ...thTdColSizing, fontWeight: 500 };
-const tdColRight: CSSProperties = {
-  ...tdStyle,
-  ...thTdColSizing,
-  textAlign: 'right',
-  fontVariantNumeric: 'tabular-nums',
+
+/** Pedidos: ancho al texto del encabezado + 20px izq. y der. */
+const thColHeadPedidos: CSSProperties = {
+  ...thRight,
+  paddingTop: 8,
+  paddingBottom: 8,
+  paddingLeft: 20,
+  paddingRight: 20,
+  boxSizing: 'border-box',
+  whiteSpace: 'nowrap',
+  width: '1%',
+  verticalAlign: 'bottom',
+  lineHeight: 1.25,
+  wordBreak: 'normal',
+  hyphens: 'manual',
 };
 
-const tableStyle: CSSProperties = {
-  width: '100%',
-  borderCollapse: 'collapse',
-  tableLayout: 'auto',
+/** Cantidad / producto: ancho = palabra más larga del encabezado + 20px lateral. */
+const thColHeadCantidad: CSSProperties = {
+  ...thRight,
+  paddingTop: 8,
+  paddingBottom: 8,
+  paddingLeft: 20,
+  paddingRight: 20,
+  boxSizing: 'border-box',
+  width: '1%',
+  verticalAlign: 'bottom',
+  lineHeight: 1.25,
+  whiteSpace: 'normal',
+  wordBreak: 'normal',
+  hyphens: 'manual',
 };
 
 const tdStyle: CSSProperties = {
@@ -199,6 +218,36 @@ const tdStyle: CSSProperties = {
   padding: '8px 4px',
   borderBottom: `1px solid ${ds.borderRow}`,
   wordBreak: 'break-word',
+};
+
+const tdColLeft: CSSProperties = { ...tdStyle, ...thTdColSizing, fontWeight: 500 };
+const tdColRight: CSSProperties = {
+  ...tdStyle,
+  ...thTdColSizing,
+  textAlign: 'right',
+  fontVariantNumeric: 'tabular-nums',
+};
+
+const tdColPedidos: CSSProperties = {
+  ...tdStyle,
+  paddingTop: 8,
+  paddingBottom: 8,
+  paddingLeft: 20,
+  paddingRight: 20,
+  boxSizing: 'border-box',
+  textAlign: 'right',
+  whiteSpace: 'nowrap',
+  fontVariantNumeric: 'tabular-nums',
+  fontWeight: 500,
+  width: '1%',
+  wordBreak: 'normal',
+  hyphens: 'manual',
+};
+
+const tableStyle: CSSProperties = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  tableLayout: 'auto',
 };
 
 export default function GananciaDiariaPage() {
@@ -699,16 +748,15 @@ export default function GananciaDiariaPage() {
                         <br />
                         entregadas
                       </th>
-                      <th style={thColHeadRight}>Pedidos</th>
-                      <th style={thColHeadRight}>
-                        Cantidad
-                        <br />
-                        producto
+                      <th style={thColHeadPedidos}>Pedidos</th>
+                      <th style={thColHeadCantidad}>
+                        <span style={{ display: 'block', whiteSpace: 'nowrap' }}>Cantidad</span>
+                        <span style={{ display: 'block', whiteSpace: 'nowrap' }}>producto</span>
                       </th>
                       <th style={thColHeadRight}>
                         Gasto
                         <br />
-                        administrativo
+                        admon
                       </th>
                       <th style={thColHeadRight}>
                         Costo
@@ -756,7 +804,7 @@ export default function GananciaDiariaPage() {
                         <td style={tdColRight}>
                           {formatMoney(ventasEntregadasRow, seriesVentasCur)}
                         </td>
-                        <td style={tdColRight}>
+                        <td style={tdColPedidos}>
                           {row.ventas_despachadas_pedidos}
                         </td>
                         <td style={tdColRight}>
@@ -795,7 +843,7 @@ export default function GananciaDiariaPage() {
                       <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {formatMoney(totals.ventasEntregadas, seriesVentasCur)}
                       </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
+                      <td style={{ ...tdColPedidos, fontWeight: 700 }}>
                         {totals.pedidos}
                       </td>
                       <td style={{ ...tdColRight, fontWeight: 700 }}>
