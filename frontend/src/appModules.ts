@@ -7,6 +7,7 @@ export const APP_MODULE_IDS = [
   'meta_ads',
   'indicadores_marketing',
   'canales',
+  'ganancia_diaria',
 ] as const;
 
 export type AppModuleId = (typeof APP_MODULE_IDS)[number];
@@ -19,6 +20,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'meta_ads', label: 'Meta Ads', group: 'Marketing' },
   { id: 'indicadores_marketing', label: 'Indicadores', group: 'Marketing' },
   { id: 'canales', label: 'Canales', group: 'Marketing' },
+  { id: 'ganancia_diaria', label: 'Ganancia Diaria', group: 'Marketing' },
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
@@ -29,6 +31,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/meta-ads': 'meta_ads',
   '/indicadores-marketing': 'indicadores_marketing',
   '/canales': 'canales',
+  '/ganancia-diaria': 'ganancia_diaria',
 };
 
 const MODULE_TO_PATH: Record<AppModuleId, string> = {
@@ -39,6 +42,7 @@ const MODULE_TO_PATH: Record<AppModuleId, string> = {
   meta_ads: '/meta-ads',
   indicadores_marketing: '/indicadores-marketing',
   canales: '/canales',
+  ganancia_diaria: '/ganancia-diaria',
 };
 
 /** Orden para “primera pantalla” tras login o al bloquear una ruta. */

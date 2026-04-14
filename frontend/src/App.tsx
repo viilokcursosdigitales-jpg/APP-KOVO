@@ -10,6 +10,7 @@ import Home from './pages/Home';
 import InventarioPage from './pages/InventarioPage';
 import Login from './pages/Login';
 import MarketingIndicatorsPage from './pages/MarketingIndicatorsPage';
+import GananciaDiariaPage from './pages/GananciaDiariaPage';
 import MetaAdsPage from './pages/MetaAdsPage';
 import MoticoPage from './pages/MoticoPage';
 import PedidosPage from './pages/PedidosPage';
@@ -39,6 +40,7 @@ export default function App() {
             <Route path="/meta-ads" element={<MetaAdsPage />} />
             <Route path="/indicadores-marketing" element={<MarketingIndicatorsPage />} />
             <Route path="/canales" element={<CanalesPage />} />
+            <Route path="/ganancia-diaria" element={<GananciaDiariaPage />} />
           </Route>
           <Route path="/profile" element={<Profile />} />
           <Route element={<AdminRoute />}>

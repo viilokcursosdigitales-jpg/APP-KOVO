@@ -90,6 +90,16 @@ export function IconTarget() {
   );
 }
 
+/** Ganancia / tendencia diaria */
+export function IconTrendingUp() {
+  return strokeSvg(
+    <>
+      <path d="M3 17l6-6 4 4 8-8" />
+      <path d="M14 7h7v7" />
+    </>,
+  );
+}
+
 export function IconShare() {
   return strokeSvg(
     <>

@@ -556,6 +556,38 @@ function shopifyOrderCreatedRangeForMetaPeriod(period, ianaTimezone, ref = new D
   return { min: new Date(minMs).toISOString(), max: new Date(maxMs).toISOString() };
 }
 
+/**
+ * Rango created_at (ISO UTC) para un día de calendario y-m-d en la zona de la tienda.
+ * @param {string} ianaTimezone
+ * @param {number} y
+ * @param {number} m
+ * @param {number} d
+ * @returns {{ min: string, max: string }}
+ */
+function shopifyOrderCreatedRangeForCalendarDate(ianaTimezone, y, m, d) {
+  const tz = String(ianaTimezone || 'UTC').trim() || 'UTC';
+  const minMs = utcMillisStartOfZonedCalendarDay(tz, y, m, d);
+  const next = addCalendarDaysYmd(y, m, d, 1);
+  const nextStart = utcMillisStartOfZonedCalendarDay(tz, next.y, next.m, next.d);
+  return { min: new Date(minMs).toISOString(), max: new Date(nextStart - 1).toISOString() };
+}
+
+/** Fecha de calendario (y,m,d) en la zona indicada para un instante UTC. */
+function shopCalendarYmdFromInstant(utcMillis, ianaTimezone) {
+  return wallClockPartsInZone(utcMillis, String(ianaTimezone || 'UTC').trim() || 'UTC');
+}
+
+/** @param {string} s @returns {{ y: number, m: number, d: number } | null} */
+function parseIsoDateYmd(s) {
+  const m = String(s || '').trim().match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  if (mo < 1 || mo > 12 || d < 1 || d > 31) return null;
+  return { y, m: mo, d };
+}
+
 function mapFinancialToBadge(financial) {
   const f = String(financial || '').toLowerCase();
   if (f === 'paid') return { label: 'Pagado', variant: 'success' };
@@ -582,5 +614,8 @@ module.exports = {
   utmFromNoteAttributes,
   mapFinancialToBadge,
   shopifyOrderCreatedRangeForMetaPeriod,
+  shopifyOrderCreatedRangeForCalendarDate,
+  shopCalendarYmdFromInstant,
+  parseIsoDateYmd,
   DEFAULT_API_VERSION,
 };

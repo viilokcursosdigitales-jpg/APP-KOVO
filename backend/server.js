@@ -36,6 +36,9 @@ const {
   normalizeShopifyOrdersForApp,
   mapFinancialToBadge,
   shopifyOrderCreatedRangeForMetaPeriod,
+  shopifyOrderCreatedRangeForCalendarDate,
+  shopCalendarYmdFromInstant,
+  parseIsoDateYmd,
 } = require('./shopifyService');
 const {
   getPublicAppUrl,
@@ -68,6 +71,7 @@ const CONFIGURABLE_MODULE_IDS = [
   'meta_ads',
   'indicadores_marketing',
   'canales',
+  'ganancia_diaria',
 ];
 
 const MODULE_CATALOG_FOR_API = [
@@ -78,6 +82,7 @@ const MODULE_CATALOG_FOR_API = [
   { id: 'meta_ads', label: 'Meta Ads', group: 'Marketing' },
   { id: 'indicadores_marketing', label: 'Indicadores', group: 'Marketing' },
   { id: 'canales', label: 'Canales', group: 'Marketing' },
+  { id: 'ganancia_diaria', label: 'Ganancia Diaria', group: 'Marketing' },
 ];
 
 const pool = createPool();
@@ -2724,6 +2729,130 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener pedidos' });
+  }
+});
+
+/** Ventas Shopify despachadas (estado KOVO) vs gasto Meta en el mismo día de calendario de la tienda. */
+app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const shopRow = await getActiveShopifyConnection(req.organizationId);
+    if (!shopRow) {
+      return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
+    }
+    const sr = await shopifyRequest(shopRow.shop_domain, shopRow.access_token, 'shop.json?fields=iana_timezone,currency');
+    const iana =
+      sr.ok && sr.data && sr.data.shop && sr.data.shop.iana_timezone
+        ? String(sr.data.shop.iana_timezone)
+        : 'UTC';
+    const shopCurrency =
+      sr.ok && sr.data && sr.data.shop && sr.data.shop.currency ? String(sr.data.shop.currency).trim() : '';
+
+    const dateParam = typeof req.query.date === 'string' ? req.query.date.trim() : '';
+    let ymd = parseIsoDateYmd(dateParam);
+    if (!ymd) {
+      ymd = shopCalendarYmdFromInstant(Date.now(), iana);
+    }
+    const dateStr = `${String(ymd.y).padStart(4, '0')}-${String(ymd.m).padStart(2, '0')}-${String(ymd.d).padStart(2, '0')}`;
+    const range = shopifyOrderCreatedRangeForCalendarDate(iana, ymd.y, ymd.m, ymd.d);
+
+    const qs = new URLSearchParams();
+    qs.set('limit', '250');
+    qs.set('status', 'any');
+    qs.set('fields', SHOPIFY_ORDER_LIST_FIELDS);
+    qs.set('created_at_min', range.min);
+    qs.set('created_at_max', range.max);
+    const r = await shopifyRequest(shopRow.shop_domain, shopRow.access_token, `orders.json?${qs.toString()}`);
+    if (!r.ok) {
+      return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error || 'Error Shopify', data: r.data });
+    }
+    const normalized = normalizeShopifyOrdersForApp(r.data);
+    const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
+    const localMap = await loadLocalFieldsMap(req.organizationId, ids);
+
+    const excludeFin = new Set(['voided', 'cancelled']);
+    let ventasTotal = 0;
+    let ventasPedidos = 0;
+    for (const o of normalized) {
+      const lf = localMap.get(Number(o.id));
+      const st = String(lf?.internal_status || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_');
+      if (st !== 'despachado') continue;
+      const fs = String(o.financialStatus || '').toLowerCase();
+      if (excludeFin.has(fs)) continue;
+      const amt = parseFloat(String(o.total || '0').replace(',', '.'));
+      if (!Number.isFinite(amt) || amt < 0) continue;
+      ventasTotal += amt;
+      ventasPedidos += 1;
+    }
+
+    let gastoAds = 0;
+    const metaPartialErrors = [];
+    let metaCurrency = '';
+    const metaRow = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
+    if (metaRow && String(metaRow.access_token || '').trim()) {
+      const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
+      if (resolved.ok && resolved.actIds.length > 0) {
+        const spendRes = await fetchTotalSpendForAdAccountsTimeRange(
+          resolved.actIds,
+          metaRow.access_token,
+          dateStr,
+          dateStr,
+        );
+        gastoAds = spendRes.spend;
+        for (const pe of spendRes.partialErrors || []) {
+          metaPartialErrors.push(pe);
+        }
+        const la = await listAdAccounts(metaRow.access_token);
+        if (la.ok && Array.isArray(la.accounts)) {
+          const curSet = new Set();
+          for (const aid of resolved.actIds) {
+            const n = normalizeActId(aid);
+            const hit = la.accounts.find((a) => normalizeActId(a.id) === n);
+            if (hit && hit.currency) curSet.add(String(hit.currency).trim());
+          }
+          if (curSet.size === 1) metaCurrency = [...curSet][0];
+          else if (curSet.size > 1) metaCurrency = [...curSet].join(', ');
+        }
+      }
+    }
+
+    const shopC = shopCurrency.toUpperCase();
+    const metaC = metaCurrency.toUpperCase();
+    const sameCurrency =
+      Boolean(shopC && metaC && shopC === metaC) ||
+      (gastoAds === 0 && Boolean(shopC) && !metaC) ||
+      (gastoAds === 0 && !shopC && !metaC);
+    let ganancia = null;
+    let warning = null;
+    if (sameCurrency && shopC) {
+      ganancia = Math.round((ventasTotal - gastoAds) * 100) / 100;
+    } else if (gastoAds > 0 && shopC && !metaC) {
+      warning =
+        'Hay gasto en Meta pero no se pudo determinar la divisa de la cuenta; no se calcula la ganancia automática.';
+    } else if (gastoAds > 0 && shopC && metaC && shopC !== metaC) {
+      warning = `La tienda usa ${shopCurrency} y la(s) cuenta(s) Meta ${metaCurrency}. Convierte manualmente para comparar.`;
+    } else if (ventasTotal > 0 && !shopC) {
+      warning = 'La tienda no reportó divisa en Shopify; revisa el total en el admin.';
+    }
+
+    res.json({
+      date: dateStr,
+      shop_calendar_timezone: iana,
+      ventas_despachadas_total: Math.round(ventasTotal * 100) / 100,
+      ventas_despachadas_pedidos: ventasPedidos,
+      ventas_currency: shopCurrency || null,
+      gasto_publicitario_total: Math.round(gastoAds * 100) / 100,
+      meta_currency: metaCurrency || null,
+      ganancia,
+      ganancia_comparable: ganancia != null,
+      warning,
+      meta_partial_errors: metaPartialErrors,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al calcular ganancia diaria' });
   }
 });
 
