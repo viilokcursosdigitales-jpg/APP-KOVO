@@ -49,14 +49,6 @@ type SeriesPayload = {
   code?: string;
 };
 
-function todayInputYmd(): string {
-  const d = new Date();
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
 function formatMoney(n: number, currency: string | null | undefined): string {
   if (!Number.isFinite(n)) return '—';
   const c = (currency || 'USD').trim().toUpperCase();
@@ -129,7 +121,6 @@ const tdStyle: CSSProperties = {
 };
 
 export default function GananciaDiariaPage() {
-  const [date, setDate] = useState(todayInputYmd);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState<GananciaPayload | null>(null);
@@ -150,9 +141,7 @@ export default function GananciaDiariaPage() {
     setLoading(true);
     setError('');
     try {
-      const qs = new URLSearchParams();
-      if (date.trim()) qs.set('date', date.trim());
-      const res = await apiFetch(`/api/ganancia-diaria?${qs.toString()}`);
+      const res = await apiFetch('/api/ganancia-diaria');
       const body = (await res.json().catch(() => ({}))) as GananciaPayload;
       if (!res.ok) {
         setData(null);
@@ -166,7 +155,7 @@ export default function GananciaDiariaPage() {
     } finally {
       setLoading(false);
     }
-  }, [date]);
+  }, []);
 
   const loadSeries = useCallback(async () => {
     setSeriesLoading(true);
@@ -301,22 +290,6 @@ export default function GananciaDiariaPage() {
       />
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 20 }}>
-        <label style={{ fontSize: 13, color: ds.textSecondary, display: 'flex', alignItems: 'center', gap: 8 }}>
-          Día (calendario tienda)
-          <input
-            type="date"
-            value={date}
-            onChange={(e) => setDate(e.target.value)}
-            style={{
-              padding: '8px 10px',
-              borderRadius: 8,
-              border: `1px solid ${ds.borderCard}`,
-              background: ds.bgCard,
-              color: ds.textPrimary,
-              fontSize: 13,
-            }}
-          />
-        </label>
         <button
           type="button"
           onClick={() => void load()}
