@@ -7,6 +7,7 @@ import { PageHeader } from '../design-system/PageHeader';
 type SeriesDayRow = {
   date: string;
   ventas_despachadas_total: number;
+  ventas_entregadas_total: number;
   ventas_despachadas_pedidos: number;
   cantidad_producto_total: number;
   costo_producto_total: number;
@@ -209,6 +210,7 @@ export default function GananciaDiariaPage() {
 
   const totals = useMemo(() => {
     let v = 0;
+    let ve = 0;
     let p = 0;
     let q = 0;
     let cp = 0;
@@ -219,17 +221,19 @@ export default function GananciaDiariaPage() {
     let utiSum = 0;
     for (const row of days) {
       v += row.ventas_despachadas_total;
+      ve += row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
       p += row.ventas_despachadas_pedidos;
       q += row.cantidad_producto_total || 0;
       cp += row.costo_producto_total || 0;
       cf += row.costo_flete_promedio_total || 0;
-      ga += (row.ventas_despachadas_total || 0) * (adminPercent / 100);
+      ga += (row.ventas_entregadas_total || row.ventas_despachadas_total || 0) * (adminPercent / 100);
       g += row.gasto_publicitario_total;
       if (row.ganancia != null && Number.isFinite(row.ganancia)) ganSum += row.ganancia;
       if (row.utilidad != null && Number.isFinite(row.utilidad)) utiSum += row.utilidad;
     }
     return {
       ventas: v,
+      ventasEntregadas: ve,
       pedidos: p,
       cantidadProducto: q,
       costoProducto: cp,
@@ -240,7 +244,7 @@ export default function GananciaDiariaPage() {
       utilidad: comparable ? Math.round(utiSum * 100) / 100 : null,
       utilidadNeta:
         comparable
-          ? Math.round((v - g - cp - cf - ga) * 100) / 100
+          ? Math.round((ve - g - cp - cf - ga) * 100) / 100
           : null,
     };
   }, [days, comparable, adminPercent]);
@@ -249,7 +253,7 @@ export default function GananciaDiariaPage() {
     <div style={{ width: '100%', maxWidth: 1440 }}>
       <PageHeader
         title="Ganancia Diaria"
-        subtitle="Ventas despachadas (Shopify + estado KOVO) menos gasto Meta, costo del producto y costo de flete promedio. Solo desde el 1 de enero del año en curso hasta hoy (calendario de la tienda)."
+        subtitle="Ventas despachadas (Shopify + estado KOVO), ventas entregadas (según % de efectividad), gasto Meta, costo del producto y costo de flete promedio. Solo desde el 1 de enero del año en curso hasta hoy (calendario de la tienda)."
       />
 
       {!seriesError ? (
@@ -330,7 +334,7 @@ export default function GananciaDiariaPage() {
                   : '—'}
               </div>
               <div style={{ fontSize: 12, color: ds.textSecondary, marginTop: 6 }}>
-                Ventas − gasto Meta − costo producto − flete promedio − gasto administrativo
+                Ventas entregadas − gasto Meta − costo producto − flete promedio − gasto administrativo
               </div>
             </div>
           </div>
@@ -520,6 +524,7 @@ export default function GananciaDiariaPage() {
                     <tr style={{ background: ds.bgSubtle }}>
                       <th style={thStyle}>Día</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Ventas desp.</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Ventas entreg.</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Pedidos</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Cantidad producto</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Gasto administrativo</th>
@@ -531,9 +536,10 @@ export default function GananciaDiariaPage() {
                   </thead>
                   <tbody>
                     {days.map((row) => {
+                      const ventasEntregadasRow = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
                       const utilidadRow =
                         comparable && Number.isFinite(row.utilidad as number)
-                          ? (row.utilidad as number) - (row.ventas_despachadas_total || 0) * (adminPercent / 100)
+                          ? (row.utilidad as number) - ventasEntregadasRow * (adminPercent / 100)
                           : null;
                       const rowBg =
                         utilidadRow == null
@@ -550,13 +556,16 @@ export default function GananciaDiariaPage() {
                           {formatMoney(row.ventas_despachadas_total, seriesVentasCur)}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {formatMoney(ventasEntregadasRow, seriesVentasCur)}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                           {row.ventas_despachadas_pedidos}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                           {Number(row.cantidad_producto_total || 0).toLocaleString('es-CO')}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                          {formatMoney((row.ventas_despachadas_total || 0) * (adminPercent / 100), seriesVentasCur)}
+                          {formatMoney(ventasEntregadasRow * (adminPercent / 100), seriesVentasCur)}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                           {formatMoney(row.costo_producto_total || 0, seriesVentasCur)}
@@ -581,6 +590,9 @@ export default function GananciaDiariaPage() {
                       <td style={{ ...tdStyle, fontWeight: 700 }}>Total período</td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                         {formatMoney(totals.ventas, seriesVentasCur)}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {formatMoney(totals.ventasEntregadas, seriesVentasCur)}
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                         {totals.pedidos}
