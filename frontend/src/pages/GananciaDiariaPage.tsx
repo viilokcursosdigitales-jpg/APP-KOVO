@@ -166,7 +166,6 @@ export default function GananciaDiariaPage() {
   const skipSeriesEffectOnce = useRef(false);
   const appliedDefaultMonthsOnce = useRef(false);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
-  const [selectedProductKey, setSelectedProductKey] = useState('');
 
   const loadSeries = useCallback(async () => {
     setSeriesLoading(true);
@@ -227,12 +226,6 @@ export default function GananciaDiariaPage() {
     return () => document.removeEventListener('mousedown', onDown);
   }, [monthsPanelOpen]);
 
-  useEffect(() => {
-    const opts = seriesData?.product_options ?? [];
-    if (!selectedProductKey) return;
-    if (!opts.some((o) => o.key === selectedProductKey)) setSelectedProductKey('');
-  }, [seriesData?.product_options, selectedProductKey]);
-
   const seriesMetaNote = useMemo(() => {
     if (!seriesData?.meta_partial_errors?.length) return null;
     return seriesData.meta_partial_errors.map((e) => `${e.adAccountId}: ${e.error}`).join(' · ');
@@ -255,7 +248,7 @@ export default function GananciaDiariaPage() {
     setMonthsPanelOpen(false);
   };
 
-  const baseDays = seriesData?.days ?? [];
+  const days = seriesData?.days ?? [];
   const productOptions = seriesData?.product_options ?? [];
   const seriesVentasCur = seriesData?.ventas_currency;
   const seriesMetaCur = seriesData?.meta_currency;
@@ -268,55 +261,12 @@ export default function GananciaDiariaPage() {
     return m;
   }, [productOptions]);
 
-  const displayRows = useMemo(() => {
-    if (!selectedProductKey) return baseDays;
-    return baseDays.map((row) => {
-      const s = row.by_product?.[selectedProductKey];
-      if (!s) {
-        return {
-          ...row,
-          ventas_despachadas_total: 0,
-          ventas_entregadas_total: 0,
-          ventas_despachadas_pedidos: 0,
-          cantidad_producto_total: 0,
-          costo_producto_total: 0,
-          costo_producto_entregado_total: 0,
-          costo_flete_promedio_total: 0,
-          gasto_publicitario_total: 0,
-          ganancia: comparable ? 0 : null,
-          utilidad: comparable ? 0 : null,
-        };
-      }
-      const metaP = metaAllocForProductDay(row, selectedProductKey);
-      const ve = s.ventas_entregadas_total || 0;
-      const cpe = s.costo_producto_entregado_total || s.costo_producto_total || 0;
-      const fl = s.costo_flete_promedio_total || 0;
-      const utilidadBase =
-        comparable && Number.isFinite(ve) ? Math.round((ve - metaP - cpe - fl) * 100) / 100 : null;
-      const vd = s.ventas_despachadas_total || 0;
-      const gananciaRow = comparable ? Math.round((vd - metaP) * 100) / 100 : null;
-      return {
-        ...row,
-        ventas_despachadas_total: s.ventas_despachadas_total,
-        ventas_entregadas_total: s.ventas_entregadas_total,
-        ventas_despachadas_pedidos: s.ventas_despachadas_pedidos,
-        cantidad_producto_total: s.cantidad_producto_total,
-        costo_producto_total: s.costo_producto_total,
-        costo_producto_entregado_total: s.costo_producto_entregado_total,
-        costo_flete_promedio_total: s.costo_flete_promedio_total,
-        gasto_publicitario_total: metaP,
-        ganancia: gananciaRow,
-        utilidad: utilidadBase,
-      };
-    });
-  }, [baseDays, selectedProductKey, comparable, adminPercent]);
-
   const productUtilidadChart = useMemo(() => {
-    if (!comparable || !baseDays.length || !productOptions.length) return [];
+    if (!comparable || !days.length || !productOptions.length) return [];
     const rows: { key: string; label: string; utilidad: number }[] = [];
     for (const opt of productOptions) {
       let u = 0;
-      for (const row of baseDays) {
+      for (const row of days) {
         const slice = row.by_product?.[opt.key];
         if (!slice) continue;
         const ve = slice.ventas_entregadas_total || 0;
@@ -328,7 +278,7 @@ export default function GananciaDiariaPage() {
       rows.push({ key: opt.key, label: opt.label, utilidad: Math.round(u * 100) / 100 });
     }
     return rows.sort((a, b) => b.utilidad - a.utilidad);
-  }, [baseDays, productOptions, comparable, adminPercent]);
+  }, [days, productOptions, comparable, adminPercent]);
 
   const chartMaxAbs = useMemo(() => {
     let m = 1;
@@ -348,7 +298,7 @@ export default function GananciaDiariaPage() {
     let g = 0;
     let ganSum = 0;
     let utiSum = 0;
-    for (const row of displayRows) {
+    for (const row of days) {
       v += row.ventas_despachadas_total;
       ve += row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
       p += row.ventas_despachadas_pedidos;
@@ -378,7 +328,7 @@ export default function GananciaDiariaPage() {
           ? Math.round((ve - g - cpe - cf - ga) * 100) / 100
           : null,
     };
-  }, [displayRows, comparable, adminPercent]);
+  }, [days, comparable, adminPercent]);
 
   const utilidadKpiValue =
     totals.utilidadNeta != null && Number.isFinite(totals.utilidadNeta) ? totals.utilidadNeta : null;
@@ -430,47 +380,7 @@ export default function GananciaDiariaPage() {
           <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: ds.textPrimary, flex: '1 1 auto' }}>
               Detalle por día
-              {selectedProductKey ? (
-                <span style={{ display: 'block', fontSize: 11, fontWeight: 500, color: ds.textMuted, marginTop: 4 }}>
-                  Filtrado: {productOptions.find((o) => o.key === selectedProductKey)?.label || selectedProductKey}
-                </span>
-              ) : null}
             </h2>
-            <label
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                fontSize: 12,
-                color: ds.textSecondary,
-                fontWeight: 600,
-              }}
-            >
-              Producto
-              <select
-                value={selectedProductKey}
-                onChange={(e) => setSelectedProductKey(e.target.value)}
-                disabled={!productOptions.length || seriesLoading}
-                style={{
-                  minWidth: 200,
-                  maxWidth: 280,
-                  padding: '7px 9px',
-                  borderRadius: 8,
-                  border: `1px solid ${ds.borderCard}`,
-                  background: ds.bgCard,
-                  color: ds.textPrimary,
-                  fontSize: 12,
-                }}
-              >
-                <option value="">Todos</option>
-                {productOptions.map((o) => (
-                  <option key={o.key} value={o.key}>
-                    {o.label}
-                    {o.product_id != null ? ` (#${o.product_id})` : ''}
-                  </option>
-                ))}
-              </select>
-            </label>
             <label
               style={{
                 display: 'inline-flex',
@@ -785,7 +695,7 @@ export default function GananciaDiariaPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {displayRows.map((row) => {
+                    {days.map((row) => {
                       const ventasEntregadasRow = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
                       const costoProductoEntregadoRow =
                         row.costo_producto_entregado_total || row.costo_producto_total || 0;
