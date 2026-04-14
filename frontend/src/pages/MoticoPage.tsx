@@ -317,7 +317,7 @@ type ManualCreateDraft = {
   client_email: string;
   order_name: string;
   phone: string;
-  /** Valor input datetime-local; vacío = fecha/hora actual en el servidor. */
+  /** Valor input type=date (YYYY-MM-DD); vacío = fecha/hora actual en el servidor. Si hay fecha, hora fija 8:00 local. */
   created_at: string;
   product_summary: string;
   total: string;
@@ -330,6 +330,19 @@ type ManualCreateDraft = {
   zip: string;
   country: string;
 };
+
+/** Fecha de creación manual: solo día; se envía como 8:00 a. m. hora local. */
+function creationDateAt8amLocalToIso(ymd: string): string | null {
+  const t = ymd.trim();
+  const m = t.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10) - 1;
+  const day = parseInt(m[3], 10);
+  const dt = new Date(y, mo, day, 8, 0, 0, 0);
+  if (dt.getFullYear() !== y || dt.getMonth() !== mo || dt.getDate() !== day) return null;
+  return dt.toISOString();
+}
 
 function emptyManualDraft(): ManualCreateDraft {
   return {
@@ -999,12 +1012,12 @@ export default function MoticoPage() {
       };
       const ca = manualDraft.created_at.trim();
       if (ca) {
-        const ms = Date.parse(ca);
-        if (!Number.isFinite(ms)) {
-          setManualError('Revisa la fecha y hora de creación.');
+        const iso = creationDateAt8amLocalToIso(ca);
+        if (!iso) {
+          setManualError('Revisa la fecha de creación.');
           return;
         }
-        payload.created_at = new Date(ms).toISOString();
+        payload.created_at = iso;
       }
       const res = await apiFetch('/api/motico/manual-orders', {
         method: 'POST',
@@ -2163,12 +2176,24 @@ export default function MoticoPage() {
             </h3>
             <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted, lineHeight: 1.45 }}>
               El pedido queda solo en KOVO (Motico), no en Shopify. La referencia es opcional; si la dejas vacía se
-              genera una automática (por ejemplo M-42). La fecha de creación es opcional (por defecto: ahora).
+              genera una automática (por ejemplo M-42).
             </p>
             {manualError ? (
               <p style={{ margin: '0 0 12px', fontSize: 13, color: ds.dangerText }}>{manualError}</p>
             ) : null}
             <label style={{ ...labelStyle, display: 'block' }}>
+              Fecha de creación (opcional)
+              <input
+                type="date"
+                value={manualDraft.created_at}
+                onChange={(e) => setManualDraft((d) => ({ ...d, created_at: e.target.value }))}
+                style={modalFieldStyle}
+              />
+              <span style={{ display: 'block', marginTop: 6, fontSize: 11, color: ds.textHint, fontWeight: 500 }}>
+                Solo eliges el día; se guarda a las 8:00 a. m. (hora de tu equipo). Vacío = fecha y hora actuales.
+              </span>
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
               Nombre del cliente *
               <input
                 type="text"
@@ -2206,15 +2231,6 @@ export default function MoticoPage() {
                 onChange={(e) => setManualDraft((d) => ({ ...d, order_name: e.target.value }))}
                 style={modalFieldStyle}
                 placeholder="Ej. WhatsApp 12 mar"
-              />
-            </label>
-            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
-              Fecha y hora de creación (opcional)
-              <input
-                type="datetime-local"
-                value={manualDraft.created_at}
-                onChange={(e) => setManualDraft((d) => ({ ...d, created_at: e.target.value }))}
-                style={modalFieldStyle}
               />
             </label>
             <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
