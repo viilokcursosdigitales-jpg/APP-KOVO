@@ -27,6 +27,7 @@ type SeriesDayRow = {
   date: string;
   ventas_despachadas_total: number;
   ventas_despachadas_pedidos: number;
+  cantidad_producto_total: number;
   costo_producto_total: number;
   costo_flete_promedio_total: number;
   gasto_publicitario_total: number;
@@ -95,6 +96,12 @@ function formatTableDate(iso: string): string {
   }
 }
 
+function parsePercentInput(raw: string): number {
+  const n = Number.parseFloat(String(raw || '').replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
 const cardBase: CSSProperties = {
   background: ds.bgCard,
   borderRadius: 14,
@@ -134,6 +141,7 @@ export default function GananciaDiariaPage() {
   const [monthOptions, setMonthOptions] = useState<string[]>([]);
   const [monthsPanelOpen, setMonthsPanelOpen] = useState(false);
   const [pendingMonths, setPendingMonths] = useState<string[]>([]);
+  const [adminPercentInput, setAdminPercentInput] = useState('0');
   const skipSeriesEffectOnce = useRef(false);
   const appliedDefaultMonthsOnce = useRef(false);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
@@ -249,20 +257,25 @@ export default function GananciaDiariaPage() {
   const seriesVentasCur = seriesData?.ventas_currency;
   const seriesMetaCur = seriesData?.meta_currency;
   const comparable = seriesData?.ganancia_comparable;
+  const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
 
   const totals = useMemo(() => {
     let v = 0;
     let p = 0;
+    let q = 0;
     let cp = 0;
     let cf = 0;
+    let ga = 0;
     let g = 0;
     let ganSum = 0;
     let utiSum = 0;
     for (const row of days) {
       v += row.ventas_despachadas_total;
       p += row.ventas_despachadas_pedidos;
+      q += row.cantidad_producto_total || 0;
       cp += row.costo_producto_total || 0;
       cf += row.costo_flete_promedio_total || 0;
+      ga += (row.ventas_despachadas_total || 0) * (adminPercent / 100);
       g += row.gasto_publicitario_total;
       if (row.ganancia != null && Number.isFinite(row.ganancia)) ganSum += row.ganancia;
       if (row.utilidad != null && Number.isFinite(row.utilidad)) utiSum += row.utilidad;
@@ -270,13 +283,15 @@ export default function GananciaDiariaPage() {
     return {
       ventas: v,
       pedidos: p,
+      cantidadProducto: q,
       costoProducto: cp,
       costoFletePromedio: cf,
+      gastoAdministrativo: ga,
       gasto: g,
       ganancia: comparable ? Math.round(ganSum * 100) / 100 : null,
       utilidad: comparable ? Math.round(utiSum * 100) / 100 : null,
     };
-  }, [days, comparable]);
+  }, [days, comparable, adminPercent]);
 
   return (
     <div style={{ maxWidth: 960 }}>
@@ -430,6 +445,34 @@ export default function GananciaDiariaPage() {
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: ds.textPrimary, flex: '1 1 auto' }}>
               Detalle por día
             </h2>
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12,
+                color: ds.textSecondary,
+                fontWeight: 600,
+              }}
+            >
+              % gasto administrativo
+              <input
+                type="text"
+                inputMode="decimal"
+                value={adminPercentInput}
+                onChange={(e) => setAdminPercentInput(e.target.value)}
+                placeholder="0"
+                style={{
+                  width: 96,
+                  padding: '7px 9px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textPrimary,
+                  fontSize: 12,
+                }}
+              />
+            </label>
             <div ref={monthDropdownRef} style={{ position: 'relative' }}>
               <button
                 type="button"
@@ -583,6 +626,8 @@ export default function GananciaDiariaPage() {
                       <th style={thStyle}>Día</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Ventas desp.</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Pedidos</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Cantidad producto</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Gasto administrativo</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Costo producto</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Flete prom.</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Gasto Meta</th>
@@ -598,6 +643,12 @@ export default function GananciaDiariaPage() {
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                           {row.ventas_despachadas_pedidos}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {Number(row.cantidad_producto_total || 0).toLocaleString('es-CO')}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {formatMoney((row.ventas_despachadas_total || 0) * (adminPercent / 100), seriesVentasCur)}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                           {formatMoney(row.costo_producto_total || 0, seriesVentasCur)}
@@ -624,6 +675,12 @@ export default function GananciaDiariaPage() {
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                         {totals.pedidos}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {Number(totals.cantidadProducto || 0).toLocaleString('es-CO')}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {formatMoney(totals.gastoAdministrativo, seriesVentasCur)}
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                         {formatMoney(totals.costoProducto, seriesVentasCur)}
