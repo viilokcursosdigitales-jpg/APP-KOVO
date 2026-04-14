@@ -179,9 +179,13 @@ async function initDb(pool) {
     CREATE TABLE IF NOT EXISTS motico_org_settings (
       organization_id INTEGER PRIMARY KEY REFERENCES organizations (id) ON DELETE CASCADE,
       logo_data_url TEXT,
+      default_currency VARCHAR(8) NOT NULL DEFAULT 'COP',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
     )
   `);
+  await pool.query(
+    `ALTER TABLE motico_org_settings ADD COLUMN IF NOT EXISTS default_currency VARCHAR(8) NOT NULL DEFAULT 'COP'`,
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS motico_manual_orders (

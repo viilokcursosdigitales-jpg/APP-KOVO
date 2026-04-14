@@ -166,6 +166,7 @@ CREATE INDEX IF NOT EXISTS idx_shopify_manual_pricing_org ON shopify_product_man
 CREATE TABLE IF NOT EXISTS motico_org_settings (
   organization_id INTEGER PRIMARY KEY REFERENCES organizations (id) ON DELETE CASCADE,
   logo_data_url TEXT,
+  default_currency VARCHAR(8) NOT NULL DEFAULT 'COP',
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 

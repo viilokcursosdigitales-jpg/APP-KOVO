@@ -56,6 +56,16 @@ type RoleModuleRow = {
   locked?: boolean;
 };
 
+const TEMPLATE_CURRENCY_OPTIONS = [
+  { value: 'COP', label: 'COP - Peso colombiano' },
+  { value: 'USD', label: 'USD - Dolar estadounidense' },
+  { value: 'EUR', label: 'EUR - Euro' },
+  { value: 'MXN', label: 'MXN - Peso mexicano' },
+  { value: 'PEN', label: 'PEN - Sol peruano' },
+  { value: 'CLP', label: 'CLP - Peso chileno' },
+  { value: 'ARS', label: 'ARS - Peso argentino' },
+] as const;
+
 function ProgressBar({ used, max }: { used: number; max: number | null }) {
   const pct = max == null ? 0 : Math.min(100, (used / max) * 100);
   return (
@@ -113,6 +123,9 @@ export default function Settings() {
   const [roleModErr, setRoleModErr] = useState('');
 
   const [themeMode, setThemeMode] = useState<ThemeMode>(() => getStoredTheme());
+  const [templateCurrency, setTemplateCurrency] = useState('COP');
+  const [templateCurrencySaving, setTemplateCurrencySaving] = useState(false);
+  const [templateCurrencyMsg, setTemplateCurrencyMsg] = useState('');
 
   const loadRoleModules = useCallback(async () => {
     setRoleModErr('');
@@ -175,10 +188,55 @@ export default function Settings() {
     if (canManageOrg) void loadRoleModules();
   }, [canManageOrg, loadRoleModules]);
 
+  useEffect(() => {
+    if (!canManageOrg) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/motico/settings');
+        if (!res.ok || cancelled) return;
+        const data = (await res.json().catch(() => ({}))) as { default_currency?: string | null };
+        const cur = String(data.default_currency || 'COP')
+          .trim()
+          .toUpperCase();
+        if (!cancelled) {
+          const valid = TEMPLATE_CURRENCY_OPTIONS.some((o) => o.value === cur);
+          setTemplateCurrency(valid ? cur : 'COP');
+        }
+      } catch {
+        /* noop */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [canManageOrg]);
+
   const selectTheme = useCallback((mode: ThemeMode) => {
     setTheme(mode);
     setThemeMode(mode);
   }, []);
+
+  const saveTemplateCurrency = useCallback(async () => {
+    setTemplateCurrencyMsg('');
+    setTemplateCurrencySaving(true);
+    try {
+      const res = await apiFetch('/api/motico/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ default_currency: templateCurrency }),
+      });
+      const d = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setTemplateCurrencyMsg(typeof d.error === 'string' ? d.error : 'No se pudo guardar la moneda');
+        return;
+      }
+      setTemplateCurrencyMsg('Moneda guardada');
+    } catch {
+      setTemplateCurrencyMsg('Error de red al guardar la moneda');
+    } finally {
+      setTemplateCurrencySaving(false);
+    }
+  }, [templateCurrency]);
 
   async function saveOrganization(e: FormEvent) {
     e.preventDefault();
@@ -558,6 +616,65 @@ export default function Settings() {
               Modo oscuro
             </button>
           </div>
+        </section>
+
+        <section
+          style={{
+            background: ds.bgCard,
+            borderRadius: 14,
+            padding: '18px 20px',
+            marginBottom: 20,
+            border: `1px solid ${ds.borderCard}`,
+          }}
+        >
+          <h2 style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>
+            Moneda base de plantillas
+          </h2>
+          <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.45 }}>
+            Esta moneda se usa como base en las plantillas de Motico (impresion y exportaciones).
+          </p>
+          <label style={{ ...labelStyle, maxWidth: 340 }}>
+            Moneda
+            <select
+              value={templateCurrency}
+              onChange={(e) => {
+                setTemplateCurrency(e.target.value);
+                setTemplateCurrencyMsg('');
+              }}
+              style={{ ...inputStyle, marginTop: 8 }}
+            >
+              {TEMPLATE_CURRENCY_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </label>
+          {templateCurrencyMsg ? (
+            <p
+              style={{
+                margin: '8px 0 0',
+                fontSize: 13,
+                color: templateCurrencyMsg.toLowerCase().includes('guardada') ? ds.successText : ds.dangerText,
+              }}
+            >
+              {templateCurrencyMsg}
+            </p>
+          ) : null}
+          <button
+            type="button"
+            onClick={() => void saveTemplateCurrency()}
+            disabled={templateCurrencySaving}
+            style={{
+              ...primaryButton,
+              marginTop: 16,
+              width: 'auto',
+              minWidth: 180,
+              cursor: templateCurrencySaving ? 'wait' : 'pointer',
+            }}
+          >
+            {templateCurrencySaving ? 'Guardando…' : 'Guardar moneda'}
+          </button>
         </section>
 
         {/* Mi organización */}

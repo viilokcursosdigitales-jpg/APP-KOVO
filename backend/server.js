@@ -3829,11 +3829,12 @@ app.put(
 app.get('/api/motico/settings', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT logo_data_url, updated_at FROM motico_org_settings WHERE organization_id = $1`,
+      `SELECT logo_data_url, default_currency, updated_at FROM motico_org_settings WHERE organization_id = $1`,
       [req.organizationId],
     );
     res.json({
       logo_data_url: rows[0]?.logo_data_url || null,
+      default_currency: rows[0]?.default_currency || 'COP',
       updated_at: rows[0]?.updated_at || null,
     });
   } catch (e) {
@@ -3851,29 +3852,63 @@ app.get('/api/motico/settings', verifyToken, scopeToOrganization, async (req, re
 app.put('/api/motico/settings', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
-    if (!Object.prototype.hasOwnProperty.call(body, 'logo_data_url')) {
-      return res.status(400).json({ error: 'logo_data_url requerido (o null para quitar)' });
+    const hasLogo = Object.prototype.hasOwnProperty.call(body, 'logo_data_url');
+    const hasCurrency = Object.prototype.hasOwnProperty.call(body, 'default_currency');
+    if (!hasLogo && !hasCurrency) {
+      return res.status(400).json({ error: 'Envía logo_data_url y/o default_currency' });
     }
-    const raw = body.logo_data_url;
+
     let logo = null;
-    if (raw !== null && raw !== '') {
-      if (typeof raw !== 'string' || raw.length > 600000) {
-        return res.status(400).json({ error: 'Logo demasiado grande (máx. ~450 KB en base64)' });
+    if (hasLogo) {
+      const raw = body.logo_data_url;
+      if (raw !== null && raw !== '') {
+        if (typeof raw !== 'string' || raw.length > 600000) {
+          return res.status(400).json({ error: 'Logo demasiado grande (máx. ~450 KB en base64)' });
+        }
+        if (!/^data:image\/(png|jpeg|jpg);base64,/i.test(raw)) {
+          return res.status(400).json({ error: 'Formato no válido: usa PNG o JPEG en base64 (data:image/...)' });
+        }
+        logo = raw;
       }
-      if (!/^data:image\/(png|jpeg|jpg);base64,/i.test(raw)) {
-        return res.status(400).json({ error: 'Formato no válido: usa PNG o JPEG en base64 (data:image/...)' });
-      }
-      logo = raw;
+    } else {
+      const current = await pool.query(
+        `SELECT logo_data_url FROM motico_org_settings WHERE organization_id = $1`,
+        [req.organizationId],
+      );
+      logo = current.rows[0]?.logo_data_url || null;
     }
+
+    const allowedCurrencies = new Set(['COP', 'USD', 'EUR', 'MXN', 'PEN', 'CLP', 'ARS']);
+    let defaultCurrency = 'COP';
+    if (hasCurrency) {
+      const rawCurrency = String(body.default_currency || '')
+        .trim()
+        .toUpperCase();
+      if (!allowedCurrencies.has(rawCurrency)) {
+        return res.status(400).json({ error: 'default_currency inválida' });
+      }
+      defaultCurrency = rawCurrency;
+    } else {
+      const current = await pool.query(
+        `SELECT default_currency FROM motico_org_settings WHERE organization_id = $1`,
+        [req.organizationId],
+      );
+      defaultCurrency = String(current.rows[0]?.default_currency || 'COP')
+        .trim()
+        .toUpperCase();
+      if (!allowedCurrencies.has(defaultCurrency)) defaultCurrency = 'COP';
+    }
+
     await pool.query(
-      `INSERT INTO motico_org_settings (organization_id, logo_data_url, updated_at)
-       VALUES ($1, $2, now())
+      `INSERT INTO motico_org_settings (organization_id, logo_data_url, default_currency, updated_at)
+       VALUES ($1, $2, $3, now())
        ON CONFLICT (organization_id) DO UPDATE SET
          logo_data_url = EXCLUDED.logo_data_url,
+         default_currency = EXCLUDED.default_currency,
          updated_at = now()`,
-      [req.organizationId, logo],
+      [req.organizationId, logo, defaultCurrency],
     );
-    res.json({ ok: true, logo_data_url: logo });
+    res.json({ ok: true, logo_data_url: logo, default_currency: defaultCurrency });
   } catch (e) {
     if (e && e.code === '42P01') {
       return res.status(503).json({

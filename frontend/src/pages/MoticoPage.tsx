@@ -558,6 +558,7 @@ export default function MoticoPage() {
   const [refreshing, setRefreshing] = useState(false);
 
   const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
+  const [templateCurrency, setTemplateCurrency] = useState('COP');
   const [logoSaving, setLogoSaving] = useState(false);
   const [logoMessage, setLogoMessage] = useState('');
   const [logoPanelOpen, setLogoPanelOpen] = useState(false);
@@ -669,8 +670,15 @@ export default function MoticoPage() {
     try {
       const res = await apiFetch('/api/motico/settings');
       if (!res.ok) return;
-      const data = (await res.json()) as { logo_data_url?: string | null };
+      const data = (await res.json()) as {
+        logo_data_url?: string | null;
+        default_currency?: string | null;
+      };
       setLogoDataUrl(typeof data.logo_data_url === 'string' ? data.logo_data_url : null);
+      const cur = String(data.default_currency || 'COP')
+        .trim()
+        .toUpperCase();
+      setTemplateCurrency(cur || 'COP');
     } catch {
       /* noop */
     }
@@ -824,12 +832,12 @@ export default function MoticoPage() {
           ? lineItems
           : [{ title: summarizeProducts(o.productIds), quantity: o.defaultQuantity, price: '' }],
         totalAmount: Number.isFinite(totalAmount) ? totalAmount : 0,
-        currency: o.currency,
+        currency: templateCurrency,
         fallbackProductSummary: summarizeProducts(o.productIds),
         defaultQuantity: o.quantity_override ?? o.defaultQuantity,
       });
     },
-    [summarizeProducts],
+    [summarizeProducts, templateCurrency],
   );
 
   const toggleSelectOrder = useCallback((id: number) => {
@@ -963,8 +971,8 @@ export default function MoticoPage() {
         lines,
       };
     });
-    await downloadMoticoGuidesLayoutExcel(payload);
-  }, [orders, selectedIds, summarizeProducts]);
+    await downloadMoticoGuidesLayoutExcel(payload, undefined, templateCurrency);
+  }, [orders, selectedIds, summarizeProducts, templateCurrency]);
 
   const onMoticoStatusChange = useCallback(
     async (o: MoticoOrderRow, next: string) => {

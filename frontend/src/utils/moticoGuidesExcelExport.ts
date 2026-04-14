@@ -96,14 +96,29 @@ export function mapLineItemToExportLine(li: MoticoGuideLineSource): Omit<MoticoG
   };
 }
 
-function formatCobroEsCO(value: number): string {
+function formatCobroDisplay(value: number, currency: string): string {
   if (!Number.isFinite(value)) return '$0';
-  return new Intl.NumberFormat('es-CO', {
-    style: 'currency',
-    currency: 'COP',
-    minimumFractionDigits: 0,
-    maximumFractionDigits: 0,
-  }).format(Math.round(value));
+  const c = String(currency || 'COP')
+    .trim()
+    .toUpperCase();
+  if (c === 'COP') {
+    return new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: 'COP',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 0,
+    }).format(Math.round(value));
+  }
+  try {
+    return new Intl.NumberFormat('es-CO', {
+      style: 'currency',
+      currency: c.length === 3 ? c : 'USD',
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value);
+  } catch {
+    return `${value.toFixed(2)} ${c}`;
+  }
 }
 
 const HEADER_FILL = 'FF1F4E79';
@@ -121,6 +136,7 @@ const THIN_BORDER: Partial<ExcelJS.Borders> = {
 export async function downloadMoticoGuidesLayoutExcel(
   orders: MoticoGuideExportOrder[],
   filePrefix = 'motico_guias_pedidos',
+  currency = 'COP',
 ): Promise<void> {
   if (!orders.length) return;
 
@@ -158,7 +174,7 @@ export async function downloadMoticoGuidesLayoutExcel(
     const n = Math.max(1, ord.lines.length);
     const startRow = r;
     const endRow = r + n - 1;
-    const cobroStr = formatCobroEsCO(ord.cobro);
+    const cobroStr = formatCobroDisplay(ord.cobro, currency);
 
     for (let i = 0; i < n; i++) {
       const line = ord.lines[i];
