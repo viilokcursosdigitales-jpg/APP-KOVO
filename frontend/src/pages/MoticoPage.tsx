@@ -330,6 +330,7 @@ type ManualCreateDraft = {
   /** Valor input type=date (YYYY-MM-DD); vacío = fecha/hora actual en el servidor. Si hay fecha, hora fija 8:00 local. */
   created_at: string;
   total: string;
+  note: string;
   line_items: {
     product_id: string;
     variant_id: string;
@@ -375,6 +376,7 @@ function emptyManualDraft(): ManualCreateDraft {
     phone: '',
     created_at: `${yyyy}-${mm}-${dd}`,
     total: '',
+    note: '',
     line_items: [emptyManualLine()],
     financial_status: 'pending',
     province: 'CUNDINAMARCA',
@@ -918,6 +920,10 @@ export default function MoticoPage() {
       const sa = o.shippingAddress;
       const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
       const ciudad = (sa?.city?.trim() || '').toUpperCase();
+      const observacion = (o.lineItemsDetail || [])
+        .flatMap((li) => (Array.isArray(li.properties) ? li.properties : []))
+        .find((p) => /^observ/i.test(String(p.name || '').trim()) && String(p.value || '').trim())
+        ?.value;
       const details = o.lineItemsDetail || [];
       let lines: MoticoGuideExportLine[];
       if (details.length) {
@@ -953,6 +959,7 @@ export default function MoticoPage() {
         direccion: dirLine,
         ciudad,
         cobro: o.total_a_pagar,
+        observacion: String(observacion || '').trim(),
         lines,
       };
     });
@@ -1145,6 +1152,7 @@ export default function MoticoPage() {
           .join(' + ')
           .slice(0, 600),
         line_items: normalizedItems,
+        note: manualDraft.note.trim(),
         total: manualDraft.total.trim(),
         quantity: String(normalizedItems.reduce((sum, x) => sum + x.quantity, 0)),
         financial_status: manualDraft.financial_status,
@@ -2482,6 +2490,15 @@ export default function MoticoPage() {
                 Agregar otro producto
               </button>
             </div>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Observaciones
+              <textarea
+                value={manualDraft.note}
+                onChange={(e) => setManualDraft((d) => ({ ...d, note: e.target.value }))}
+                style={{ ...modalFieldStyle, minHeight: 84, resize: 'vertical' }}
+                placeholder="Escribe una nota para observaciones"
+              />
+            </label>
             <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 12, marginTop: 14 }}>
               <label style={{ ...labelStyle, display: 'block' }}>
                 Total *

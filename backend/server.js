@@ -2332,7 +2332,12 @@ function mapMoticoManualOrderRowFromDb(r) {
           quantity: parseInt(String(li.quantity), 10) || 0,
           price: li.price != null ? String(li.price) : '',
           sku: li.sku != null ? String(li.sku).trim() : '',
-          properties: [],
+          properties: Array.isArray(li.properties)
+            ? li.properties
+                .filter((p) => p && typeof p === 'object')
+                .map((p) => ({ name: String(p.name || '').trim(), value: String(p.value || '').trim() }))
+                .filter((p) => p.name || p.value)
+            : [],
         }))
       : [
           {
@@ -3714,6 +3719,7 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
       return res.status(400).json({ error: 'Total no válido' });
     }
     const line_items_in = Array.isArray(body.line_items) ? body.line_items : [];
+    const note = String(body.note || '').trim().slice(0, 500);
     const parsedLines = [];
     for (const raw of line_items_in) {
       if (!raw || typeof raw !== 'object') continue;
@@ -3788,14 +3794,23 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
           barcode: li.barcode,
           quantity: li.quantity,
           price: String(unitPrice),
+          properties: idx === 0 && note ? [{ name: 'Observacion', value: note }] : [],
         }))
-      : [{ id: 1, title: product_summary_in || 'Producto', quantity: qty, price: String(unitPrice) }];
-    const product_summary = parsedLines.length
+      : [
+          {
+            id: 1,
+            title: product_summary_in || 'Producto',
+            quantity: qty,
+            price: String(unitPrice),
+            properties: note ? [{ name: 'Observacion', value: note }] : [],
+          },
+        ];
+    const baseSummary = parsedLines.length
       ? parsedLines
           .map((li) => (li.variant_title ? `${li.title} (${li.variant_title})` : li.title))
           .join(' + ')
-          .slice(0, 600)
-      : (product_summary_in || 'Producto').slice(0, 600);
+      : (product_summary_in || 'Producto');
+    const product_summary = `${baseSummary}${note ? ` · Observación: ${note}` : ''}`.slice(0, 600);
     const total_outstanding = financial_status === 'paid' ? 0 : total;
 
     let createdAtParam = null;

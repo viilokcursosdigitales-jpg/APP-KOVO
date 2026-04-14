@@ -28,6 +28,7 @@ export type MoticoGuideExportOrder = {
   direccion: string;
   ciudad: string;
   cobro: number;
+  observacion: string;
   lines: MoticoGuideExportLine[];
 };
 
@@ -141,6 +142,7 @@ export async function downloadMoticoGuidesLayoutExcel(
     'TALLA',
     'NOMBRE',
     'COBRO',
+    'OBSERVACION',
   ];
   ws.addRow(headers);
   const headerRow = ws.getRow(1);
@@ -165,6 +167,7 @@ export async function downloadMoticoGuidesLayoutExcel(
     { width: 18 },
     { width: 14 },
     { width: 14 },
+    { width: 28 },
   ];
 
   let r = 2;
@@ -189,6 +192,7 @@ export async function downloadMoticoGuidesLayoutExcel(
         line.talla,
         line.nombre,
         cobroStr,
+        ord.observacion || '',
       ]);
       row.eachCell((cell, col) => {
         cell.border = THIN_BORDER;
@@ -204,10 +208,10 @@ export async function downloadMoticoGuidesLayoutExcel(
     }
 
     if (n > 1) {
-      for (const col of [1, 2, 3, 4, 5, 12]) {
+      for (const col of [1, 2, 3, 4, 5, 12, 13]) {
         ws.mergeCells(startRow, col, endRow, col);
       }
-      for (const col of [1, 2, 3, 4, 5, 12]) {
+      for (const col of [1, 2, 3, 4, 5, 12, 13]) {
         const cell = ws.getCell(startRow, col);
         cell.alignment = {
           ...cell.alignment,
@@ -219,6 +223,8 @@ export async function downloadMoticoGuidesLayoutExcel(
     } else {
       const cell = ws.getCell(startRow, 12);
       cell.alignment = { vertical: 'middle', horizontal: 'right', wrapText: true };
+      const obsCell = ws.getCell(startRow, 13);
+      obsCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
     }
   }
 
