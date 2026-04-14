@@ -17,6 +17,7 @@ import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePres
 
 const POLL_MS = 25_000;
 const SAVE_DEBOUNCE_MS = 450;
+const SEARCH_DEBOUNCE_MS = 240;
 
 const DEMO = [
   { id: '#4821', client: 'María G.', email: 'maria@mail.com', date: '11 abr 2026', total: '€ 124,90', st: 'success' as const, lb: 'Completado' },
@@ -118,11 +119,103 @@ function cityKeyFromRow(row: ShopifyOrderRow) {
     .toLowerCase();
 }
 
-function orderMatchesCityFilter(row: ShopifyOrderRow, selectedKeys: string[]) {
-  if (!selectedKeys.length) return true;
+function orderMatchesCityFilter(row: ShopifyOrderRow, selectedKeys: ReadonlySet<string>) {
+  if (!selectedKeys.size) return true;
   const k = cityKeyFromRow(row);
   if (!k) return false;
-  return selectedKeys.includes(k);
+  return selectedKeys.has(k);
+}
+
+function normalizeSearchText(v: string) {
+  return String(v || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function orderMatchesTextFilter(row: ShopifyOrderRow, normalizedTerm: string) {
+  if (!normalizedTerm) return true;
+  const haystack = normalizeSearchText(
+    [
+      row.orderName,
+      row.client,
+      row.email,
+      row.phoneLocal,
+      row.shippingCity,
+      row.shippingProvince,
+      row.shippingAddressLine,
+      row.financialStatus,
+      row.internal_status,
+    ]
+      .filter(Boolean)
+      .join(' '),
+  );
+  if (haystack.includes(normalizedTerm)) return true;
+  const idLike = String(row.id || '');
+  return idLike.includes(normalizedTerm);
+}
+
+function escapeRegExp(v: string) {
+  return v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildNormalizedIndexMap(source: string) {
+  const normalizedChars: string[] = [];
+  const indexMap: number[] = [];
+  for (let i = 0; i < source.length; i += 1) {
+    const chunk = source[i]!.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    for (let j = 0; j < chunk.length; j += 1) {
+      normalizedChars.push(chunk[j]!);
+      indexMap.push(i);
+    }
+  }
+  return { normalized: normalizedChars.join(''), indexMap };
+}
+
+function highlightText(text: string, rawTerm: string) {
+  const source = String(text || '');
+  const q = String(rawTerm || '').trim();
+  if (!source || !q) return source || '—';
+  const needle = normalizeSearchText(q);
+  if (!needle) return source;
+  const { normalized, indexMap } = buildNormalizedIndexMap(source);
+  const matchRanges: Array<{ start: number; end: number }> = [];
+  let from = 0;
+  while (from < normalized.length) {
+    const at = normalized.indexOf(needle, from);
+    if (at < 0) break;
+    const start = indexMap[at];
+    const lastNormPos = at + needle.length - 1;
+    const end = (indexMap[lastNormPos] ?? source.length - 1) + 1;
+    if (start != null && end > start) {
+      const prev = matchRanges[matchRanges.length - 1];
+      if (prev && start <= prev.end) prev.end = Math.max(prev.end, end);
+      else matchRanges.push({ start, end });
+    }
+    from = at + Math.max(needle.length, 1);
+  }
+  if (!matchRanges.length) return source;
+  const out: JSX.Element[] = [];
+  let cursor = 0;
+  matchRanges.forEach((r, idx) => {
+    if (r.start > cursor) {
+      out.push(<span key={`t-${idx}`}>{source.slice(cursor, r.start)}</span>);
+    }
+    out.push(
+      <mark
+        key={`m-${idx}`}
+        style={{ background: '#fff3b0', color: 'inherit', padding: '0 1px', borderRadius: 2 }}
+      >
+        {source.slice(r.start, r.end)}
+      </mark>,
+    );
+    cursor = r.end;
+  });
+  if (cursor < source.length) {
+    out.push(<span key="t-end">{source.slice(cursor)}</span>);
+  }
+  return out;
 }
 
 const selectStyle: CSSProperties = {
@@ -256,6 +349,8 @@ const inputStyle: CSSProperties = {
 
 export default function PedidosPage() {
   const [filter, setFilter] = useState<'all' | 'active' | 'done'>('all');
+  const [searchInput, setSearchInput] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const [datePreset, setDatePreset] = useState<DatePreset>('hoy');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -287,6 +382,11 @@ export default function PedidosPage() {
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
   const priceTimers = useRef<Map<number, number>>(new Map());
   const qtyTimers = useRef<Map<number, number>>(new Map());
+  const ordersRequestAbortRef = useRef<AbortController | null>(null);
+  const ordersRequestSeqRef = useRef(0);
+  const ordersCacheRef = useRef<
+    Map<string, { shopDomain: string | null; fetchedAt: string | null; orders: ShopifyOrderRow[] }>
+  >(new Map());
 
   const dateQuery = useMemo(
     () => buildDateRange(datePreset, customFrom, customTo),
@@ -344,14 +444,32 @@ export default function PedidosPage() {
   const loadShopifyOrders = useCallback(
     async (opts?: { silent?: boolean }) => {
       const silent = Boolean(opts?.silent);
-      if (!silent) setShopifyLoading(true);
-      else setRefreshing(true);
+      const cacheKey = `${dateQuery.min || ''}|${dateQuery.max || ''}`;
+      const cached = ordersCacheRef.current.get(cacheKey);
+      if (cached && !silent) {
+        setShopifyConnected(true);
+        setShopDomain(cached.shopDomain);
+        setFetchedAt(cached.fetchedAt);
+        setShopifyOrders(cached.orders);
+        setShopifyLoading(false);
+        setRefreshing(true);
+      } else if (!silent) {
+        setShopifyLoading(true);
+      } else {
+        setRefreshing(true);
+      }
       setShopifyError('');
+      ordersRequestAbortRef.current?.abort();
+      const abortController = new AbortController();
+      ordersRequestAbortRef.current = abortController;
+      const requestSeq = ordersRequestSeqRef.current + 1;
+      ordersRequestSeqRef.current = requestSeq;
       try {
         const qs = new URLSearchParams();
         if (dateQuery.min) qs.set('created_at_min', dateQuery.min);
         if (dateQuery.max) qs.set('created_at_max', dateQuery.max);
-        const res = await apiFetch(`/api/shopify/orders?${qs.toString()}`);
+        const res = await apiFetch(`/api/shopify/orders?${qs.toString()}`, { signal: abortController.signal });
+        if (ordersRequestSeqRef.current !== requestSeq) return;
         const data = (await res.json().catch(() => ({}))) as ShopifyOrdersPayload & {
           error?: string;
           code?: string;
@@ -368,18 +486,30 @@ export default function PedidosPage() {
           return;
         }
         if (data.source === 'shopify' && Array.isArray(data.orders)) {
+          const normalized = data.orders.map(normalizeRow);
           setShopifyConnected(true);
           setShopDomain(data.shop_domain || null);
           setFetchedAt(data.fetchedAt || null);
-          setShopifyOrders(data.orders.map(normalizeRow));
+          setShopifyOrders(normalized);
+          ordersCacheRef.current.set(cacheKey, {
+            shopDomain: data.shop_domain || null,
+            fetchedAt: data.fetchedAt || null,
+            orders: normalized,
+          });
           setPriceDraft({});
           setQtyDraft({});
         }
-      } catch {
+      } catch (err) {
+        if (err instanceof DOMException && err.name === 'AbortError') return;
         setShopifyError('Error de red al cargar pedidos de Shopify');
       } finally {
-        if (!silent) setShopifyLoading(false);
-        setRefreshing(false);
+        if (ordersRequestSeqRef.current === requestSeq) {
+          if (!silent) setShopifyLoading(false);
+          setRefreshing(false);
+          if (ordersRequestAbortRef.current === abortController) {
+            ordersRequestAbortRef.current = null;
+          }
+        }
       }
     },
     [dateQuery.min, dateQuery.max, normalizeRow],
@@ -518,8 +648,16 @@ export default function PedidosPage() {
     return () => {
       priceTimers.current.forEach((id) => window.clearTimeout(id));
       qtyTimers.current.forEach((id) => window.clearTimeout(id));
+      ordersRequestAbortRef.current?.abort();
     };
   }, []);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setSearchTerm(searchInput);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [searchInput]);
 
   useEffect(() => {
     let cancelled = false;
@@ -576,6 +714,9 @@ export default function PedidosPage() {
     setSelectedCityKeys((prev) => prev.filter((k) => valid.has(k)));
   }, [cityOptions]);
 
+  const selectedCityKeySet = useMemo(() => new Set(selectedCityKeys), [selectedCityKeys]);
+  const normalizedSearchTerm = useMemo(() => normalizeSearchText(searchTerm), [searchTerm]);
+
   useEffect(() => {
     if (!cityMenuOpen) return;
     const onDoc = (e: MouseEvent) => {
@@ -589,9 +730,12 @@ export default function PedidosPage() {
   const filteredShopify = useMemo(
     () =>
       shopifyOrders.filter(
-        (r) => orderMatchesFilter(r, filter) && orderMatchesCityFilter(r, selectedCityKeys),
+        (r) =>
+          orderMatchesFilter(r, filter) &&
+          orderMatchesCityFilter(r, selectedCityKeySet) &&
+          orderMatchesTextFilter(r, normalizedSearchTerm),
       ),
-    [shopifyOrders, filter, selectedCityKeys],
+    [shopifyOrders, filter, selectedCityKeySet, normalizedSearchTerm],
   );
 
   const filteredShopifyIds = useMemo(() => filteredShopify.map((r) => r.id), [filteredShopify]);
@@ -644,10 +788,14 @@ export default function PedidosPage() {
 
   const filteredDemo = useMemo(
     () =>
-      DEMO.filter((r) =>
-        filter === 'all' ? true : filter === 'active' ? r.st === 'info' || r.st === 'paused' : r.st === 'success',
-      ),
-    [filter],
+      DEMO.filter((r) => {
+        const byStatus =
+          filter === 'all' ? true : filter === 'active' ? r.st === 'info' || r.st === 'paused' : r.st === 'success';
+        if (!byStatus) return false;
+        const hay = normalizeSearchText(`${r.id} ${r.client} ${r.email}`);
+        return !normalizedSearchTerm || hay.includes(normalizedSearchTerm);
+      }),
+    [filter, normalizedSearchTerm],
   );
 
   const useLive = shopifyConnected && shopDomain;
@@ -671,6 +819,22 @@ export default function PedidosPage() {
         }
         right={
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+            <input
+              type="search"
+              value={searchInput}
+              onChange={(e) => setSearchInput(e.target.value)}
+              placeholder="Buscar pedido, cliente, email, teléfono..."
+              style={{
+                minWidth: 260,
+                maxWidth: 360,
+                padding: '7px 10px',
+                borderRadius: 8,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.bgCard,
+                color: ds.textPrimary,
+                fontSize: 12,
+              }}
+            />
             {useLive ? (
               <button
                 type="button"
@@ -968,7 +1132,7 @@ export default function PedidosPage() {
                 selectedCityKeys.length
                   ? ` · ${selectedCityKeys.length} ciudad(es) en el filtro`
                   : ''
-              }`
+              }${normalizedSearchTerm ? ' · búsqueda activa' : ''}`
             : `Mostrando ${filteredDemo.length} resultados · demo`
         }
         action={
@@ -1251,10 +1415,12 @@ export default function PedidosPage() {
                             </select>
                           </Td>
                           <Td isLast={i === arr.length - 1}>
-                            <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
+                            <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>
+                              {highlightText(o.orderName, searchTerm)}
+                            </div>
                           </Td>
                           <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
-                          <Td isLast={i === arr.length - 1}>{o.client}</Td>
+                          <Td isLast={i === arr.length - 1}>{highlightText(o.client, searchTerm)}</Td>
                           <Td isLast={i === arr.length - 1} style={phoneColumnTdStyle}>
                             {o.phoneLocal ? (
                               <button
@@ -1285,17 +1451,21 @@ export default function PedidosPage() {
                                   maxWidth: 'none',
                                 }}
                               >
-                                {o.phoneLocal}
+                                {highlightText(o.phoneLocal, searchTerm)}
                               </button>
                             ) : (
                               <span style={{ fontSize: 11, color: ds.textMuted }}>—</span>
                             )}
                           </Td>
                           <Td isLast={i === arr.length - 1}>
-                            <span style={{ fontSize: 11 }}>{o.shippingCity?.trim() || '—'}</span>
+                            <span style={{ fontSize: 11 }}>
+                              {highlightText(o.shippingCity?.trim() || '—', searchTerm)}
+                            </span>
                           </Td>
                           <Td isLast={i === arr.length - 1}>
-                            <span style={{ fontSize: 11 }}>{o.shippingProvince?.trim() || '—'}</span>
+                            <span style={{ fontSize: 11 }}>
+                              {highlightText(o.shippingProvince?.trim() || '—', searchTerm)}
+                            </span>
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <div
@@ -1306,7 +1476,7 @@ export default function PedidosPage() {
                                 lineHeight: 1.35,
                               }}
                             >
-                              {o.shippingAddressLine?.trim() || '—'}
+                              {highlightText(o.shippingAddressLine?.trim() || '—', searchTerm)}
                             </div>
                           </Td>
                           <Td isLast={i === arr.length - 1}>
@@ -1388,10 +1558,12 @@ export default function PedidosPage() {
                           —
                         </Td>
                         <Td isLast={i === arr.length - 1}>
-                          <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.id}</div>
+                          <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>
+                            {highlightText(o.id, searchTerm)}
+                          </div>
                         </Td>
                         <Td isLast={i === arr.length - 1}>{o.date}</Td>
-                        <Td isLast={i === arr.length - 1}>{o.client}</Td>
+                        <Td isLast={i === arr.length - 1}>{highlightText(o.client, searchTerm)}</Td>
                         <Td isLast={i === arr.length - 1}>{o.total}</Td>
                         <Td isLast={i === arr.length - 1}>—</Td>
                         <Td isLast={i === arr.length - 1}>
