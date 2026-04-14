@@ -1964,7 +1964,11 @@ export default function MoticoPage() {
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Ciudad</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Dirección</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Precio</Th>
-                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Cant.</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>
+                    Cantidad
+                    <br />
+                    final
+                  </Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Total a pagar</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Productos</Th>
@@ -1988,7 +1992,17 @@ export default function MoticoPage() {
                         return sum + (Number.isFinite(q) && q > 0 ? q : 0);
                       }, 0)
                     : 0;
-                  const showQty = o.quantity_override ?? (qtyFromLines > 0 ? qtyFromLines : null) ?? o.defaultQuantity ?? o.shopifyQuantity;
+                  /** Última edición KOVO: override de cabecera; si no, suma de líneas; si no, cantidad del pedido (Shopify o manual). */
+                  const finalQuantity =
+                    o.quantity_override ?? (qtyFromLines > 0 ? qtyFromLines : null) ?? o.defaultQuantity ?? o.shopifyQuantity;
+                  const finalQtyTitle = [
+                    o.quantity_override != null ? `Override KOVO: ${o.quantity_override}` : null,
+                    qtyFromLines > 0 ? `Suma líneas: ${qtyFromLines}` : null,
+                    o.defaultQuantity != null ? `Predeterminado pedido: ${o.defaultQuantity}` : null,
+                    `Cantidad Shopify (referencia): ${o.shopifyQuantity}`,
+                  ]
+                    .filter(Boolean)
+                    .join(' · ');
                   return (
                     <tr
                       key={o.id}
@@ -2133,9 +2147,8 @@ export default function MoticoPage() {
                           Shopify: {formatMoneyFromString(o.shopifyTotal, o.currency)}
                         </div>
                       </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>{showQty}</div>
-                        <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>Shopify: {o.shopifyQuantity}</div>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad} title={finalQtyTitle}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>{finalQuantity}</div>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
