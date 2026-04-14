@@ -63,32 +63,33 @@ html[data-theme='dark'] {
   --color-border-side: #25262e;
   --color-border-row: #22232a;
 
-  --color-text-primary: #f4f4f5;
-  --color-text-secondary: #f4f4f5;
-  --color-text-muted: #a1a1aa;
-  --color-text-hint: #71717a;
+  /* Texto sin blancos: alineado al gris de nombres de módulos (sidebar inactivo). Jerarquía con tonos más apagados. */
+  --color-text-primary: #a1a1aa;
+  --color-text-secondary: #a1a1aa;
+  --color-text-muted: #8b8b96;
+  --color-text-hint: #6b6b78;
 
   --color-success-bg: rgba(29, 158, 117, 0.15);
-  --color-success-text: #4ade80;
+  --color-success-text: #5eb88a;
   --color-info-bg: rgba(24, 95, 165, 0.2);
-  --color-info-text: #7eb8f0;
+  --color-info-text: #6a9ec9;
   --color-warning-bg: rgba(133, 79, 11, 0.22);
-  --color-warning-text: #fbbf24;
+  --color-warning-text: #c9a227;
   --color-danger-bg: rgba(163, 45, 45, 0.2);
-  --color-danger-text: #f87171;
+  --color-danger-text: #d96666;
 
   --kpi-sales-bg: rgba(59, 109, 17, 0.25);
-  --kpi-sales-icon: #86efac;
+  --kpi-sales-icon: #6eb88a;
   --kpi-traffic-bg: rgba(24, 95, 165, 0.22);
-  --kpi-traffic-icon: #93c5fd;
+  --kpi-traffic-icon: #6a9ec9;
   --kpi-spend-bg: rgba(133, 79, 11, 0.22);
-  --kpi-spend-icon: #fcd34d;
+  --kpi-spend-icon: #c9a227;
   --kpi-conv-bg: rgba(108, 71, 255, 0.2);
-  --kpi-conv-icon: #c4b5fd;
+  --kpi-conv-icon: #9b87d4;
   --kpi-stock-bg: rgba(95, 94, 90, 0.25);
-  --kpi-stock-icon: #d6d3d1;
+  --kpi-stock-icon: #9a9690;
   --kpi-alert-bg: rgba(163, 45, 45, 0.22);
-  --kpi-alert-icon: #fca5a5;
+  --kpi-alert-icon: #d96666;
 }
 
 .kovo-app {
