@@ -40,10 +40,8 @@ const {
   shopCalendarYmdFromInstant,
   parseIsoDateYmd,
   shopifyFetchAllOrders,
-  shopifyOrderCreatedRangeLastNDaysInclusive,
-  shopifyOrderCreatedRangeNDaysEndingOnInstant,
-  shopifyClampCreatedAtRangeMaxSpanDays,
-  addCalendarDaysYmd,
+  shopifyInformativeOrdersRangeYearToDate,
+  shopifyClampInformativeCreatedAtRange,
 } = require('./shopifyService');
 const {
   getPublicAppUrl,
@@ -2265,9 +2263,6 @@ const SHOPIFY_MOTICO_STATUSES = new Set([
 const SHOPIFY_ORDER_LIST_FIELDS =
   'id,name,phone,email,created_at,total_price,total_outstanding,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address,billing_address,landing_site,referring_site,source_name,note_attributes';
 
-/** Máximo de días de calendario (tienda) para listados de pedidos Shopify y analíticas relacionadas. */
-const SHOPIFY_ORDERS_MAX_RANGE_DAYS = 60;
-
 /** Total a pagar por defecto (Shopify): pagado → 0; si no, total_outstanding o total del pedido. */
 function shopifyDefaultTotalAPagar(o) {
   const fin = String(o.financialStatus || '').toLowerCase();
@@ -2675,27 +2670,19 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
     const shopTz = shopCalendarTz || 'UTC';
     if (!metaPeriodRaw || !metaPeriodAllowed.has(metaPeriodRaw)) {
       if (!min && !max) {
-        const r60 = shopifyOrderCreatedRangeLastNDaysInclusive(shopTz, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
-        min = r60.min;
-        max = r60.max;
+        const ytd = shopifyInformativeOrdersRangeYearToDate(shopTz);
+        min = ytd.min;
+        max = ytd.max;
       } else if (min && !max) {
-        const endHoy = shopifyOrderCreatedRangeForMetaPeriod('hoy', shopTz);
-        max = endHoy.max;
-        const c = shopifyClampCreatedAtRangeMaxSpanDays(shopTz, min, max, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
-        min = c.min;
-        max = c.max;
+        max = shopifyOrderCreatedRangeForMetaPeriod('hoy', shopTz).max;
       } else if (!min && max) {
-        const rEnd = shopifyOrderCreatedRangeNDaysEndingOnInstant(
-          shopTz,
-          SHOPIFY_ORDERS_MAX_RANGE_DAYS,
-          max,
-        );
-        min = rEnd.min;
-        max = rEnd.max;
+        const tMax = Date.parse(max);
+        const y = shopCalendarYmdFromInstant(Number.isFinite(tMax) ? tMax : Date.now(), shopTz).y;
+        min = shopifyOrderCreatedRangeForCalendarDate(shopTz, y, 1, 1).min;
       }
     }
     if (min && max) {
-      const c = shopifyClampCreatedAtRangeMaxSpanDays(shopTz, min, max, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
+      const c = shopifyClampInformativeCreatedAtRange(shopTz, min, max);
       min = c.min;
       max = c.max;
     }
@@ -2798,10 +2785,13 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       ymd = shopCalendarYmdFromInstant(Date.now(), iana);
     }
     const todayYmd = shopCalendarYmdFromInstant(Date.now(), iana);
-    const earliestYmd = addCalendarDaysYmd(todayYmd.y, todayYmd.m, todayYmd.d, -(SHOPIFY_ORDERS_MAX_RANGE_DAYS - 1));
+    const jan1Ymd = { y: todayYmd.y, m: 1, d: 1 };
     const ymdKey = (x) => `${String(x.y).padStart(4, '0')}-${String(x.m).padStart(2, '0')}-${String(x.d).padStart(2, '0')}`;
-    if (ymdKey(ymd) < ymdKey(earliestYmd)) {
-      ymd = earliestYmd;
+    if (ymdKey(ymd) < ymdKey(jan1Ymd)) {
+      ymd = jan1Ymd;
+    }
+    if (ymdKey(ymd) > ymdKey(todayYmd)) {
+      ymd = todayYmd;
     }
     const dateStr = `${String(ymd.y).padStart(4, '0')}-${String(ymd.m).padStart(2, '0')}-${String(ymd.d).padStart(2, '0')}`;
     const range = shopifyOrderCreatedRangeForCalendarDate(iana, ymd.y, ymd.m, ymd.d);
@@ -3196,22 +3186,18 @@ app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, 
     let min = typeof req.query.created_at_min === 'string' ? req.query.created_at_min.trim() : '';
     let max = typeof req.query.created_at_max === 'string' ? req.query.created_at_max.trim() : '';
     if (!min && !max) {
-      const r60 = shopifyOrderCreatedRangeLastNDaysInclusive(shopTz, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
-      min = r60.min;
-      max = r60.max;
+      const ytd = shopifyInformativeOrdersRangeYearToDate(shopTz);
+      min = ytd.min;
+      max = ytd.max;
     } else if (min && !max) {
-      const endHoy = shopifyOrderCreatedRangeForMetaPeriod('hoy', shopTz);
-      max = endHoy.max;
-      const c = shopifyClampCreatedAtRangeMaxSpanDays(shopTz, min, max, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
-      min = c.min;
-      max = c.max;
+      max = shopifyOrderCreatedRangeForMetaPeriod('hoy', shopTz).max;
     } else if (!min && max) {
-      const rEnd = shopifyOrderCreatedRangeNDaysEndingOnInstant(shopTz, SHOPIFY_ORDERS_MAX_RANGE_DAYS, max);
-      min = rEnd.min;
-      max = rEnd.max;
+      const tMax = Date.parse(max);
+      const y = shopCalendarYmdFromInstant(Number.isFinite(tMax) ? tMax : Date.now(), shopTz).y;
+      min = shopifyOrderCreatedRangeForCalendarDate(shopTz, y, 1, 1).min;
     }
     if (min && max) {
-      const c = shopifyClampCreatedAtRangeMaxSpanDays(shopTz, min, max, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
+      const c = shopifyClampInformativeCreatedAtRange(shopTz, min, max);
       min = c.min;
       max = c.max;
     }
@@ -3460,12 +3446,12 @@ app.get('/api/shopify/analytics', verifyToken, scopeToOrganization, async (req, 
       srTz.ok && srTz.data && srTz.data.shop && srTz.data.shop.iana_timezone
         ? String(srTz.data.shop.iana_timezone)
         : 'UTC';
-    const r60 = shopifyOrderCreatedRangeLastNDaysInclusive(shopTz, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
+    const ytd = shopifyInformativeOrdersRangeYearToDate(shopTz);
     const qsPaid = new URLSearchParams();
     qsPaid.set('status', 'paid');
     qsPaid.set('fields', 'id,total_price,currency');
-    qsPaid.set('created_at_min', r60.min);
-    qsPaid.set('created_at_max', r60.max);
+    qsPaid.set('created_at_min', ytd.min);
+    qsPaid.set('created_at_max', ytd.max);
     const r = await shopifyFetchAllOrders(row.shop_domain, row.access_token, qsPaid);
     if (!r.ok) {
       const st = Number(r.status) >= 400 ? Number(r.status) : 502;

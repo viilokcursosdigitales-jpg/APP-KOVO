@@ -662,58 +662,40 @@ function parseIsoDateYmd(s) {
   return { y, m: mo, d };
 }
 
-/**
- * Últimos `numInclusiveDays` días de calendario en la zona de la tienda hasta el final del día de `ref`.
- * @param {string} ianaTimezone
- * @param {number} numInclusiveDays ej. 60
- * @param {Date} [ref]
- */
-function shopifyOrderCreatedRangeLastNDaysInclusive(ianaTimezone, numInclusiveDays, ref = new Date()) {
+/** Datos informativos: desde el 1 de enero (año del calendario de la tienda) hasta el final del día de hoy. */
+function shopifyInformativeOrdersRangeYearToDate(ianaTimezone) {
   const tz = String(ianaTimezone || 'UTC').trim() || 'UTC';
-  const n = Math.max(1, Math.min(Math.floor(Number(numInclusiveDays)) || 60, 366));
-  const refMs = ref instanceof Date ? ref.getTime() : Date.now();
-  const { y: Y, m: M, d: D } = wallClockPartsInZone(refMs, tz);
-  const startDay = addCalendarDaysYmd(Y, M, D, -(n - 1));
-  const minMs = utcMillisStartOfZonedCalendarDay(tz, startDay.y, startDay.m, startDay.d);
-  const nextToday = addCalendarDaysYmd(Y, M, D, 1);
-  const maxMs = utcMillisStartOfZonedCalendarDay(tz, nextToday.y, nextToday.m, nextToday.d) - 1;
-  return { min: new Date(minMs).toISOString(), max: new Date(maxMs).toISOString() };
-}
-
-/**
- * Rango de numInclusiveDays terminando el día de calendario que contiene `endIso` (UTC).
- * @param {string} ianaTimezone
- * @param {number} numInclusiveDays
- * @param {string} endIso
- */
-function shopifyOrderCreatedRangeNDaysEndingOnInstant(ianaTimezone, numInclusiveDays, endIso) {
-  const tz = String(ianaTimezone || 'UTC').trim() || 'UTC';
-  const n = Math.max(1, Math.min(Math.floor(Number(numInclusiveDays)) || 60, 366));
-  const t = Date.parse(String(endIso));
-  const endMs = Number.isFinite(t) ? t : Date.now();
-  const { y, m, d } = wallClockPartsInZone(endMs, tz);
-  const endR = shopifyOrderCreatedRangeForCalendarDate(tz, y, m, d);
-  const startDay = addCalendarDaysYmd(y, m, d, -(n - 1));
-  const minMs = utcMillisStartOfZonedCalendarDay(tz, startDay.y, startDay.m, startDay.d);
+  const nowMs = Date.now();
+  const { y } = wallClockPartsInZone(nowMs, tz);
+  const minMs = utcMillisStartOfZonedCalendarDay(tz, y, 1, 1);
+  const endR = shopifyOrderCreatedRangeForMetaPeriod('hoy', tz);
   return { min: new Date(minMs).toISOString(), max: endR.max };
 }
 
 /**
- * Si min es anterior a (día de max − maxSpanDays + 1) en calendario tienda, acorta `min`.
+ * Acota created_at_min / max a la ventana informativa: no antes del 1 ene del año de `max` (tienda) ni después de hoy.
+ * @param {string} ianaTimezone
+ * @param {string} minIso
+ * @param {string} maxIso
  */
-function shopifyClampCreatedAtRangeMaxSpanDays(ianaTimezone, minIso, maxIso, maxSpanInclusiveDays) {
+function shopifyClampInformativeCreatedAtRange(ianaTimezone, minIso, maxIso) {
   const tz = String(ianaTimezone || 'UTC').trim() || 'UTC';
-  const span = Math.max(1, Math.min(Math.floor(Number(maxSpanInclusiveDays)) || 60, 366));
-  const tMin = Date.parse(String(minIso));
-  const tMax = Date.parse(String(maxIso));
-  if (!Number.isFinite(tMin) || !Number.isFinite(tMax) || tMax < tMin) {
-    return { min: String(minIso), max: String(maxIso) };
-  }
-  const { y, m, d } = wallClockPartsInZone(tMax, tz);
-  const earliest = addCalendarDaysYmd(y, m, d, -(span - 1));
-  const earliestMs = utcMillisStartOfZonedCalendarDay(tz, earliest.y, earliest.m, earliest.d);
-  if (tMin >= earliestMs) return { min: String(minIso), max: String(maxIso) };
-  return { min: new Date(earliestMs).toISOString(), max: String(maxIso) };
+  const endToday = shopifyOrderCreatedRangeForMetaPeriod('hoy', tz).max;
+  const tEndToday = Date.parse(endToday);
+
+  let tMax = Date.parse(String(maxIso));
+  if (!Number.isFinite(tMax)) tMax = tEndToday;
+  if (tMax > tEndToday) tMax = tEndToday;
+
+  const { y: yMax } = wallClockPartsInZone(tMax, tz);
+  const jan1Ms = utcMillisStartOfZonedCalendarDay(tz, yMax, 1, 1);
+
+  let tMin = Date.parse(String(minIso));
+  if (!Number.isFinite(tMin)) tMin = jan1Ms;
+  if (tMin < jan1Ms) tMin = jan1Ms;
+  if (tMin > tMax) tMin = jan1Ms;
+
+  return { min: new Date(tMin).toISOString(), max: new Date(tMax).toISOString() };
 }
 
 function mapFinancialToBadge(financial) {
@@ -746,9 +728,7 @@ module.exports = {
   shopCalendarYmdFromInstant,
   parseIsoDateYmd,
   shopifyFetchAllOrders,
-  shopifyOrderCreatedRangeLastNDaysInclusive,
-  shopifyOrderCreatedRangeNDaysEndingOnInstant,
-  shopifyClampCreatedAtRangeMaxSpanDays,
-  addCalendarDaysYmd,
+  shopifyInformativeOrdersRangeYearToDate,
+  shopifyClampInformativeCreatedAtRange,
   DEFAULT_API_VERSION,
 };

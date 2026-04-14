@@ -93,7 +93,7 @@ export default function GananciaDiariaPage() {
     <div style={{ maxWidth: 960 }}>
       <PageHeader
         title="Ganancia Diaria"
-        subtitle="Ventas despachadas (Shopify + estado KOVO) menos gasto publicitario (Meta). Solo se puede consultar hasta 60 días atrás (calendario de la tienda)."
+        subtitle="Ventas despachadas (Shopify + estado KOVO) menos gasto publicitario (Meta). Solo desde el 1 de enero del año en curso hasta hoy (calendario de la tienda)."
       />
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 20 }}>
