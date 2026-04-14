@@ -2533,6 +2533,104 @@ async function loadMoticoManualOrdersForOrg(organizationId, minIso, maxIso) {
   return rows.map((r) => mapMoticoManualOrderRowFromDb(r));
 }
 
+/**
+ * Pedidos manuales relevantes para ganancia diaria en un rango de calendario tienda:
+ * creados en el rango ISO de Shopify O con fecha asignada (shipping_json) entre ymdStart y ymdEnd.
+ * Evita cargar toda la tabla cuando la org tiene muchos manuales históricos.
+ */
+async function loadMoticoManualOrdersForOrgGananciaSeries(
+  organizationId,
+  rangeMinIso,
+  rangeMaxIso,
+  ymdStartStr,
+  ymdEndStr,
+) {
+  const params = [
+    organizationId,
+    String(rangeMinIso),
+    String(rangeMaxIso),
+    String(ymdStartStr),
+    String(ymdEndStr),
+  ];
+  const sql = `
+    SELECT * FROM motico_manual_orders
+    WHERE organization_id = $1
+    AND (
+      (created_at >= $2::timestamptz AND created_at <= $3::timestamptz)
+      OR (
+        COALESCE(
+          NULLIF(btrim(shipping_json->>'assigned_date'), ''),
+          NULLIF(btrim(shipping_json->>'fecha_asignada'), ''),
+          NULLIF(btrim(shipping_json->>'assignedDate'), '')
+        ) BETWEEN $4 AND $5
+      )
+    )
+    ORDER BY created_at DESC
+  `;
+  try {
+    const { rows } = await pool.query(sql, params);
+    return rows.map((r) => mapMoticoManualOrderRowFromDb(r));
+  } catch (e) {
+    if (e && e.code === '42P01') return [];
+    console.warn('loadMoticoManualOrdersForOrgGananciaSeries fallback:', e && e.message);
+    return loadMoticoManualOrdersForOrg(organizationId, rangeMinIso, rangeMaxIso);
+  }
+}
+
+/** Gasto Meta por día + divisa (insights + listado de cuentas en paralelo). */
+async function gananciaFetchMetaSpendPack(organizationId, sinceYmd, untilYmd) {
+  const out = { spendByDay: {}, metaPartialErrors: [], metaCurrency: '' };
+  const metaRow = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, organizationId);
+  if (!metaRow || !String(metaRow.access_token || '').trim()) return out;
+  const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
+  if (!resolved.ok || resolved.actIds.length === 0) return out;
+  const token = metaRow.access_token;
+  const [spendRes, la] = await Promise.all([
+    fetchDailySpendByDayForAdAccountsTimeRange(resolved.actIds, token, sinceYmd, untilYmd),
+    listAdAccounts(token),
+  ]);
+  out.spendByDay = spendRes.byDay || {};
+  for (const pe of spendRes.partialErrors || []) out.metaPartialErrors.push(pe);
+  if (la.ok && Array.isArray(la.accounts)) {
+    const curSet = new Set();
+    for (const aid of resolved.actIds) {
+      const n = normalizeActId(aid);
+      const hit = la.accounts.find((a) => normalizeActId(a.id) === n);
+      if (hit && hit.currency) curSet.add(String(hit.currency).trim());
+    }
+    if (curSet.size === 1) out.metaCurrency = [...curSet][0];
+    else if (curSet.size > 1) out.metaCurrency = [...curSet].join(', ');
+  }
+  return out;
+}
+
+/** Gasto Meta un solo día (insights + listado de cuentas en paralelo). */
+async function gananciaFetchMetaSpendSingleDay(organizationId, dateStr) {
+  const out = { spend: 0, metaPartialErrors: [], metaCurrency: '' };
+  const metaRow = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, organizationId);
+  if (!metaRow || !String(metaRow.access_token || '').trim()) return out;
+  const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
+  if (!resolved.ok || resolved.actIds.length === 0) return out;
+  const token = metaRow.access_token;
+  const [spendRes, la] = await Promise.all([
+    fetchTotalSpendForAdAccountsTimeRange(resolved.actIds, token, dateStr, dateStr),
+    listAdAccounts(token),
+  ]);
+  out.spend = spendRes.spend;
+  for (const pe of spendRes.partialErrors || []) out.metaPartialErrors.push(pe);
+  if (la.ok && Array.isArray(la.accounts)) {
+    const curSet = new Set();
+    for (const aid of resolved.actIds) {
+      const n = normalizeActId(aid);
+      const hit = la.accounts.find((a) => normalizeActId(a.id) === n);
+      if (hit && hit.currency) curSet.add(String(hit.currency).trim());
+    }
+    if (curSet.size === 1) out.metaCurrency = [...curSet][0];
+    else if (curSet.size > 1) out.metaCurrency = [...curSet].join(', ');
+  }
+  return out;
+}
+
 async function loadLocalFieldsMap(organizationId, orderIds) {
   if (!orderIds.length) return new Map();
   const CHUNK = 2500;
@@ -3366,20 +3464,22 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     qs.set('fields', SHOPIFY_ORDER_LIST_FIELDS);
     qs.set('created_at_min', range.min);
     qs.set('created_at_max', range.max);
-    const r = await shopifyFetchAllOrders(shopRow.shop_domain, shopRow.access_token, qs);
+    const [r, manualRows] = await Promise.all([
+      shopifyFetchAllOrders(shopRow.shop_domain, shopRow.access_token, qs),
+      loadMoticoManualOrdersForOrgGananciaSeries(
+        req.organizationId,
+        range.min,
+        range.max,
+        dateStr,
+        dateStr,
+      ),
+    ]);
     if (!r.ok) {
       const st = Number(r.status) >= 400 ? Number(r.status) : 502;
       return res.status(Number.isFinite(st) ? st : 502).json({ error: r.error || 'Error Shopify', data: r.data });
     }
     const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
     const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
-    const localMap = await loadLocalFieldsMap(req.organizationId, ids);
-    let manualRows = [];
-    try {
-      manualRows = await loadMoticoManualOrdersForOrg(req.organizationId, null, null);
-    } catch (manualErr) {
-      if (!(manualErr && manualErr.code === '42P01')) throw manualErr;
-    }
     const productIds = [];
     for (const o of normalized) {
       const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
@@ -3396,14 +3496,20 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       }
     }
     const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap([...normalized, ...manualRows]);
-    let manualPricingMap = new Map();
-    try {
-      manualPricingMap = await loadProductManualPricingMap(req.organizationId, [
-        ...new Set(productIds),
-      ]);
-    } catch (pricingErr) {
-      if (!(pricingErr && pricingErr.code === '42P01')) throw pricingErr;
-    }
+    const uniqPids = [...new Set(productIds)];
+    const [localMap, metaSingle, manualPricingMap] = await Promise.all([
+      loadLocalFieldsMap(req.organizationId, ids),
+      gananciaFetchMetaSpendSingleDay(req.organizationId, dateStr),
+      (async () => {
+        try {
+          if (!uniqPids.length) return new Map();
+          return await loadProductManualPricingMap(req.organizationId, uniqPids);
+        } catch (pricingErr) {
+          if (pricingErr && pricingErr.code === '42P01') return new Map();
+          throw pricingErr;
+        }
+      })(),
+    ]);
 
     const excludeFin = new Set(['voided', 'cancelled']);
     let ventasTotal = 0;
@@ -3452,36 +3558,9 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       costoFletePromedioTotal += costs.avgFreightCost;
     }
 
-    let gastoAds = 0;
-    const metaPartialErrors = [];
-    let metaCurrency = '';
-    const metaRow = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
-    if (metaRow && String(metaRow.access_token || '').trim()) {
-      const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
-      if (resolved.ok && resolved.actIds.length > 0) {
-        const spendRes = await fetchTotalSpendForAdAccountsTimeRange(
-          resolved.actIds,
-          metaRow.access_token,
-          dateStr,
-          dateStr,
-        );
-        gastoAds = spendRes.spend;
-        for (const pe of spendRes.partialErrors || []) {
-          metaPartialErrors.push(pe);
-        }
-        const la = await listAdAccounts(metaRow.access_token);
-        if (la.ok && Array.isArray(la.accounts)) {
-          const curSet = new Set();
-          for (const aid of resolved.actIds) {
-            const n = normalizeActId(aid);
-            const hit = la.accounts.find((a) => normalizeActId(a.id) === n);
-            if (hit && hit.currency) curSet.add(String(hit.currency).trim());
-          }
-          if (curSet.size === 1) metaCurrency = [...curSet][0];
-          else if (curSet.size > 1) metaCurrency = [...curSet].join(', ');
-        }
-      }
-    }
+    const gastoAds = metaSingle.spend;
+    const metaPartialErrors = metaSingle.metaPartialErrors || [];
+    const metaCurrency = metaSingle.metaCurrency || '';
 
     const shopC = shopCurrency.toUpperCase();
     const metaC = metaCurrency.toUpperCase();
@@ -3588,20 +3667,25 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     qs.set('fields', SHOPIFY_ORDER_LIST_FIELDS);
     qs.set('created_at_min', rangeMin);
     qs.set('created_at_max', rangeMax);
-    const r = await shopifyFetchAllOrders(shopRow.shop_domain, shopRow.access_token, qs);
+    const sinceYmd = sortedAsc[0];
+    const untilYmd = sortedAsc[sortedAsc.length - 1];
+    const [r, manualRows, metaPack] = await Promise.all([
+      shopifyFetchAllOrders(shopRow.shop_domain, shopRow.access_token, qs),
+      loadMoticoManualOrdersForOrgGananciaSeries(
+        req.organizationId,
+        rangeMin,
+        rangeMax,
+        sinceYmd,
+        untilYmd,
+      ),
+      gananciaFetchMetaSpendPack(req.organizationId, sinceYmd, untilYmd),
+    ]);
     if (!r.ok) {
       const st = Number(r.status) >= 400 ? Number(r.status) : 502;
       return res.status(Number.isFinite(st) ? st : 502).json({ error: r.error || 'Error Shopify', data: r.data });
     }
     const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
     const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
-    const localMap = await loadLocalFieldsMap(req.organizationId, ids);
-    let manualRows = [];
-    try {
-      manualRows = await loadMoticoManualOrdersForOrg(req.organizationId, null, null);
-    } catch (manualErr) {
-      if (!(manualErr && manualErr.code === '42P01')) throw manualErr;
-    }
     const productIds = [];
     for (const o of normalized) {
       const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
@@ -3618,14 +3702,19 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       }
     }
     const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap([...normalized, ...manualRows]);
-    let manualPricingMap = new Map();
-    try {
-      manualPricingMap = await loadProductManualPricingMap(req.organizationId, [
-        ...new Set(productIds),
-      ]);
-    } catch (pricingErr) {
-      if (!(pricingErr && pricingErr.code === '42P01')) throw pricingErr;
-    }
+    const uniqPids = [...new Set(productIds)];
+    const [localMap, manualPricingMap] = await Promise.all([
+      loadLocalFieldsMap(req.organizationId, ids),
+      (async () => {
+        try {
+          if (!uniqPids.length) return new Map();
+          return await loadProductManualPricingMap(req.organizationId, uniqPids);
+        } catch (pricingErr) {
+          if (pricingErr && pricingErr.code === '42P01') return new Map();
+          throw pricingErr;
+        }
+      })(),
+    ]);
 
     const daySet = new Set(sortedAsc);
     const ventasByDay = new Map();
@@ -3739,34 +3828,9 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       if (packM) gananciaMergeProductDay(touchDayProducts(key), packM.contrib);
     }
 
-    let spendByDay = {};
-    const metaPartialErrors = [];
-    let metaCurrency = '';
-    const metaRow = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
-    if (metaRow && String(metaRow.access_token || '').trim()) {
-      const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
-      if (resolved.ok && resolved.actIds.length > 0) {
-        const spendRes = await fetchDailySpendByDayForAdAccountsTimeRange(
-          resolved.actIds,
-          metaRow.access_token,
-          sortedAsc[0],
-          sortedAsc[sortedAsc.length - 1],
-        );
-        spendByDay = spendRes.byDay || {};
-        for (const pe of spendRes.partialErrors || []) metaPartialErrors.push(pe);
-        const la = await listAdAccounts(metaRow.access_token);
-        if (la.ok && Array.isArray(la.accounts)) {
-          const curSet = new Set();
-          for (const aid of resolved.actIds) {
-            const n = normalizeActId(aid);
-            const hit = la.accounts.find((a) => normalizeActId(a.id) === n);
-            if (hit && hit.currency) curSet.add(String(hit.currency).trim());
-          }
-          if (curSet.size === 1) metaCurrency = [...curSet][0];
-          else if (curSet.size > 1) metaCurrency = [...curSet].join(', ');
-        }
-      }
-    }
+    const spendByDay = metaPack.spendByDay || {};
+    const metaPartialErrors = metaPack.metaPartialErrors || [];
+    const metaCurrency = metaPack.metaCurrency || '';
 
     const totalMetaSpend = Object.values(spendByDay).reduce((sum, v) => sum + (Number(v) || 0), 0);
     const shopC = shopCurrency.toUpperCase();
