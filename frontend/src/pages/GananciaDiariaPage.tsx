@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
@@ -16,6 +16,28 @@ type GananciaPayload = {
   ganancia_comparable?: boolean;
   warning?: string | null;
   meta_partial_errors?: { adAccountId: string; error: string }[];
+  error?: string;
+  code?: string;
+};
+
+type SeriesDayRow = {
+  date: string;
+  ventas_despachadas_total: number;
+  ventas_despachadas_pedidos: number;
+  gasto_publicitario_total: number;
+  ganancia: number | null;
+};
+
+type SeriesPayload = {
+  shop_calendar_timezone?: string;
+  ventas_currency?: string | null;
+  meta_currency?: string | null;
+  ganancia_comparable?: boolean;
+  warning?: string | null;
+  meta_partial_errors?: { adAccountId: string; error: string }[];
+  available_months?: string[];
+  months_applied?: string[];
+  days?: SeriesDayRow[];
   error?: string;
   code?: string;
 };
@@ -42,6 +64,31 @@ function formatMoney(n: number, currency: string | null | undefined): string {
   }
 }
 
+function formatMonthLabel(ym: string): string {
+  const m = ym.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return ym;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  if (!Number.isFinite(y) || mo < 1 || mo > 12) return ym;
+  try {
+    return new Intl.DateTimeFormat('es-CO', { month: 'long', year: 'numeric' }).format(new Date(y, mo - 1, 1));
+  } catch {
+    return ym;
+  }
+}
+
+function formatTableDate(iso: string): string {
+  const p = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!p) return iso;
+  try {
+    return new Intl.DateTimeFormat('es-CO', { weekday: 'short', day: 'numeric', month: 'short' }).format(
+      new Date(parseInt(p[1], 10), parseInt(p[2], 10) - 1, parseInt(p[3], 10)),
+    );
+  } catch {
+    return iso;
+  }
+}
+
 const cardBase: CSSProperties = {
   background: ds.bgCard,
   borderRadius: 14,
@@ -49,11 +96,41 @@ const cardBase: CSSProperties = {
   border: `1px solid ${ds.borderCard}`,
 };
 
+const thStyle: CSSProperties = {
+  textAlign: 'left',
+  fontSize: 11,
+  fontWeight: 700,
+  color: ds.textMuted,
+  textTransform: 'uppercase',
+  letterSpacing: '0.04em',
+  padding: '10px 12px',
+  borderBottom: `1px solid ${ds.borderRow}`,
+  whiteSpace: 'nowrap',
+};
+
+const tdStyle: CSSProperties = {
+  fontSize: 14,
+  color: ds.textPrimary,
+  padding: '10px 12px',
+  borderBottom: `1px solid ${ds.borderRow}`,
+};
+
 export default function GananciaDiariaPage() {
   const [date, setDate] = useState(todayInputYmd);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [data, setData] = useState<GananciaPayload | null>(null);
+
+  const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
+  const [seriesLoading, setSeriesLoading] = useState(true);
+  const [seriesError, setSeriesError] = useState('');
+  const [seriesData, setSeriesData] = useState<SeriesPayload | null>(null);
+  const [monthOptions, setMonthOptions] = useState<string[]>([]);
+  const [monthsPanelOpen, setMonthsPanelOpen] = useState(false);
+  const [pendingMonths, setPendingMonths] = useState<string[]>([]);
+  const skipSeriesEffectOnce = useRef(false);
+  const appliedDefaultMonthsOnce = useRef(false);
+  const monthDropdownRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -77,9 +154,60 @@ export default function GananciaDiariaPage() {
     }
   }, [date]);
 
+  const loadSeries = useCallback(async () => {
+    setSeriesLoading(true);
+    setSeriesError('');
+    try {
+      const useServerDefault = !appliedDefaultMonthsOnce.current && selectedMonths.length === 0;
+      const qs = new URLSearchParams();
+      if (!useServerDefault && selectedMonths.length > 0) {
+        qs.set('months', selectedMonths.join(','));
+      }
+      const suffix = qs.toString() ? `?${qs}` : '';
+      const res = await apiFetch(`/api/ganancia-diaria/series${suffix}`);
+      const body = (await res.json().catch(() => ({}))) as SeriesPayload;
+      if (!res.ok) {
+        setSeriesData(null);
+        setSeriesError(typeof body.error === 'string' ? body.error : 'No se pudo cargar la tabla');
+        return;
+      }
+      setSeriesData(body);
+      if (body.available_months?.length) setMonthOptions(body.available_months);
+      if (!appliedDefaultMonthsOnce.current && selectedMonths.length === 0 && body.months_applied?.length) {
+        appliedDefaultMonthsOnce.current = true;
+        skipSeriesEffectOnce.current = true;
+        setSelectedMonths(body.months_applied);
+      }
+    } catch {
+      setSeriesData(null);
+      setSeriesError('Error de red');
+    } finally {
+      setSeriesLoading(false);
+    }
+  }, [selectedMonths]);
+
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (skipSeriesEffectOnce.current) {
+      skipSeriesEffectOnce.current = false;
+      return;
+    }
+    void loadSeries();
+  }, [selectedMonths, loadSeries]);
+
+  useEffect(() => {
+    if (!monthsPanelOpen) return;
+    const onDown = (e: MouseEvent) => {
+      const el = monthDropdownRef.current;
+      if (!el || el.contains(e.target as Node)) return;
+      setMonthsPanelOpen(false);
+    };
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, [monthsPanelOpen]);
 
   const ventasCur = data?.ventas_currency;
   const metaCur = data?.meta_currency;
@@ -88,6 +216,52 @@ export default function GananciaDiariaPage() {
     if (!data?.meta_partial_errors?.length) return null;
     return data.meta_partial_errors.map((e) => `${e.adAccountId}: ${e.error}`).join(' · ');
   }, [data]);
+
+  const seriesMetaNote = useMemo(() => {
+    if (!seriesData?.meta_partial_errors?.length) return null;
+    return seriesData.meta_partial_errors.map((e) => `${e.adAccountId}: ${e.error}`).join(' · ');
+  }, [seriesData]);
+
+  const availableMonths = monthOptions.length > 0 ? monthOptions : seriesData?.available_months ?? [];
+
+  const openMonthsPanel = () => {
+    setPendingMonths(selectedMonths.length > 0 ? [...selectedMonths] : [...(seriesData?.months_applied ?? [])]);
+    setMonthsPanelOpen(true);
+  };
+
+  const togglePendingMonth = (ym: string) => {
+    setPendingMonths((prev) => (prev.includes(ym) ? prev.filter((x) => x !== ym) : [...prev, ym].sort()));
+  };
+
+  const applyMonthFilter = () => {
+    if (pendingMonths.length === 0) return;
+    setSelectedMonths([...new Set(pendingMonths)].sort());
+    setMonthsPanelOpen(false);
+  };
+
+  const days = seriesData?.days ?? [];
+  const seriesVentasCur = seriesData?.ventas_currency;
+  const seriesMetaCur = seriesData?.meta_currency;
+  const comparable = seriesData?.ganancia_comparable;
+
+  const totals = useMemo(() => {
+    let v = 0;
+    let p = 0;
+    let g = 0;
+    let ganSum = 0;
+    for (const row of days) {
+      v += row.ventas_despachadas_total;
+      p += row.ventas_despachadas_pedidos;
+      g += row.gasto_publicitario_total;
+      if (row.ganancia != null && Number.isFinite(row.ganancia)) ganSum += row.ganancia;
+    }
+    return {
+      ventas: v,
+      pedidos: p,
+      gasto: g,
+      ganancia: comparable ? Math.round(ganSum * 100) / 100 : null,
+    };
+  }, [days, comparable]);
 
   return (
     <div style={{ maxWidth: 960 }}>
@@ -155,7 +329,7 @@ export default function GananciaDiariaPage() {
               display: 'grid',
               gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
               gap: 14,
-              marginBottom: 16,
+              marginBottom: 24,
             }}
           >
             <div style={cardBase}>
@@ -210,8 +384,214 @@ export default function GananciaDiariaPage() {
           ) : null}
 
           {metaNote ? (
-            <p style={{ margin: 0, fontSize: 12, color: ds.textHint }}>Meta: {metaNote}</p>
+            <p style={{ margin: '0 0 20px', fontSize: 12, color: ds.textHint }}>Meta: {metaNote}</p>
+          ) : (
+            <div style={{ marginBottom: 20 }} />
+          )}
+
+          <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: ds.textPrimary, flex: '1 1 auto' }}>
+              Detalle por día
+            </h2>
+            <div ref={monthDropdownRef} style={{ position: 'relative' }}>
+              <button
+                type="button"
+                disabled={!availableMonths.length}
+                onClick={() => (monthsPanelOpen ? setMonthsPanelOpen(false) : openMonthsPanel())}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textPrimary,
+                  fontSize: 13,
+                  cursor: !availableMonths.length ? 'not-allowed' : 'pointer',
+                  minWidth: 200,
+                  textAlign: 'left',
+                  opacity: !availableMonths.length ? 0.55 : 1,
+                }}
+              >
+                Meses:{' '}
+                {selectedMonths.length > 0
+                  ? selectedMonths.map(formatMonthLabel).join(', ')
+                  : seriesData?.months_applied?.map(formatMonthLabel).join(', ') || '…'}
+                <span style={{ float: 'right', opacity: 0.6 }}>{monthsPanelOpen ? '▲' : '▼'}</span>
+              </button>
+              {monthsPanelOpen ? (
+                <div
+                  style={{
+                    position: 'absolute',
+                    right: 0,
+                    top: '100%',
+                    marginTop: 6,
+                    minWidth: 280,
+                    maxHeight: 320,
+                    overflowY: 'auto',
+                    background: ds.bgCard,
+                    border: `1px solid ${ds.borderCard}`,
+                    borderRadius: 10,
+                    boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                    zIndex: 20,
+                    padding: '12px 14px',
+                  }}
+                >
+                  <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 10 }}>
+                    Selecciona uno o varios meses (calendario tienda)
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                    {availableMonths.map((ym) => (
+                      <label
+                        key={ym}
+                        style={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 10,
+                          fontSize: 14,
+                          color: ds.textPrimary,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={pendingMonths.includes(ym)}
+                          onChange={() => togglePendingMonth(ym)}
+                        />
+                        <span style={{ textTransform: 'capitalize' }}>{formatMonthLabel(ym)}</span>
+                      </label>
+                    ))}
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
+                    <button
+                      type="button"
+                      onClick={() => setMonthsPanelOpen(false)}
+                      style={{
+                        padding: '6px 12px',
+                        borderRadius: 8,
+                        border: `1px solid ${ds.borderCard}`,
+                        background: ds.bgSubtle,
+                        fontSize: 13,
+                        cursor: 'pointer',
+                      }}
+                    >
+                      Cancelar
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => applyMonthFilter()}
+                      disabled={pendingMonths.length === 0}
+                      style={{
+                        padding: '6px 14px',
+                        borderRadius: 8,
+                        border: 'none',
+                        background: ds.brand,
+                        color: '#fff',
+                        fontWeight: 600,
+                        fontSize: 13,
+                        cursor: pendingMonths.length === 0 ? 'not-allowed' : 'pointer',
+                        opacity: pendingMonths.length === 0 ? 0.5 : 1,
+                      }}
+                    >
+                      Aplicar
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          {seriesError ? (
+            <p style={{ color: ds.dangerText, fontSize: 14, marginBottom: 12 }}>{seriesError}</p>
           ) : null}
+
+          {seriesData?.warning ? (
+            <p
+              style={{
+                margin: '0 0 12px',
+                padding: '10px 12px',
+                borderRadius: 10,
+                background: ds.warningBg,
+                color: ds.warningText,
+                fontSize: 13,
+                lineHeight: 1.45,
+              }}
+            >
+              {seriesData.warning}
+            </p>
+          ) : null}
+
+          {seriesMetaNote ? (
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textHint }}>Meta (tabla): {seriesMetaNote}</p>
+          ) : null}
+
+          <div
+            style={{
+              ...cardBase,
+              padding: 0,
+              overflow: 'hidden',
+            }}
+          >
+            {seriesLoading ? (
+              <div style={{ padding: 24, textAlign: 'center', color: ds.textMuted, fontSize: 14 }}>
+                Cargando tabla…
+              </div>
+            ) : days.length === 0 ? (
+              <div style={{ padding: 24, textAlign: 'center', color: ds.textMuted, fontSize: 14 }}>
+                No hay días en el rango seleccionado.
+              </div>
+            ) : (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                  <thead>
+                    <tr style={{ background: ds.bgSubtle }}>
+                      <th style={thStyle}>Día</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Ventas desp.</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Pedidos</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Gasto Meta</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Ganancia</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {days.map((row) => (
+                      <tr key={row.date}>
+                        <td style={{ ...tdStyle, fontWeight: 500 }}>{formatTableDate(row.date)}</td>
+                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {formatMoney(row.ventas_despachadas_total, seriesVentasCur)}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {row.ventas_despachadas_pedidos}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {formatMoney(row.gasto_publicitario_total, seriesMetaCur || seriesVentasCur)}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {row.ganancia != null && Number.isFinite(row.ganancia)
+                            ? formatMoney(row.ganancia, seriesVentasCur)
+                            : '—'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr style={{ background: ds.bgSubtle }}>
+                      <td style={{ ...tdStyle, fontWeight: 700 }}>Total período</td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {formatMoney(totals.ventas, seriesVentasCur)}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {totals.pedidos}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {formatMoney(totals.gasto, seriesMetaCur || seriesVentasCur)}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {totals.ganancia != null ? formatMoney(totals.ganancia, seriesVentasCur) : '—'}
+                      </td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
         </>
       ) : null}
     </div>

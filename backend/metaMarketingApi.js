@@ -407,6 +407,48 @@ async function fetchTotalSpendForAdAccountsTimeRange(actIds, accessToken, since,
 }
 
 /**
+ * Gasto publicitario por día (date_start YYYY-MM-DD), rango since/until inclusive.
+ * Suma todas las cuentas en actIds para cada día.
+ * @param {string[]} actIds
+ * @param {string} accessToken
+ * @param {string} since YYYY-MM-DD
+ * @param {string} until YYYY-MM-DD
+ * @returns {Promise<{ byDay: Record<string, number>, partialErrors: { adAccountId: string, error: string }[] }>}
+ */
+async function fetchDailySpendByDayForAdAccountsTimeRange(actIds, accessToken, since, until) {
+  const v = DEFAULT_VERSION;
+  const tr = JSON.stringify({ since, until });
+  const fields = 'spend,date_start';
+  const partialErrors = [];
+  const merged = new Map();
+
+  for (const raw of actIds) {
+    const id = normalizeActId(raw);
+    if (!id) {
+      partialErrors.push({ adAccountId: String(raw || ''), error: 'ID de cuenta no válido' });
+      continue;
+    }
+    const base = `https://graph.facebook.com/${v}/${id}/insights?fields=${encodeURIComponent(fields)}&time_range=${encodeURIComponent(tr)}&time_increment=1&limit=999&access_token=${encodeURIComponent(accessToken)}`;
+    const r = await fetchAllGraphPages(base);
+    if (!r.ok) {
+      const fb = r.data && r.data.error;
+      partialErrors.push({
+        adAccountId: id,
+        error: (fb && fb.message) || 'Error al leer gasto diario',
+      });
+      continue;
+    }
+    for (const row of r.items) {
+      const ds = row.date_start;
+      if (!ds || typeof ds !== 'string') continue;
+      const spend = parseNum(row.spend);
+      merged.set(ds, (merged.get(ds) || 0) + spend);
+    }
+  }
+  return { byDay: Object.fromEntries(merged), partialErrors };
+}
+
+/**
  * @param {string} campaignId digits only
  * @param {string} accessToken
  * @returns {Promise<{ ok: boolean, accountId: string | null, error: string | null }>}
@@ -479,6 +521,7 @@ module.exports = {
   mergeFunnelPayloads,
   fetchAccountSpendForTimeRange,
   fetchTotalSpendForAdAccountsTimeRange,
+  fetchDailySpendByDayForAdAccountsTimeRange,
   getCampaignAdAccountId,
   updateCampaignStatusGraph,
 };

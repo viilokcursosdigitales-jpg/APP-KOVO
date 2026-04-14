@@ -16,6 +16,7 @@ const {
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
   fetchTotalSpendForAdAccountsTimeRange,
+  fetchDailySpendByDayForAdAccountsTimeRange,
   getCampaignAdAccountId,
   updateCampaignStatusGraph,
 } = require('./metaMarketingApi');
@@ -2764,6 +2765,64 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
   }
 });
 
+function gananciaDiariaYmdKey(x) {
+  return `${String(x.y).padStart(4, '0')}-${String(x.m).padStart(2, '0')}-${String(x.d).padStart(2, '0')}`;
+}
+
+/** Meses YYYY-MM desde enero hasta el mes actual (calendario tienda). */
+function gananciaDiariaSelectableMonthKeys(todayYmd) {
+  const keys = [];
+  for (let m = 1; m <= todayYmd.m; m += 1) {
+    keys.push(`${String(todayYmd.y).padStart(4, '0')}-${String(m).padStart(2, '0')}`);
+  }
+  return keys;
+}
+
+function gananciaDiariaDaysInMonth(y, m) {
+  return new Date(y, m, 0).getDate();
+}
+
+/** @param {string} s @returns {{ y: number, m: number } | null} */
+function gananciaDiariaParseYm(s) {
+  const t = String(s || '').trim();
+  const m = t.match(/^(\d{4})-(\d{2})$/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  if (mo < 1 || mo > 12) return null;
+  return { y, m: mo };
+}
+
+function gananciaDiariaExpandMonthKeysToDayStrings(monthKeys, jan1Ymd, todayYmd) {
+  const k0 = gananciaDiariaYmdKey(jan1Ymd);
+  const k1 = gananciaDiariaYmdKey(todayYmd);
+  const out = new Set();
+  for (const mkRaw of monthKeys) {
+    const pr = gananciaDiariaParseYm(mkRaw);
+    if (!pr) continue;
+    const { y, m } = pr;
+    const dim = gananciaDiariaDaysInMonth(y, m);
+    for (let d = 1; d <= dim; d += 1) {
+      const ymd = { y, m, d };
+      const k = gananciaDiariaYmdKey(ymd);
+      if (k < k0 || k > k1) continue;
+      out.add(k);
+    }
+  }
+  return [...out].sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
+function gananciaDiariaParseMonthsQuery(q) {
+  if (q == null || q === '') return [];
+  if (Array.isArray(q)) {
+    return q.flatMap((s) => String(s).split(',')).map((x) => x.trim()).filter(Boolean);
+  }
+  return String(q)
+    .split(',')
+    .map((x) => x.trim())
+    .filter(Boolean);
+}
+
 /** Ventas Shopify despachadas (estado KOVO) vs gasto Meta en el mismo día de calendario de la tienda. */
 app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, res) => {
   try {
@@ -2786,11 +2845,10 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     }
     const todayYmd = shopCalendarYmdFromInstant(Date.now(), iana);
     const jan1Ymd = { y: todayYmd.y, m: 1, d: 1 };
-    const ymdKey = (x) => `${String(x.y).padStart(4, '0')}-${String(x.m).padStart(2, '0')}-${String(x.d).padStart(2, '0')}`;
-    if (ymdKey(ymd) < ymdKey(jan1Ymd)) {
+    if (gananciaDiariaYmdKey(ymd) < gananciaDiariaYmdKey(jan1Ymd)) {
       ymd = jan1Ymd;
     }
-    if (ymdKey(ymd) > ymdKey(todayYmd)) {
+    if (gananciaDiariaYmdKey(ymd) > gananciaDiariaYmdKey(todayYmd)) {
       ymd = todayYmd;
     }
     const dateStr = `${String(ymd.y).padStart(4, '0')}-${String(ymd.m).padStart(2, '0')}-${String(ymd.d).padStart(2, '0')}`;
@@ -2894,6 +2952,186 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al calcular ganancia diaria' });
+  }
+});
+
+/** Detalle por día (tabla). ?months=2026-04,2026-03 opcional; por defecto el mes calendario actual en la tienda. */
+app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const shopRow = await getActiveShopifyConnection(req.organizationId);
+    if (!shopRow) {
+      return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
+    }
+    const sr = await shopifyRequest(shopRow.shop_domain, shopRow.access_token, 'shop.json?fields=iana_timezone,currency');
+    const iana =
+      sr.ok && sr.data && sr.data.shop && sr.data.shop.iana_timezone
+        ? String(sr.data.shop.iana_timezone)
+        : 'UTC';
+    const shopCurrency =
+      sr.ok && sr.data && sr.data.shop && sr.data.shop.currency ? String(sr.data.shop.currency).trim() : '';
+
+    const todayYmd = shopCalendarYmdFromInstant(Date.now(), iana);
+    const jan1Ymd = { y: todayYmd.y, m: 1, d: 1 };
+    const available_months = gananciaDiariaSelectableMonthKeys(todayYmd);
+    const allowed = new Set(available_months);
+
+    let requested = gananciaDiariaParseMonthsQuery(req.query.months);
+    requested = [...new Set(requested)].filter((k) => allowed.has(k));
+    if (requested.length === 0) {
+      requested = [
+        `${String(todayYmd.y).padStart(4, '0')}-${String(todayYmd.m).padStart(2, '0')}`,
+      ];
+    }
+    requested.sort();
+
+    const sortedAsc = gananciaDiariaExpandMonthKeysToDayStrings(requested, jan1Ymd, todayYmd);
+    if (sortedAsc.length === 0) {
+      return res.json({
+        shop_calendar_timezone: iana,
+        ventas_currency: shopCurrency || null,
+        meta_currency: null,
+        ganancia_comparable: false,
+        warning: null,
+        meta_partial_errors: [],
+        available_months,
+        months_applied: requested,
+        days: [],
+      });
+    }
+
+    const partsFirst = parseIsoDateYmd(sortedAsc[0]);
+    const partsLast = parseIsoDateYmd(sortedAsc[sortedAsc.length - 1]);
+    if (!partsFirst || !partsLast) {
+      return res.status(400).json({ error: 'Rango de fechas inválido' });
+    }
+    const rangeMin = shopifyOrderCreatedRangeForCalendarDate(iana, partsFirst.y, partsFirst.m, partsFirst.d).min;
+    const rangeMax = shopifyOrderCreatedRangeForCalendarDate(iana, partsLast.y, partsLast.m, partsLast.d).max;
+
+    const qs = new URLSearchParams();
+    qs.set('status', 'any');
+    qs.set('fields', SHOPIFY_ORDER_LIST_FIELDS);
+    qs.set('created_at_min', rangeMin);
+    qs.set('created_at_max', rangeMax);
+    const r = await shopifyFetchAllOrders(shopRow.shop_domain, shopRow.access_token, qs);
+    if (!r.ok) {
+      const st = Number(r.status) >= 400 ? Number(r.status) : 502;
+      return res.status(Number.isFinite(st) ? st : 502).json({ error: r.error || 'Error Shopify', data: r.data });
+    }
+    const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
+    const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
+    const localMap = await loadLocalFieldsMap(req.organizationId, ids);
+
+    const daySet = new Set(sortedAsc);
+    const ventasByDay = new Map();
+    const pedidosByDay = new Map();
+    for (const k of sortedAsc) {
+      ventasByDay.set(k, 0);
+      pedidosByDay.set(k, 0);
+    }
+
+    const excludeFin = new Set(['voided', 'cancelled']);
+    for (const o of normalized) {
+      const t = Date.parse(String(o.createdAt || ''));
+      if (!Number.isFinite(t)) continue;
+      const od = shopCalendarYmdFromInstant(t, iana);
+      const key = gananciaDiariaYmdKey(od);
+      if (!daySet.has(key)) continue;
+      const lf = localMap.get(Number(o.id));
+      const st = String(lf?.internal_status || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_');
+      if (st !== 'despachado') continue;
+      const fs = String(o.financialStatus || '').toLowerCase();
+      if (excludeFin.has(fs)) continue;
+      const amt = parseFloat(String(o.total || '0').replace(',', '.'));
+      if (!Number.isFinite(amt) || amt < 0) continue;
+      ventasByDay.set(key, (ventasByDay.get(key) || 0) + amt);
+      pedidosByDay.set(key, (pedidosByDay.get(key) || 0) + 1);
+    }
+
+    let spendByDay = {};
+    const metaPartialErrors = [];
+    let metaCurrency = '';
+    const metaRow = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
+    if (metaRow && String(metaRow.access_token || '').trim()) {
+      const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
+      if (resolved.ok && resolved.actIds.length > 0) {
+        const spendRes = await fetchDailySpendByDayForAdAccountsTimeRange(
+          resolved.actIds,
+          metaRow.access_token,
+          sortedAsc[0],
+          sortedAsc[sortedAsc.length - 1],
+        );
+        spendByDay = spendRes.byDay || {};
+        for (const pe of spendRes.partialErrors || []) metaPartialErrors.push(pe);
+        const la = await listAdAccounts(metaRow.access_token);
+        if (la.ok && Array.isArray(la.accounts)) {
+          const curSet = new Set();
+          for (const aid of resolved.actIds) {
+            const n = normalizeActId(aid);
+            const hit = la.accounts.find((a) => normalizeActId(a.id) === n);
+            if (hit && hit.currency) curSet.add(String(hit.currency).trim());
+          }
+          if (curSet.size === 1) metaCurrency = [...curSet][0];
+          else if (curSet.size > 1) metaCurrency = [...curSet].join(', ');
+        }
+      }
+    }
+
+    const totalMetaSpend = Object.values(spendByDay).reduce((sum, v) => sum + (Number(v) || 0), 0);
+    const shopC = shopCurrency.toUpperCase();
+    const metaC = metaCurrency.toUpperCase();
+    const sameCurrency =
+      Boolean(shopC && metaC && shopC === metaC) ||
+      (totalMetaSpend === 0 && Boolean(shopC) && !metaC) ||
+      (totalMetaSpend === 0 && !shopC && !metaC);
+    let warning = null;
+    if (sameCurrency && shopC) {
+      /* ok */
+    } else if (totalMetaSpend > 0 && shopC && !metaC) {
+      warning =
+        'Hay gasto en Meta pero no se pudo determinar la divisa de la cuenta; no se calcula la ganancia automática.';
+    } else if (totalMetaSpend > 0 && shopC && metaC && shopC !== metaC) {
+      warning = `La tienda usa ${shopCurrency} y la(s) cuenta(s) Meta ${metaCurrency}. Convierte manualmente para comparar.`;
+    } else if (totalMetaSpend > 0 && !shopC) {
+      warning = 'La tienda no reportó divisa en Shopify; revisa el total en el admin.';
+    }
+
+    const gananciaComparable = Boolean(sameCurrency && shopC);
+    const sortedDesc = [...sortedAsc].reverse();
+    const days = [];
+    for (const dateStr of sortedDesc) {
+      const ventasTotal = ventasByDay.get(dateStr) || 0;
+      const ventasPedidos = pedidosByDay.get(dateStr) || 0;
+      const gastoAds = Number(spendByDay[dateStr] || 0);
+      let ganancia = null;
+      if (gananciaComparable) {
+        ganancia = Math.round((ventasTotal - gastoAds) * 100) / 100;
+      }
+      days.push({
+        date: dateStr,
+        ventas_despachadas_total: Math.round(ventasTotal * 100) / 100,
+        ventas_despachadas_pedidos: ventasPedidos,
+        gasto_publicitario_total: Math.round(gastoAds * 100) / 100,
+        ganancia,
+      });
+    }
+
+    res.json({
+      shop_calendar_timezone: iana,
+      ventas_currency: shopCurrency || null,
+      meta_currency: metaCurrency || null,
+      ganancia_comparable: gananciaComparable,
+      warning,
+      meta_partial_errors: metaPartialErrors,
+      available_months,
+      months_applied: requested,
+      days,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al calcular la serie de ganancia diaria' });
   }
 });
 
