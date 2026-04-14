@@ -157,6 +157,29 @@ CREATE TABLE IF NOT EXISTS motico_org_settings (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS motico_manual_orders (
+  id BIGSERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  order_name VARCHAR(64) NOT NULL,
+  client_name VARCHAR(255) NOT NULL DEFAULT '',
+  client_email VARCHAR(320) NOT NULL DEFAULT '',
+  financial_status VARCHAR(32) NOT NULL DEFAULT 'pending',
+  total_price NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  total_outstanding NUMERIC(14, 4),
+  currency VARCHAR(8) NOT NULL DEFAULT '',
+  shipping_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  product_summary VARCHAR(600) NOT NULL DEFAULT '',
+  line_items_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  price_override NUMERIC(14, 4),
+  quantity_override INTEGER,
+  motico_status VARCHAR(32) NOT NULL DEFAULT 'confirmado',
+  total_a_pagar_override NUMERIC(14, 4)
+);
+
+CREATE INDEX IF NOT EXISTS idx_motico_manual_org_created ON motico_manual_orders (organization_id, created_at DESC);
+
 -- Hotmart webhook: optional organization columns (keep no semicolons inside -- lines: initDb splits on ;)
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'free';
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hotmart_email TEXT;

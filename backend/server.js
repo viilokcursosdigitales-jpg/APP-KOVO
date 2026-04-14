@@ -2277,6 +2277,152 @@ function shopifyDefaultTotalAPagar(o) {
   return Number.isFinite(t) && t >= 0 ? t : 0;
 }
 
+function moticoPhoneDigitsLocal(raw) {
+  let d = String(raw || '').replace(/\D/g, '');
+  if (d.startsWith('57') && d.length >= 10) d = d.slice(2);
+  return d;
+}
+
+/** @param {object} r fila motico_manual_orders */
+function mapMoticoManualOrderRowFromDb(r) {
+  const vid = -Number(r.id);
+  let ship = {};
+  if (r.shipping_json && typeof r.shipping_json === 'object') ship = r.shipping_json;
+  else if (typeof r.shipping_json === 'string') {
+    try {
+      ship = JSON.parse(r.shipping_json);
+    } catch {
+      ship = {};
+    }
+  }
+  const clientName = String(r.client_name || '');
+  const sa = {
+    name: String(ship.name || clientName || ''),
+    address1: String(ship.address1 || ''),
+    address2: String(ship.address2 || ''),
+    city: String(ship.city || ''),
+    province: String(ship.province || ''),
+    zip: String(ship.zip || ''),
+    country: String(ship.country || ''),
+    phone: String(ship.phone || ''),
+  };
+  let lineItemsRaw = r.line_items_json;
+  if (typeof lineItemsRaw === 'string') {
+    try {
+      lineItemsRaw = JSON.parse(lineItemsRaw);
+    } catch {
+      lineItemsRaw = [];
+    }
+  }
+  if (!Array.isArray(lineItemsRaw)) lineItemsRaw = [];
+  const qo = r.quantity_override != null ? Number(r.quantity_override) : null;
+  const po = r.price_override != null ? Number(r.price_override) : null;
+  const totalStr = String(r.total_price ?? '0');
+  const defQty = lineItemsRaw.length
+    ? lineItemsRaw.reduce((s, li) => s + (parseInt(String(li.quantity), 10) || 0), 0) || 1
+    : 1;
+  const shopQty = qo != null && Number.isFinite(qo) && qo > 0 ? qo : defQty;
+  const lineItemsDetail =
+    lineItemsRaw.length > 0
+      ? lineItemsRaw.map((li, idx) => ({
+          id: Number(li.id) && Number.isFinite(Number(li.id)) ? Number(li.id) : idx + 1,
+          title: String(li.title || li.name || 'Producto').trim() || 'Producto',
+          name: String(li.name || '').trim(),
+          variant_title: li.variant_title != null ? String(li.variant_title).trim() : '',
+          quantity: parseInt(String(li.quantity), 10) || 0,
+          price: li.price != null ? String(li.price) : '',
+          sku: li.sku != null ? String(li.sku).trim() : '',
+          properties: [],
+        }))
+      : [
+          {
+            id: 1,
+            title: String(r.product_summary || 'Producto').trim() || 'Producto',
+            name: '',
+            variant_title: '',
+            quantity: shopQty,
+            price: totalStr,
+            sku: '',
+            properties: [],
+          },
+        ];
+  const financialStatus = String(r.financial_status || 'pending');
+  const b = mapFinancialToBadge(financialStatus);
+  const totalOutstanding =
+    r.total_outstanding != null && String(r.total_outstanding).trim() !== ''
+      ? String(r.total_outstanding)
+      : null;
+  const oLike = { financialStatus, totalOutstanding, total: totalStr };
+  const total_a_pagar_default = shopifyDefaultTotalAPagar(oLike);
+  const total_a_pagar_override =
+    r.total_a_pagar_override != null && r.total_a_pagar_override !== ''
+      ? Number(r.total_a_pagar_override)
+      : null;
+  const total_a_pagar =
+    total_a_pagar_override != null && Number.isFinite(total_a_pagar_override)
+      ? total_a_pagar_override
+      : total_a_pagar_default;
+  const rawPhone = (sa.phone || '').trim();
+  const phoneLocal = moticoPhoneDigitsLocal(rawPhone);
+  const moticoRaw = r.motico_status;
+  const motico_status =
+    typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : 'confirmado';
+  return {
+    id: vid,
+    orderName: String(r.order_name || `M-${r.id}`),
+    client: clientName,
+    email: String(r.client_email || '').trim() || '—',
+    createdAt: new Date(r.created_at).toISOString(),
+    total: totalStr,
+    currency: String(r.currency || ''),
+    financialStatus,
+    totalOutstanding,
+    fulfillmentStatus: '',
+    label: b.label,
+    badgeVariant: b.variant,
+    defaultQuantity: shopQty,
+    shopifyQuantity: shopQty,
+    productIds: [],
+    shippingAddress: sa,
+    shippingCity: sa.city,
+    shippingProvince: sa.province,
+    shippingAddressLine: [sa.address1, sa.address2].filter(Boolean).join(' · '),
+    phoneLocal: phoneLocal || '',
+    lineItemsDetail,
+    landingSite: '',
+    referringSite: '',
+    sourceName: 'motico_manual',
+    utm: {},
+    internal_status: 'sin_confirmar',
+    mensajero: 'motico',
+    motico_status,
+    price_override: po != null && Number.isFinite(po) ? po : null,
+    quantity_override: qo != null && Number.isFinite(qo) ? qo : null,
+    shopifyTotal: totalStr,
+    total_a_pagar_default,
+    total_a_pagar_override:
+      total_a_pagar_override != null && Number.isFinite(total_a_pagar_override) ? total_a_pagar_override : null,
+    total_a_pagar,
+    is_motico_manual: true,
+  };
+}
+
+async function loadMoticoManualOrdersForOrg(organizationId, minIso, maxIso) {
+  const params = [organizationId];
+  let sql = `SELECT * FROM motico_manual_orders WHERE organization_id = $1`;
+  if (minIso) {
+    params.push(String(minIso));
+    sql += ` AND created_at >= $${params.length}::timestamptz`;
+  }
+  if (maxIso) {
+    params.push(String(maxIso));
+    sql += ` AND created_at <= $${params.length}::timestamptz`;
+  }
+  sql += ` ORDER BY created_at DESC`;
+  const { rows } = await pool.query(sql, params);
+  return rows.map((r) => mapMoticoManualOrderRowFromDb(r));
+}
+
 async function loadLocalFieldsMap(organizationId, orderIds) {
   if (!orderIds.length) return new Map();
   const CHUNK = 2500;
@@ -2743,6 +2889,16 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
     });
     const mensajeroFilter = typeof req.query.mensajero_filter === 'string' ? req.query.mensajero_filter.trim().toLowerCase() : '';
     if (mensajeroFilter === 'motico') {
+      try {
+        const minIso = min && String(min).trim() ? String(min).trim() : null;
+        const maxIso = max && String(max).trim() ? String(max).trim() : null;
+        const manualRows = await loadMoticoManualOrdersForOrg(req.organizationId, minIso, maxIso);
+        orders = [...manualRows, ...orders];
+      } catch (me) {
+        if (!(me && me.code === '42P01')) throw me;
+      }
+    }
+    if (mensajeroFilter === 'motico') {
       orders = orders.filter((o) => o.mensajero === 'motico');
     }
     const productIdQ = typeof req.query.product_id === 'string' ? req.query.product_id.trim() : '';
@@ -2752,6 +2908,11 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         orders = orders.filter((o) => Array.isArray(o.productIds) && o.productIds.includes(want));
       }
     }
+    orders.sort((a, b) => {
+      const ta = Date.parse(String(a.createdAt)) || 0;
+      const tb = Date.parse(String(b.createdAt)) || 0;
+      return tb - ta;
+    });
     res.json({
       source: 'shopify',
       shop_domain: row.shop_domain,
@@ -3137,15 +3298,94 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
 
 app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const orderId = parseInt(String(req.params.orderId), 10);
-    if (!Number.isFinite(orderId) || orderId <= 0) {
+    const orderIdRaw = parseInt(String(req.params.orderId), 10);
+    if (!Number.isFinite(orderIdRaw) || orderIdRaw === 0) {
       return res.status(400).json({ error: 'ID de pedido inválido' });
     }
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    if (orderIdRaw < 0) {
+      if (body.sync_to_shopify === true) {
+        return res.status(400).json({ error: 'Los pedidos manuales Motico no se sincronizan con Shopify.' });
+      }
+      const manualId = -orderIdRaw;
+      const { rows: mrows } = await pool.query(
+        `SELECT id, price_override, quantity_override, motico_status, total_a_pagar_override FROM motico_manual_orders WHERE id = $1 AND organization_id = $2`,
+        [manualId, req.organizationId],
+      );
+      if (!mrows.length) {
+        return res.status(404).json({ error: 'Pedido manual no encontrado' });
+      }
+      const cur = mrows[0];
+      let price_override = cur.price_override != null ? Number(cur.price_override) : null;
+      if (body.price_override !== undefined) {
+        if (body.price_override === null) price_override = null;
+        else {
+          const n = Number(body.price_override);
+          if (!Number.isFinite(n) || n < 0) {
+            return res.status(400).json({ error: 'Precio no válido' });
+          }
+          price_override = n;
+        }
+      }
+      let quantity_override = cur.quantity_override != null ? Number(cur.quantity_override) : null;
+      if (body.quantity_override !== undefined) {
+        if (body.quantity_override === null) quantity_override = null;
+        else {
+          const q = parseInt(String(body.quantity_override), 10);
+          if (!Number.isFinite(q) || q < 0) {
+            return res.status(400).json({ error: 'Cantidad no válida' });
+          }
+          quantity_override = q;
+        }
+      }
+      let motico_status =
+        cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : 'confirmado';
+      if (!SHOPIFY_MOTICO_STATUSES.has(motico_status)) motico_status = 'confirmado';
+      if (body.motico_status !== undefined) {
+        const ms = String(body.motico_status);
+        if (!SHOPIFY_MOTICO_STATUSES.has(ms)) {
+          return res.status(400).json({ error: 'Estado Motico no válido' });
+        }
+        motico_status = ms;
+      }
+      let total_a_pagar_override = cur.total_a_pagar_override != null ? Number(cur.total_a_pagar_override) : null;
+      if (total_a_pagar_override != null && !Number.isFinite(total_a_pagar_override)) total_a_pagar_override = null;
+      if (body.total_a_pagar_override !== undefined) {
+        if (body.total_a_pagar_override === null) total_a_pagar_override = null;
+        else {
+          const bal = Number(body.total_a_pagar_override);
+          if (!Number.isFinite(bal) || bal < 0) {
+            return res.status(400).json({ error: 'Total a pagar no válido' });
+          }
+          total_a_pagar_override = bal;
+        }
+      }
+      await pool.query(
+        `UPDATE motico_manual_orders SET
+          price_override = $1,
+          quantity_override = $2,
+          motico_status = $3,
+          total_a_pagar_override = $4,
+          updated_at = now()
+        WHERE id = $5 AND organization_id = $6`,
+        [price_override, quantity_override, motico_status, total_a_pagar_override, manualId, req.organizationId],
+      );
+      return res.json({
+        ok: true,
+        internal_status: 'sin_confirmar',
+        price_override,
+        quantity_override,
+        mensajero: 'motico',
+        motico_status,
+        total_a_pagar_override,
+      });
+    }
+
+    const orderId = orderIdRaw;
     const conn = await getActiveShopifyConnection(req.organizationId);
     if (!conn) {
       return res.status(400).json({ error: 'No hay tienda conectada', code: 'not_connected' });
     }
-    const body = req.body && typeof req.body === 'object' ? req.body : {};
     const { rows: existing } = await pool.query(
       `SELECT internal_status, price_override, quantity_override, mensajero, motico_status, total_a_pagar_override
        FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = $2`,
@@ -3305,12 +3545,8 @@ app.put(
   async (req, res) => {
     try {
       const orderId = parseInt(String(req.params.orderId), 10);
-      if (!Number.isFinite(orderId) || orderId <= 0) {
+      if (!Number.isFinite(orderId) || orderId === 0) {
         return res.status(400).json({ error: 'ID de pedido inválido' });
-      }
-      const conn = await getActiveShopifyConnection(req.organizationId);
-      if (!conn) {
-        return res.status(400).json({ error: 'No hay tienda conectada', code: 'not_connected' });
       }
       const body = req.body && typeof req.body === 'object' ? req.body : {};
       const allowed = ['province', 'city', 'address1', 'address2', 'zip', 'country', 'phone'];
@@ -3322,6 +3558,60 @@ app.put(
       }
       if (Object.keys(updates).length === 0) {
         return res.status(400).json({ error: 'Envía al menos un campo de dirección (province, city, address1, …)' });
+      }
+      if (orderId < 0) {
+        const manualId = -orderId;
+        const { rows } = await pool.query(
+          `SELECT shipping_json, client_name FROM motico_manual_orders WHERE id = $1 AND organization_id = $2`,
+          [manualId, req.organizationId],
+        );
+        if (!rows.length) {
+          return res.status(404).json({ error: 'Pedido manual no encontrado' });
+        }
+        let ship = rows[0].shipping_json;
+        if (typeof ship === 'string') {
+          try {
+            ship = JSON.parse(ship);
+          } catch {
+            ship = {};
+          }
+        }
+        if (!ship || typeof ship !== 'object') ship = {};
+        const merged = {
+          name: String(ship.name || rows[0].client_name || ''),
+          address1: String(ship.address1 || ''),
+          address2: String(ship.address2 || ''),
+          city: String(ship.city || ''),
+          province: String(ship.province || ''),
+          zip: String(ship.zip || ''),
+          country: String(ship.country || ''),
+          phone: String(ship.phone || ''),
+        };
+        for (const k of allowed) {
+          if (Object.prototype.hasOwnProperty.call(updates, k)) merged[k] = updates[k];
+        }
+        await pool.query(
+          `UPDATE motico_manual_orders SET shipping_json = $1::jsonb, updated_at = now() WHERE id = $2 AND organization_id = $3`,
+          [JSON.stringify(merged), manualId, req.organizationId],
+        );
+        const s = merged;
+        return res.json({
+          ok: true,
+          shippingAddress: {
+            name: String(s.name || ''),
+            address1: String(s.address1 || ''),
+            address2: String(s.address2 || ''),
+            city: String(s.city || ''),
+            province: String(s.province || ''),
+            zip: String(s.zip || ''),
+            country: String(s.country || ''),
+            phone: String(s.phone || ''),
+          },
+        });
+      }
+      const conn = await getActiveShopifyConnection(req.organizationId);
+      if (!conn) {
+        return res.status(400).json({ error: 'No hay tienda conectada', code: 'not_connected' });
       }
       const r = await shopifyUpdateOrderShippingAddress(conn.shop_domain, conn.access_token, orderId, updates);
       if (!r.ok) {
@@ -3407,6 +3697,119 @@ app.put('/api/motico/settings', verifyToken, scopeToOrganization, async (req, re
     }
     console.error(e);
     res.status(500).json({ error: 'Error al guardar logo Motico' });
+  }
+});
+
+/** Pedido solo en KOVO / Motico (no crea pedido en Shopify). Aparece en Motico con id negativo. */
+app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const client_name = String(body.client_name || '').trim();
+    const product_summary = String(body.product_summary || '').trim();
+    if (!client_name) {
+      return res.status(400).json({ error: 'El nombre del cliente es obligatorio' });
+    }
+    if (!product_summary) {
+      return res.status(400).json({ error: 'La descripción del producto o pedido es obligatoria' });
+    }
+    const total = Number.parseFloat(String(body.total != null ? body.total : '').replace(',', '.'));
+    if (!Number.isFinite(total) || total < 0) {
+      return res.status(400).json({ error: 'Total no válido' });
+    }
+    const qty = parseInt(String(body.quantity != null ? body.quantity : '1'), 10);
+    if (!Number.isFinite(qty) || qty < 1) {
+      return res.status(400).json({ error: 'La cantidad debe ser al menos 1' });
+    }
+    const fin = String(body.financial_status || 'pending').toLowerCase();
+    const allowedFin = new Set(['paid', 'pending', 'unpaid', 'partially_paid', 'authorized', 'voided']);
+    const financial_status = allowedFin.has(fin) ? fin : 'pending';
+
+    let currency = String(body.currency || '').trim();
+    if (!currency) {
+      const shopRow = await getActiveShopifyConnection(req.organizationId);
+      if (shopRow) {
+        const sr = await shopifyRequest(shopRow.shop_domain, shopRow.access_token, 'shop.json?fields=currency');
+        if (sr.ok && sr.data && sr.data.shop && sr.data.shop.currency) {
+          currency = String(sr.data.shop.currency).trim();
+        }
+      }
+    }
+    if (!currency) currency = 'USD';
+
+    const client_email = String(body.client_email || '').trim().slice(0, 320);
+    const order_name_in = String(body.order_name || '').trim().slice(0, 64);
+    const province = String(body.province || '').trim();
+    const city = String(body.city || '').trim();
+    const address1 = String(body.address1 || '').trim();
+    const address2 = String(body.address2 || '').trim();
+    const zip = String(body.zip || '').trim();
+    const country = String(body.country || '').trim();
+    const phone = String(body.phone || '').trim();
+
+    const shipping_json = {
+      name: client_name,
+      province,
+      city,
+      address1,
+      address2,
+      zip,
+      country,
+      phone,
+    };
+    const unitPrice = qty > 0 ? Math.round((total / qty) * 10000) / 10000 : total;
+    const line_items_json = [{ id: 1, title: product_summary, quantity: qty, price: String(unitPrice) }];
+    const total_outstanding = financial_status === 'paid' ? 0 : total;
+
+    const initialOrderName = order_name_in || 'M';
+    const { rows: insRows } = await pool.query(
+      `INSERT INTO motico_manual_orders (
+        organization_id,
+        order_name,
+        client_name,
+        client_email,
+        financial_status,
+        total_price,
+        total_outstanding,
+        currency,
+        shipping_json,
+        product_summary,
+        line_items_json
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb)
+      RETURNING *`,
+      [
+        req.organizationId,
+        initialOrderName,
+        client_name,
+        client_email,
+        financial_status,
+        total,
+        total_outstanding,
+        currency,
+        JSON.stringify(shipping_json),
+        product_summary.slice(0, 600),
+        JSON.stringify(line_items_json),
+      ],
+    );
+    const row = insRows[0];
+    if (!order_name_in) {
+      const finalName = `M-${row.id}`;
+      await pool.query(
+        `UPDATE motico_manual_orders SET order_name = $1, updated_at = now() WHERE id = $2 AND organization_id = $3`,
+        [finalName, row.id, req.organizationId],
+      );
+      row.order_name = finalName;
+    }
+
+    res.status(201).json({ ok: true, order: mapMoticoManualOrderRowFromDb(row) });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Falta la tabla motico_manual_orders. Reinicia el backend para ejecutar initDb.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    res.status(500).json({ error: 'Error al crear el pedido manual' });
   }
 });
 

@@ -129,6 +129,8 @@ type MoticoOrderRow = {
   total_a_pagar_override: number | null;
   /** Valor mostrado: override ?? default. */
   total_a_pagar: number;
+  /** Pedido creado en Motico (no existe en Shopify); id negativo en API. */
+  is_motico_manual?: boolean;
 };
 
 type ShopifyProduct = { id: number; title: string };
@@ -310,6 +312,42 @@ function emptyEditorDraft(): MoticoEditorDraft {
   };
 }
 
+type ManualCreateDraft = {
+  client_name: string;
+  client_email: string;
+  order_name: string;
+  phone: string;
+  product_summary: string;
+  total: string;
+  quantity: string;
+  financial_status: 'paid' | 'pending' | 'unpaid';
+  province: string;
+  city: string;
+  address1: string;
+  address2: string;
+  zip: string;
+  country: string;
+};
+
+function emptyManualDraft(): ManualCreateDraft {
+  return {
+    client_name: '',
+    client_email: '',
+    order_name: '',
+    phone: '',
+    product_summary: '',
+    total: '',
+    quantity: '1',
+    financial_status: 'pending',
+    province: '',
+    city: '',
+    address1: '',
+    address2: '',
+    zip: '',
+    country: '',
+  };
+}
+
 function draftFromOrder(o: MoticoOrderRow): MoticoEditorDraft {
   const sa = o.shippingAddress;
   return {
@@ -410,6 +448,7 @@ function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
         : o.total_a_pagar_override != null && Number.isFinite(Number(o.total_a_pagar_override))
           ? Number(o.total_a_pagar_override)
           : computedTotalAPagarDefaultFromRow(o),
+    is_motico_manual: Boolean((o as { is_motico_manual?: boolean }).is_motico_manual),
   };
 }
 
@@ -442,6 +481,11 @@ export default function MoticoPage() {
   const [editorOrder, setEditorOrder] = useState<MoticoOrderRow | null>(null);
   const [editorDraft, setEditorDraft] = useState<MoticoEditorDraft>(() => emptyEditorDraft());
   const [editorSaving, setEditorSaving] = useState(false);
+
+  const [manualModalOpen, setManualModalOpen] = useState(false);
+  const [manualDraft, setManualDraft] = useState<ManualCreateDraft>(() => emptyManualDraft());
+  const [manualSaving, setManualSaving] = useState(false);
+  const [manualError, setManualError] = useState('');
 
   const [phoneCopyToastVisible, setPhoneCopyToastVisible] = useState(false);
   const phoneCopyToastTimerRef = useRef<number | null>(null);
@@ -916,6 +960,9 @@ export default function MoticoPage() {
       if (pt !== '' && qt !== '') {
         patchBody.sync_to_shopify = true;
       }
+      if (editorOrder.id < 0 || editorOrder.is_motico_manual) {
+        patchBody.sync_to_shopify = false;
+      }
 
       const okLocal = await patchLocalFields(editorOrder.id, patchBody);
       if (!okLocal) return;
@@ -926,6 +973,45 @@ export default function MoticoPage() {
       setEditorSaving(false);
     }
   }, [editorOrder, editorDraft, patchLocalFields]);
+
+  const submitManualOrder = useCallback(async () => {
+    setManualError('');
+    setManualSaving(true);
+    try {
+      const res = await apiFetch('/api/motico/manual-orders', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          client_name: manualDraft.client_name.trim(),
+          client_email: manualDraft.client_email.trim(),
+          order_name: manualDraft.order_name.trim(),
+          phone: manualDraft.phone.trim(),
+          product_summary: manualDraft.product_summary.trim(),
+          total: manualDraft.total.trim(),
+          quantity: manualDraft.quantity.trim() || '1',
+          financial_status: manualDraft.financial_status,
+          province: manualDraft.province.trim(),
+          city: manualDraft.city.trim(),
+          address1: manualDraft.address1.trim(),
+          address2: manualDraft.address2.trim(),
+          zip: manualDraft.zip.trim(),
+          country: manualDraft.country.trim(),
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setManualError(typeof data.error === 'string' ? data.error : 'No se pudo crear el pedido');
+        return;
+      }
+      setManualModalOpen(false);
+      setManualDraft(emptyManualDraft());
+      void loadData();
+    } catch {
+      setManualError('Error de red');
+    } finally {
+      setManualSaving(false);
+    }
+  }, [manualDraft, loadData]);
 
   useEffect(() => {
     if (!editorOrder) return;
@@ -938,6 +1024,19 @@ export default function MoticoPage() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [editorOrder]);
+
+  useEffect(() => {
+    if (!manualModalOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setManualModalOpen(false);
+        setManualDraft(emptyManualDraft());
+        setManualError('');
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [manualModalOpen]);
 
   useEffect(() => {
     if (!logoPanelOpen) return;
@@ -1061,23 +1160,46 @@ export default function MoticoPage() {
         }
         right={
           useLive ? (
-            <button
-              type="button"
-              disabled={refreshing || loading}
-              onClick={() => void loadData()}
-              style={{
-                padding: '7px 14px',
-                borderRadius: 8,
-                border: `1px solid ${ds.borderCard}`,
-                background: ds.bgCard,
-                color: ds.textSecondary,
-                fontSize: 12,
-                fontWeight: 600,
-                cursor: refreshing || loading ? 'wait' : 'pointer',
-              }}
-            >
-              {refreshing || loading ? 'Actualizando…' : 'Actualizar ahora'}
-            </button>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                disabled={refreshing || loading || manualSaving}
+                onClick={() => {
+                  setManualError('');
+                  setManualDraft(emptyManualDraft());
+                  setManualModalOpen(true);
+                }}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.brand}`,
+                  background: ds.brandBg,
+                  color: ds.brand,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: refreshing || loading || manualSaving ? 'wait' : 'pointer',
+                }}
+              >
+                Nuevo pedido manual
+              </button>
+              <button
+                type="button"
+                disabled={refreshing || loading}
+                onClick={() => void loadData()}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textSecondary,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: refreshing || loading ? 'wait' : 'pointer',
+                }}
+              >
+                {refreshing || loading ? 'Actualizando…' : 'Actualizar ahora'}
+              </button>
+            </div>
           ) : null
         }
       />
@@ -1837,10 +1959,13 @@ export default function MoticoPage() {
               id="motico-editor-title"
               style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 700, color: ds.textPrimary }}
             >
-              Editar pedido
+              {editorOrder.is_motico_manual || editorOrder.id < 0 ? 'Editar pedido manual' : 'Editar pedido'}
             </h3>
             <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted, lineHeight: 1.4 }}>
-              {editorOrder.orderName} · Dirección, precio y cantidad se guardan en Shopify.
+              {editorOrder.orderName} ·{' '}
+              {editorOrder.is_motico_manual || editorOrder.id < 0
+                ? 'Dirección, precio y cantidad se guardan solo en KOVO (no en Shopify).'
+                : 'Dirección, precio y cantidad se guardan en Shopify.'}
             </p>
             <p style={{ margin: '0 0 10px', fontSize: 11, fontWeight: 700, color: ds.textSecondary, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
               Dirección de envío
@@ -1909,8 +2034,9 @@ export default function MoticoPage() {
               Precio y cantidad
             </p>
             <p style={{ margin: '0 0 12px', fontSize: 11, color: ds.textMuted, lineHeight: 1.4 }}>
-              Se aplican a la primera línea del pedido en Shopify. Deja vacío solo uno de los dos si quieres quitar el
-              valor local (sin sincronizar).
+              {editorOrder.is_motico_manual || editorOrder.id < 0
+                ? 'Se aplican al pedido manual en KOVO. Deja vacío precio o cantidad para quitar el valor local.'
+                : 'Se aplican a la primera línea del pedido en Shopify. Deja vacío solo uno de los dos si quieres quitar el valor local (sin sincronizar).'}
             </p>
             <label style={{ ...labelStyle, display: 'block' }}>
               Precio total
@@ -1969,7 +2095,252 @@ export default function MoticoPage() {
                   opacity: editorSaving ? 0.85 : 1,
                 }}
               >
-                {editorSaving ? 'Guardando…' : 'Guardar en Shopify'}
+                {editorSaving
+                  ? 'Guardando…'
+                  : editorOrder.is_motico_manual || editorOrder.id < 0
+                    ? 'Guardar'
+                    : 'Guardar en Shopify'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {manualModalOpen ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.18)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 20,
+            zIndex: 100,
+          }}
+          role="dialog"
+          aria-modal
+          aria-labelledby="motico-manual-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) {
+              setManualModalOpen(false);
+              setManualDraft(emptyManualDraft());
+              setManualError('');
+            }
+          }}
+        >
+          <div
+            style={{
+              background: ds.bgCard,
+              borderRadius: 16,
+              padding: 28,
+              width: '100%',
+              maxWidth: 480,
+              border: `1px solid ${ds.borderCard}`,
+              maxHeight: '90vh',
+              overflowY: 'auto',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3
+              id="motico-manual-title"
+              style={{ margin: '0 0 8px', fontSize: 16, fontWeight: 700, color: ds.textPrimary }}
+            >
+              Nuevo pedido manual
+            </h3>
+            <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted, lineHeight: 1.45 }}>
+              El pedido queda solo en KOVO (Motico), no en Shopify. La referencia es opcional; si la dejas vacía se
+              genera una automática (por ejemplo M-42).
+            </p>
+            {manualError ? (
+              <p style={{ margin: '0 0 12px', fontSize: 13, color: ds.dangerText }}>{manualError}</p>
+            ) : null}
+            <label style={{ ...labelStyle, display: 'block' }}>
+              Nombre del cliente *
+              <input
+                type="text"
+                value={manualDraft.client_name}
+                onChange={(e) => setManualDraft((d) => ({ ...d, client_name: e.target.value }))}
+                style={modalFieldStyle}
+                autoComplete="name"
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Teléfono
+              <input
+                type="text"
+                value={manualDraft.phone}
+                onChange={(e) => setManualDraft((d) => ({ ...d, phone: e.target.value }))}
+                style={modalFieldStyle}
+                autoComplete="tel"
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Email
+              <input
+                type="email"
+                value={manualDraft.client_email}
+                onChange={(e) => setManualDraft((d) => ({ ...d, client_email: e.target.value }))}
+                style={modalFieldStyle}
+                autoComplete="email"
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Referencia del pedido (opcional)
+              <input
+                type="text"
+                value={manualDraft.order_name}
+                onChange={(e) => setManualDraft((d) => ({ ...d, order_name: e.target.value }))}
+                style={modalFieldStyle}
+                placeholder="Ej. WhatsApp 12 mar"
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Producto / descripción *
+              <input
+                type="text"
+                value={manualDraft.product_summary}
+                onChange={(e) => setManualDraft((d) => ({ ...d, product_summary: e.target.value }))}
+                style={modalFieldStyle}
+              />
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 14 }}>
+              <label style={{ ...labelStyle, display: 'block' }}>
+                Total *
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={manualDraft.total}
+                  onChange={(e) => setManualDraft((d) => ({ ...d, total: e.target.value }))}
+                  style={modalFieldStyle}
+                />
+              </label>
+              <label style={{ ...labelStyle, display: 'block' }}>
+                Cantidad
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={manualDraft.quantity}
+                  onChange={(e) => setManualDraft((d) => ({ ...d, quantity: e.target.value }))}
+                  style={modalFieldStyle}
+                />
+              </label>
+            </div>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Estado de pago
+              <select
+                value={manualDraft.financial_status}
+                onChange={(e) =>
+                  setManualDraft((d) => ({
+                    ...d,
+                    financial_status: e.target.value as ManualCreateDraft['financial_status'],
+                  }))
+                }
+                style={{ ...modalFieldStyle, cursor: 'pointer' }}
+              >
+                <option value="pending">Pendiente de pago</option>
+                <option value="unpaid">Sin pagar</option>
+                <option value="paid">Pagado</option>
+              </select>
+            </label>
+            <p style={{ margin: '18px 0 8px', fontSize: 11, fontWeight: 700, color: ds.textSecondary, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+              Envío (opcional)
+            </p>
+            <label style={{ ...labelStyle, display: 'block' }}>
+              Departamento / provincia
+              <input
+                type="text"
+                value={manualDraft.province}
+                onChange={(e) => setManualDraft((d) => ({ ...d, province: e.target.value }))}
+                style={modalFieldStyle}
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Ciudad
+              <input
+                type="text"
+                value={manualDraft.city}
+                onChange={(e) => setManualDraft((d) => ({ ...d, city: e.target.value }))}
+                style={modalFieldStyle}
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Dirección
+              <input
+                type="text"
+                value={manualDraft.address1}
+                onChange={(e) => setManualDraft((d) => ({ ...d, address1: e.target.value }))}
+                style={modalFieldStyle}
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Dirección línea 2
+              <input
+                type="text"
+                value={manualDraft.address2}
+                onChange={(e) => setManualDraft((d) => ({ ...d, address2: e.target.value }))}
+                style={modalFieldStyle}
+              />
+            </label>
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 14 }}>
+              <label style={{ ...labelStyle, display: 'block' }}>
+                Código postal
+                <input
+                  type="text"
+                  value={manualDraft.zip}
+                  onChange={(e) => setManualDraft((d) => ({ ...d, zip: e.target.value }))}
+                  style={modalFieldStyle}
+                />
+              </label>
+              <label style={{ ...labelStyle, display: 'block' }}>
+                País
+                <input
+                  type="text"
+                  value={manualDraft.country}
+                  onChange={(e) => setManualDraft((d) => ({ ...d, country: e.target.value }))}
+                  style={modalFieldStyle}
+                />
+              </label>
+            </div>
+            <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                disabled={manualSaving}
+                onClick={() => {
+                  setManualModalOpen(false);
+                  setManualDraft(emptyManualDraft());
+                  setManualError('');
+                }}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textSecondary,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: manualSaving ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={manualSaving}
+                onClick={() => void submitManualOrder()}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: ds.brand,
+                  color: '#fff',
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: manualSaving ? 'wait' : 'pointer',
+                  opacity: manualSaving ? 0.85 : 1,
+                }}
+              >
+                {manualSaving ? 'Creando…' : 'Crear pedido'}
               </button>
             </div>
           </div>
