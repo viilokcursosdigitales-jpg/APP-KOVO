@@ -2661,6 +2661,130 @@ function calculateOrderManualCosts(order, pricingMap, titleToProductIdMap) {
   };
 }
 
+/**
+ * Reparte ventas, costos y flete del pedido entre productos (líneas) por participación en ingreso de líneas.
+ * Devuelve Map productKey -> acumulados para agregar por día.
+ */
+function gananciaProductContributionsForOrder(order, pricingMap, titleToProductIdMap) {
+  const amt = parseFloat(String(order?.total || '0').replace(',', '.'));
+  if (!Number.isFinite(amt) || amt < 0) return null;
+  const costs = calculateOrderManualCosts(order, pricingMap, titleToProductIdMap);
+  const effPct = Number.isFinite(costs.deliveryEffectivenessPct) ? costs.deliveryEffectivenessPct : 100;
+  const orderVentasEntregadas = amt * (effPct / 100);
+  const detail = Array.isArray(order?.lineItemsDetail) ? order.lineItemsDetail : [];
+  const lines = [];
+  for (const li of detail) {
+    if (!li || typeof li !== 'object') continue;
+    let pid = Number(li.product_id);
+    if (!Number.isFinite(pid) || pid <= 0) {
+      const keyT = normalizeLineItemLookupKey(li.title || li.name || '');
+      if (keyT && titleToProductIdMap instanceof Map) {
+        const mappedPid = Number(titleToProductIdMap.get(keyT));
+        if (Number.isFinite(mappedPid) && mappedPid > 0) pid = mappedPid;
+      }
+    }
+    const qty = Number.parseInt(String(li.quantity ?? 0), 10);
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    const price = parseFloat(String(li.price ?? '0').replace(',', '.'));
+    const lineRev = Number.isFinite(price) && price >= 0 ? price * qty : 0;
+    const label = String(li.title || li.name || 'Producto').trim() || 'Producto';
+    const pk = Number.isFinite(pid) && pid > 0 ? `p:${pid}` : `t:${normalizeLineItemLookupKey(label)}`;
+    lines.push({ pk, label, qty, lineRev, pid: Number.isFinite(pid) && pid > 0 ? pid : null });
+  }
+  if (!lines.length) {
+    const k = '__sin_lineas__';
+    return {
+      contrib: new Map([
+        [
+          k,
+          {
+            label: 'Sin líneas / otro',
+            product_id: null,
+            ventas_despachadas: amt,
+            ventas_entregadas: orderVentasEntregadas,
+            costo_producto: costs.productCost,
+            costo_entregado: costs.productDeliveredCost,
+            flete: costs.avgFreightCost,
+            qty: 0,
+            pedidos: 1,
+          },
+        ],
+      ]),
+    };
+  }
+  let totalRev = 0;
+  for (const L of lines) totalRev += L.lineRev;
+  const n = lines.length;
+  const contrib = new Map();
+  for (const L of lines) {
+    const share = totalRev > 0 ? L.lineRev / totalRev : 1 / n;
+    const vd = share * amt;
+    const ve = share * orderVentasEntregadas;
+    const fl = share * costs.avgFreightCost;
+    const pricing = L.pid != null ? pricingMap.get(L.pid) : null;
+    const lineEffRaw = pricing?.delivery_effectiveness_pct;
+    const lineEff =
+      lineEffRaw != null && Number.isFinite(Number(lineEffRaw))
+        ? Math.min(100, Math.max(0, Number(lineEffRaw)))
+        : 100;
+    let lineProductCost = 0;
+    let lineCostDelivered = 0;
+    if (pricing?.manual_product_price != null && Number.isFinite(pricing.manual_product_price)) {
+      lineProductCost = pricing.manual_product_price * L.qty;
+      lineCostDelivered = lineProductCost * (lineEff / 100);
+    }
+    const prev = contrib.get(L.pk);
+    if (prev) {
+      prev.ventas_despachadas += vd;
+      prev.ventas_entregadas += ve;
+      prev.costo_producto += lineProductCost;
+      prev.costo_entregado += lineCostDelivered;
+      prev.flete += fl;
+      prev.qty += L.qty;
+    } else {
+      contrib.set(L.pk, {
+        label: L.label,
+        product_id: L.pid,
+        ventas_despachadas: vd,
+        ventas_entregadas: ve,
+        costo_producto: lineProductCost,
+        costo_entregado: lineCostDelivered,
+        flete: fl,
+        qty: L.qty,
+        pedidos: 1,
+      });
+    }
+  }
+  return { contrib };
+}
+
+function gananciaMergeProductDay(innerMap, contrib) {
+  if (!contrib || !(contrib instanceof Map)) return;
+  for (const [pk, row] of contrib) {
+    const cur = innerMap.get(pk) || {
+      label: row.label,
+      product_id: row.product_id,
+      ventas_despachadas: 0,
+      ventas_entregadas: 0,
+      costo_producto: 0,
+      costo_entregado: 0,
+      flete: 0,
+      qty: 0,
+      pedidos: 0,
+    };
+    cur.label = row.label || cur.label;
+    if (row.product_id != null) cur.product_id = row.product_id;
+    cur.ventas_despachadas += row.ventas_despachadas;
+    cur.ventas_entregadas += row.ventas_entregadas;
+    cur.costo_producto += row.costo_producto;
+    cur.costo_entregado += row.costo_entregado;
+    cur.flete += row.flete;
+    cur.qty += row.qty;
+    cur.pedidos += row.pedidos;
+    innerMap.set(pk, cur);
+  }
+}
+
 function shopifyConfigured() {
   return Boolean(SHOPIFY_API_KEY && SHOPIFY_API_SECRET && SHOPIFY_REDIRECT_URI);
 }
@@ -3447,6 +3571,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         available_months,
         months_applied: requested,
         days: [],
+        product_options: [],
       });
     }
 
@@ -3520,6 +3645,17 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       costoFletePromedioByDay.set(k, 0);
     }
 
+    /** @type {Map<string, Map<string, object>>} */
+    const productByDay = new Map();
+    const touchDayProducts = (dayKey) => {
+      let inner = productByDay.get(dayKey);
+      if (!inner) {
+        inner = new Map();
+        productByDay.set(dayKey, inner);
+      }
+      return inner;
+    };
+
     const excludeFin = new Set(['voided', 'cancelled']);
     for (const o of normalized) {
       const t = Date.parse(String(o.createdAt || ''));
@@ -3560,6 +3696,8 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         key,
         (costoFletePromedioByDay.get(key) || 0) + costs.avgFreightCost,
       );
+      const pack = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap);
+      if (pack) gananciaMergeProductDay(touchDayProducts(key), pack.contrib);
     }
     for (const o of manualRows) {
       const key = moticoManualOrderAssignedYmd(o, iana);
@@ -3597,6 +3735,8 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         key,
         (costoFletePromedioByDay.get(key) || 0) + costs.avgFreightCost,
       );
+      const packM = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap);
+      if (packM) gananciaMergeProductDay(touchDayProducts(key), packM.contrib);
     }
 
     let spendByDay = {};
@@ -3666,6 +3806,26 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         utilidad =
           Math.round((ventasEntregadasTotal - gastoAds - costoProductoEntregado - costoFletePromedio) * 100) / 100;
       }
+      const innerProd = productByDay.get(dateStr);
+      let by_product = {};
+      if (innerProd && innerProd.size) {
+        by_product = Object.fromEntries(
+          [...innerProd.entries()].map(([pk, v]) => [
+            pk,
+            {
+              label: v.label,
+              product_id: v.product_id,
+              ventas_despachadas_total: Math.round(v.ventas_despachadas * 100) / 100,
+              ventas_entregadas_total: Math.round(v.ventas_entregadas * 100) / 100,
+              ventas_despachadas_pedidos: v.pedidos,
+              cantidad_producto_total: Math.round(v.qty * 100) / 100,
+              costo_producto_total: Math.round(v.costo_producto * 100) / 100,
+              costo_producto_entregado_total: Math.round(v.costo_entregado * 100) / 100,
+              costo_flete_promedio_total: Math.round(v.flete * 100) / 100,
+            },
+          ]),
+        );
+      }
       days.push({
         date: dateStr,
         ventas_despachadas_total: Math.round(ventasTotal * 100) / 100,
@@ -3678,8 +3838,24 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         gasto_publicitario_total: Math.round(gastoAds * 100) / 100,
         ganancia,
         utilidad,
+        by_product,
       });
     }
+
+    const productLabelByKey = new Map();
+    for (const inner of productByDay.values()) {
+      for (const [pk, v] of inner) {
+        if (!productLabelByKey.has(pk)) {
+          productLabelByKey.set(pk, { key: pk, label: String(v.label || pk), product_id: v.product_id ?? null });
+        } else {
+          const x = productLabelByKey.get(pk);
+          if (x && !x.product_id && v.product_id != null) x.product_id = v.product_id;
+        }
+      }
+    }
+    const product_options = [...productLabelByKey.values()].sort((a, b) =>
+      String(a.label).localeCompare(String(b.label), 'es', { sensitivity: 'base' }),
+    );
 
     res.json({
       shop_calendar_timezone: iana,
@@ -3691,6 +3867,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       available_months,
       months_applied: requested,
       days,
+      product_options,
     });
   } catch (e) {
     console.error(e);

@@ -4,6 +4,18 @@ import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
 
+type DayProductSlice = {
+  label: string;
+  product_id: number | null;
+  ventas_despachadas_total: number;
+  ventas_entregadas_total: number;
+  ventas_despachadas_pedidos: number;
+  cantidad_producto_total: number;
+  costo_producto_total: number;
+  costo_producto_entregado_total: number;
+  costo_flete_promedio_total: number;
+};
+
 type SeriesDayRow = {
   date: string;
   ventas_despachadas_total: number;
@@ -16,7 +28,10 @@ type SeriesDayRow = {
   gasto_publicitario_total: number;
   ganancia: number | null;
   utilidad: number | null;
+  by_product?: Record<string, DayProductSlice>;
 };
+
+type ProductOption = { key: string; label: string; product_id: number | null };
 
 type SeriesPayload = {
   shop_calendar_timezone?: string;
@@ -28,6 +43,7 @@ type SeriesPayload = {
   available_months?: string[];
   months_applied?: string[];
   days?: SeriesDayRow[];
+  product_options?: ProductOption[];
   error?: string;
   code?: string;
 };
@@ -75,6 +91,21 @@ function parsePercentInput(raw: string): number {
   const n = Number.parseFloat(String(raw || '').replace(',', '.'));
   if (!Number.isFinite(n) || n < 0) return 0;
   return n;
+}
+
+function metaAllocForProductDay(row: SeriesDayRow, productKey: string): number {
+  const slice = row.by_product?.[productKey];
+  if (!slice) return 0;
+  const veSlice = slice.ventas_entregadas_total || 0;
+  const veDay = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
+  if (veDay <= 0) return 0;
+  return row.gasto_publicitario_total * (veSlice / veDay);
+}
+
+function barColorForProductKey(key: string, index: number): string {
+  let h = index * 41;
+  for (let i = 0; i < key.length; i += 1) h = (h + key.charCodeAt(i) * 17) % 360;
+  return `hsl(${h}, 58%, 48%)`;
 }
 
 const cardBase: CSSProperties = {
@@ -135,6 +166,7 @@ export default function GananciaDiariaPage() {
   const skipSeriesEffectOnce = useRef(false);
   const appliedDefaultMonthsOnce = useRef(false);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
+  const [selectedProductKey, setSelectedProductKey] = useState('');
 
   const loadSeries = useCallback(async () => {
     setSeriesLoading(true);
@@ -195,6 +227,12 @@ export default function GananciaDiariaPage() {
     return () => document.removeEventListener('mousedown', onDown);
   }, [monthsPanelOpen]);
 
+  useEffect(() => {
+    const opts = seriesData?.product_options ?? [];
+    if (!selectedProductKey) return;
+    if (!opts.some((o) => o.key === selectedProductKey)) setSelectedProductKey('');
+  }, [seriesData?.product_options, selectedProductKey]);
+
   const seriesMetaNote = useMemo(() => {
     if (!seriesData?.meta_partial_errors?.length) return null;
     return seriesData.meta_partial_errors.map((e) => `${e.adAccountId}: ${e.error}`).join(' · ');
@@ -217,11 +255,86 @@ export default function GananciaDiariaPage() {
     setMonthsPanelOpen(false);
   };
 
-  const days = seriesData?.days ?? [];
+  const baseDays = seriesData?.days ?? [];
+  const productOptions = seriesData?.product_options ?? [];
   const seriesVentasCur = seriesData?.ventas_currency;
   const seriesMetaCur = seriesData?.meta_currency;
   const comparable = seriesData?.ganancia_comparable;
   const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
+
+  const productColorMap = useMemo(() => {
+    const m = new Map<string, string>();
+    productOptions.forEach((o, i) => m.set(o.key, barColorForProductKey(o.key, i)));
+    return m;
+  }, [productOptions]);
+
+  const displayRows = useMemo(() => {
+    if (!selectedProductKey) return baseDays;
+    return baseDays.map((row) => {
+      const s = row.by_product?.[selectedProductKey];
+      if (!s) {
+        return {
+          ...row,
+          ventas_despachadas_total: 0,
+          ventas_entregadas_total: 0,
+          ventas_despachadas_pedidos: 0,
+          cantidad_producto_total: 0,
+          costo_producto_total: 0,
+          costo_producto_entregado_total: 0,
+          costo_flete_promedio_total: 0,
+          gasto_publicitario_total: 0,
+          ganancia: comparable ? 0 : null,
+          utilidad: comparable ? 0 : null,
+        };
+      }
+      const metaP = metaAllocForProductDay(row, selectedProductKey);
+      const ve = s.ventas_entregadas_total || 0;
+      const cpe = s.costo_producto_entregado_total || s.costo_producto_total || 0;
+      const fl = s.costo_flete_promedio_total || 0;
+      const utilidadBase =
+        comparable && Number.isFinite(ve) ? Math.round((ve - metaP - cpe - fl) * 100) / 100 : null;
+      const vd = s.ventas_despachadas_total || 0;
+      const gananciaRow = comparable ? Math.round((vd - metaP) * 100) / 100 : null;
+      return {
+        ...row,
+        ventas_despachadas_total: s.ventas_despachadas_total,
+        ventas_entregadas_total: s.ventas_entregadas_total,
+        ventas_despachadas_pedidos: s.ventas_despachadas_pedidos,
+        cantidad_producto_total: s.cantidad_producto_total,
+        costo_producto_total: s.costo_producto_total,
+        costo_producto_entregado_total: s.costo_producto_entregado_total,
+        costo_flete_promedio_total: s.costo_flete_promedio_total,
+        gasto_publicitario_total: metaP,
+        ganancia: gananciaRow,
+        utilidad: utilidadBase,
+      };
+    });
+  }, [baseDays, selectedProductKey, comparable, adminPercent]);
+
+  const productUtilidadChart = useMemo(() => {
+    if (!comparable || !baseDays.length || !productOptions.length) return [];
+    const rows: { key: string; label: string; utilidad: number }[] = [];
+    for (const opt of productOptions) {
+      let u = 0;
+      for (const row of baseDays) {
+        const slice = row.by_product?.[opt.key];
+        if (!slice) continue;
+        const ve = slice.ventas_entregadas_total || 0;
+        const metaP = metaAllocForProductDay(row, opt.key);
+        const cpe = slice.costo_producto_entregado_total || slice.costo_producto_total || 0;
+        const fl = slice.costo_flete_promedio_total || 0;
+        u += ve - metaP - cpe - fl - ve * (adminPercent / 100);
+      }
+      rows.push({ key: opt.key, label: opt.label, utilidad: Math.round(u * 100) / 100 });
+    }
+    return rows.sort((a, b) => b.utilidad - a.utilidad);
+  }, [baseDays, productOptions, comparable, adminPercent]);
+
+  const chartMaxAbs = useMemo(() => {
+    let m = 1;
+    for (const r of productUtilidadChart) m = Math.max(m, Math.abs(r.utilidad));
+    return m;
+  }, [productUtilidadChart]);
 
   const totals = useMemo(() => {
     let v = 0;
@@ -235,7 +348,7 @@ export default function GananciaDiariaPage() {
     let g = 0;
     let ganSum = 0;
     let utiSum = 0;
-    for (const row of days) {
+    for (const row of displayRows) {
       v += row.ventas_despachadas_total;
       ve += row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
       p += row.ventas_despachadas_pedidos;
@@ -265,7 +378,7 @@ export default function GananciaDiariaPage() {
           ? Math.round((ve - g - cpe - cf - ga) * 100) / 100
           : null,
     };
-  }, [days, comparable, adminPercent]);
+  }, [displayRows, comparable, adminPercent]);
 
   const utilidadKpiValue =
     totals.utilidadNeta != null && Number.isFinite(totals.utilidadNeta) ? totals.utilidadNeta : null;
@@ -317,7 +430,47 @@ export default function GananciaDiariaPage() {
           <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: ds.textPrimary, flex: '1 1 auto' }}>
               Detalle por día
+              {selectedProductKey ? (
+                <span style={{ display: 'block', fontSize: 11, fontWeight: 500, color: ds.textMuted, marginTop: 4 }}>
+                  Filtrado: {productOptions.find((o) => o.key === selectedProductKey)?.label || selectedProductKey}
+                </span>
+              ) : null}
             </h2>
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12,
+                color: ds.textSecondary,
+                fontWeight: 600,
+              }}
+            >
+              Producto
+              <select
+                value={selectedProductKey}
+                onChange={(e) => setSelectedProductKey(e.target.value)}
+                disabled={!productOptions.length || seriesLoading}
+                style={{
+                  minWidth: 200,
+                  maxWidth: 280,
+                  padding: '7px 9px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textPrimary,
+                  fontSize: 12,
+                }}
+              >
+                <option value="">Todos</option>
+                {productOptions.map((o) => (
+                  <option key={o.key} value={o.key}>
+                    {o.label}
+                    {o.product_id != null ? ` (#${o.product_id})` : ''}
+                  </option>
+                ))}
+              </select>
+            </label>
             <label
               style={{
                 display: 'inline-flex',
@@ -477,6 +630,81 @@ export default function GananciaDiariaPage() {
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textHint }}>Meta (tabla): {seriesMetaNote}</p>
           ) : null}
 
+          {!seriesLoading && comparable && productUtilidadChart.length > 0 ? (
+            <div style={{ ...cardBase, marginBottom: 16, border: `1px solid ${ds.borderCard}` }}>
+              <div style={{ fontSize: 14, fontWeight: 700, color: ds.textPrimary, marginBottom: 6 }}>
+                Utilidad por producto (período)
+              </div>
+              <p style={{ margin: '0 0 14px', fontSize: 11, color: ds.textMuted, lineHeight: 1.45 }}>
+                Reparto por líneas de pedido despachados; Meta del día se asigna a cada producto según su participación
+                en ventas entregadas ese día. Misma lógica que la tabla y el % administrativo aplicado.
+              </p>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+                {productUtilidadChart.map((r) => {
+                  const w = chartMaxAbs > 0 ? (Math.abs(r.utilidad) / chartMaxAbs) * 100 : 0;
+                  const col = productColorMap.get(r.key) || '#6c47ff';
+                  return (
+                    <div
+                      key={r.key}
+                      style={{
+                        display: 'grid',
+                        gridTemplateColumns: 'minmax(120px, 1fr) minmax(80px, 3fr) auto',
+                        alignItems: 'center',
+                        gap: 12,
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 12,
+                          color: ds.textSecondary,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                        title={r.label}
+                      >
+                        {r.label}
+                      </div>
+                      <div
+                        style={{
+                          height: 24,
+                          background: ds.bgSubtle,
+                          borderRadius: 8,
+                          overflow: 'hidden',
+                          border: `1px solid ${ds.borderRow}`,
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: '100%',
+                            width: `${w}%`,
+                            minWidth: r.utilidad !== 0 ? 4 : 0,
+                            background: col,
+                            borderRadius: 8,
+                            opacity: r.utilidad < 0 ? 0.75 : 1,
+                            boxShadow: r.utilidad < 0 ? 'inset 0 0 0 1px rgba(220,38,38,0.35)' : undefined,
+                          }}
+                        />
+                      </div>
+                      <div
+                        style={{
+                          fontSize: 12,
+                          fontWeight: 700,
+                          fontVariantNumeric: 'tabular-nums',
+                          color: r.utilidad < 0 ? ds.dangerText : ds.textPrimary,
+                          textAlign: 'right',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
+                        {formatMoney(r.utilidad, seriesVentasCur)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
           <div
             style={{
               ...cardBase,
@@ -557,7 +785,7 @@ export default function GananciaDiariaPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {days.map((row) => {
+                    {displayRows.map((row) => {
                       const ventasEntregadasRow = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
                       const costoProductoEntregadoRow =
                         row.costo_producto_entregado_total || row.costo_producto_total || 0;
