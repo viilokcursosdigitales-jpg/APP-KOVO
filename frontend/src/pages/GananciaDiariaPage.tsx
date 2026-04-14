@@ -149,6 +149,25 @@ const thTdColSizing: CSSProperties = {
 
 const thColLeft: CSSProperties = { ...thStyle, ...thTdColSizing };
 const thColRight: CSSProperties = { ...thRight, ...thTdColSizing };
+
+/** Encabezados: texto completo o varias líneas; sin nowrap para poder partir palabras con <br />. */
+const thHeadPad: CSSProperties = {
+  paddingTop: 8,
+  paddingBottom: 8,
+  paddingLeft: 20,
+  paddingRight: 20,
+  boxSizing: 'border-box',
+  width: '1%',
+  minWidth: 0,
+  whiteSpace: 'normal',
+  wordBreak: 'break-word',
+  lineHeight: 1.25,
+  hyphens: 'auto',
+  verticalAlign: 'bottom',
+};
+
+const thColHeadLeft: CSSProperties = { ...thStyle, ...thHeadPad };
+const thColHeadRight: CSSProperties = { ...thRight, ...thHeadPad };
 const tdColLeft: CSSProperties = { ...tdStyle, ...thTdColSizing, fontWeight: 500 };
 const tdColRight: CSSProperties = {
   ...tdStyle,
@@ -659,49 +678,49 @@ export default function GananciaDiariaPage() {
                 <table style={tableStyle}>
                   <thead>
                     <tr style={{ background: '#6c47ff' }}>
-                      <th style={thColLeft}>Día</th>
-                      <th style={thColRight}>
-                        Vta.
+                      <th style={thColHeadLeft}>Día</th>
+                      <th style={thColHeadRight}>
+                        Ventas
                         <br />
-                        desp.
+                        despachadas
                       </th>
-                      <th style={thColRight}>
-                        Vta.
+                      <th style={thColHeadRight}>
+                        Ventas
                         <br />
-                        entreg.
+                        entregadas
                       </th>
-                      <th style={thColRight}>Ped.</th>
-                      <th style={thColRight}>
-                        Cant.
+                      <th style={thColHeadRight}>Pedidos</th>
+                      <th style={thColHeadRight}>
+                        Cantidad
                         <br />
-                        prod.
+                        producto
                       </th>
-                      <th style={thColRight}>
-                        G.
+                      <th style={thColHeadRight}>
+                        Gasto
                         <br />
-                        admin.
+                        administrativo
                       </th>
-                      <th style={thColRight}>
-                        Cto.
+                      <th style={thColHeadRight}>
+                        Costo
                         <br />
-                        prod.
+                        producto
                       </th>
-                      <th style={thColRight}>
-                        Cto.
+                      <th style={thColHeadRight}>
+                        Costo
                         <br />
-                        entreg.
+                        entregado
                       </th>
-                      <th style={thColRight}>
-                        Fl.
+                      <th style={thColHeadRight}>
+                        Flete
                         <br />
-                        prom.
+                        promedio
                       </th>
-                      <th style={thColRight}>
+                      <th style={thColHeadRight}>
                         Gasto
                         <br />
                         Meta
                       </th>
-                      <th style={thColRight}>Util.</th>
+                      <th style={thColHeadRight}>Utilidad</th>
                     </tr>
                   </thead>
                   <tbody>
