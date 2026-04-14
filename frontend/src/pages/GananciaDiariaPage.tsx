@@ -530,9 +530,22 @@ export default function GananciaDiariaPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {days.map((row) => (
-                      <tr key={row.date}>
-                        <td style={{ ...tdStyle, fontWeight: 500 }}>{formatTableDate(row.date)}</td>
+                    {days.map((row) => {
+                      const utilidadRow =
+                        comparable && Number.isFinite(row.utilidad as number)
+                          ? (row.utilidad as number) - (row.ventas_despachadas_total || 0) * (adminPercent / 100)
+                          : null;
+                      const rowBg =
+                        utilidadRow == null
+                          ? 'transparent'
+                          : utilidadRow < 0
+                            ? '#fef2f2'
+                            : utilidadRow > 0
+                              ? '#f0fdf4'
+                              : 'transparent';
+                      return (
+                        <tr key={row.date} style={rowBg !== 'transparent' ? { background: rowBg } : undefined}>
+                          <td style={{ ...tdStyle, fontWeight: 500 }}>{formatTableDate(row.date)}</td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                           {formatMoney(row.ventas_despachadas_total, seriesVentasCur)}
                         </td>
@@ -554,13 +567,14 @@ export default function GananciaDiariaPage() {
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                           {formatMoney(row.gasto_publicitario_total, seriesMetaCur || seriesVentasCur)}
                         </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                          {row.utilidad != null && Number.isFinite(row.utilidad)
-                            ? formatMoney(row.utilidad, seriesVentasCur)
+                          <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {utilidadRow != null && Number.isFinite(utilidadRow)
+                            ? formatMoney(utilidadRow, seriesVentasCur)
                             : '—'}
-                        </td>
-                      </tr>
-                    ))}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                   <tfoot>
                     <tr style={{ background: ds.bgSubtle }}>
