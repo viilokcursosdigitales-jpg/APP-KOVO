@@ -2563,6 +2563,7 @@ async function loadProductManualPricingMap(organizationId, productIds) {
 function calculateOrderManualCosts(order, pricingMap) {
   const detail = Array.isArray(order?.lineItemsDetail) ? order.lineItemsDetail : [];
   let productCost = 0;
+  let productDeliveredCost = 0;
   const freightByProduct = new Map();
   let deliveryEffectivenessWeight = 0;
   let deliveryEffectivenessQty = 0;
@@ -2573,8 +2574,15 @@ function calculateOrderManualCosts(order, pricingMap) {
     const qty = Number.parseInt(String(li.quantity ?? 0), 10);
     if (!Number.isFinite(qty) || qty <= 0) continue;
     const pricing = pricingMap.get(pid);
+    const deliveryEffectivenessRaw = pricing?.delivery_effectiveness_pct;
+    const deliveryEffectivenessPct =
+      deliveryEffectivenessRaw != null && Number.isFinite(Number(deliveryEffectivenessRaw))
+        ? Math.min(100, Math.max(0, Number(deliveryEffectivenessRaw)))
+        : 100;
     if (pricing?.manual_product_price != null && Number.isFinite(pricing.manual_product_price)) {
-      productCost += pricing.manual_product_price * qty;
+      const lineProductCost = pricing.manual_product_price * qty;
+      productCost += lineProductCost;
+      productDeliveredCost += lineProductCost * (deliveryEffectivenessPct / 100);
     }
     if (pricing?.manual_avg_freight_price != null && Number.isFinite(pricing.manual_avg_freight_price)) {
       // Flete promedio: se aplica por pedido (no por cantidad de unidades).
@@ -2583,11 +2591,6 @@ function calculateOrderManualCosts(order, pricingMap) {
         freightByProduct.set(pid, pricing.manual_avg_freight_price);
       }
     }
-    const deliveryEffectivenessRaw = pricing?.delivery_effectiveness_pct;
-    const deliveryEffectivenessPct =
-      deliveryEffectivenessRaw != null && Number.isFinite(Number(deliveryEffectivenessRaw))
-        ? Math.min(100, Math.max(0, Number(deliveryEffectivenessRaw)))
-        : 100;
     deliveryEffectivenessWeight += deliveryEffectivenessPct * qty;
     deliveryEffectivenessQty += qty;
   }
@@ -2601,6 +2604,7 @@ function calculateOrderManualCosts(order, pricingMap) {
     deliveryEffectivenessQty > 0 ? deliveryEffectivenessWeight / deliveryEffectivenessQty : 100;
   return {
     productCost,
+    productDeliveredCost,
     avgFreightCost,
     deliveryEffectivenessPct,
   };
@@ -3217,6 +3221,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     let ventasEntregadasTotal = 0;
     let ventasPedidos = 0;
     let costoProductoTotal = 0;
+    let costoProductoEntregadoTotal = 0;
     let costoFletePromedioTotal = 0;
     for (const o of normalized) {
       const lf = localMap.get(Number(o.id));
@@ -3234,6 +3239,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       const costs = calculateOrderManualCosts(o, manualPricingMap);
       ventasEntregadasTotal += amt * ((costs.deliveryEffectivenessPct ?? 100) / 100);
       costoProductoTotal += costs.productCost;
+      costoProductoEntregadoTotal += costs.productDeliveredCost;
       costoFletePromedioTotal += costs.avgFreightCost;
     }
 
@@ -3280,7 +3286,8 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     if (sameCurrency && shopC) {
       ganancia = Math.round((ventasTotal - gastoAds) * 100) / 100;
       utilidad =
-        Math.round((ventasEntregadasTotal - gastoAds - costoProductoTotal - costoFletePromedioTotal) * 100) / 100;
+        Math.round((ventasEntregadasTotal - gastoAds - costoProductoEntregadoTotal - costoFletePromedioTotal) * 100) /
+        100;
     } else if (gastoAds > 0 && shopC && !metaC) {
       warning =
         'Hay gasto en Meta pero no se pudo determinar la divisa de la cuenta; no se calcula la ganancia automática.';
@@ -3297,6 +3304,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       ventas_entregadas_total: Math.round(ventasEntregadasTotal * 100) / 100,
       ventas_despachadas_pedidos: ventasPedidos,
       costo_producto_total: Math.round(costoProductoTotal * 100) / 100,
+      costo_producto_entregado_total: Math.round(costoProductoEntregadoTotal * 100) / 100,
       costo_flete_promedio_total: Math.round(costoFletePromedioTotal * 100) / 100,
       ventas_currency: shopCurrency || null,
       gasto_publicitario_total: Math.round(gastoAds * 100) / 100,
@@ -3401,6 +3409,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     const pedidosByDay = new Map();
     const qtyByDay = new Map();
     const costoProductoByDay = new Map();
+    const costoProductoEntregadoByDay = new Map();
     const costoFletePromedioByDay = new Map();
     for (const k of sortedAsc) {
       ventasByDay.set(k, 0);
@@ -3408,6 +3417,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       pedidosByDay.set(k, 0);
       qtyByDay.set(k, 0);
       costoProductoByDay.set(k, 0);
+      costoProductoEntregadoByDay.set(k, 0);
       costoFletePromedioByDay.set(k, 0);
     }
 
@@ -3443,6 +3453,10 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         (ventasEntregadasByDay.get(key) || 0) + amt * ((costs.deliveryEffectivenessPct ?? 100) / 100),
       );
       costoProductoByDay.set(key, (costoProductoByDay.get(key) || 0) + costs.productCost);
+      costoProductoEntregadoByDay.set(
+        key,
+        (costoProductoEntregadoByDay.get(key) || 0) + costs.productDeliveredCost,
+      );
       costoFletePromedioByDay.set(
         key,
         (costoFletePromedioByDay.get(key) || 0) + costs.avgFreightCost,
@@ -3506,6 +3520,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       const ventasPedidos = pedidosByDay.get(dateStr) || 0;
       const cantidadProductoTotal = qtyByDay.get(dateStr) || 0;
       const costoProducto = costoProductoByDay.get(dateStr) || 0;
+      const costoProductoEntregado = costoProductoEntregadoByDay.get(dateStr) || 0;
       const costoFletePromedio = costoFletePromedioByDay.get(dateStr) || 0;
       const gastoAds = Number(spendByDay[dateStr] || 0);
       let ganancia = null;
@@ -3513,7 +3528,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       if (gananciaComparable) {
         ganancia = Math.round((ventasTotal - gastoAds) * 100) / 100;
         utilidad =
-          Math.round((ventasEntregadasTotal - gastoAds - costoProducto - costoFletePromedio) * 100) / 100;
+          Math.round((ventasEntregadasTotal - gastoAds - costoProductoEntregado - costoFletePromedio) * 100) / 100;
       }
       days.push({
         date: dateStr,
@@ -3522,6 +3537,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         ventas_despachadas_pedidos: ventasPedidos,
         cantidad_producto_total: Math.round(cantidadProductoTotal * 100) / 100,
         costo_producto_total: Math.round(costoProducto * 100) / 100,
+        costo_producto_entregado_total: Math.round(costoProductoEntregado * 100) / 100,
         costo_flete_promedio_total: Math.round(costoFletePromedio * 100) / 100,
         gasto_publicitario_total: Math.round(gastoAds * 100) / 100,
         ganancia,

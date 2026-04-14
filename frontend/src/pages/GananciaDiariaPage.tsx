@@ -11,6 +11,7 @@ type SeriesDayRow = {
   ventas_despachadas_pedidos: number;
   cantidad_producto_total: number;
   costo_producto_total: number;
+  costo_producto_entregado_total: number;
   costo_flete_promedio_total: number;
   gasto_publicitario_total: number;
   ganancia: number | null;
@@ -214,6 +215,7 @@ export default function GananciaDiariaPage() {
     let p = 0;
     let q = 0;
     let cp = 0;
+    let cpe = 0;
     let cf = 0;
     let ga = 0;
     let g = 0;
@@ -225,6 +227,7 @@ export default function GananciaDiariaPage() {
       p += row.ventas_despachadas_pedidos;
       q += row.cantidad_producto_total || 0;
       cp += row.costo_producto_total || 0;
+      cpe += row.costo_producto_entregado_total || row.costo_producto_total || 0;
       cf += row.costo_flete_promedio_total || 0;
       ga += (row.ventas_entregadas_total || row.ventas_despachadas_total || 0) * (adminPercent / 100);
       g += row.gasto_publicitario_total;
@@ -237,6 +240,7 @@ export default function GananciaDiariaPage() {
       pedidos: p,
       cantidadProducto: q,
       costoProducto: cp,
+      costoProductoEntregado: cpe,
       costoFletePromedio: cf,
       gastoAdministrativo: ga,
       gasto: g,
@@ -244,7 +248,7 @@ export default function GananciaDiariaPage() {
       utilidad: comparable ? Math.round(utiSum * 100) / 100 : null,
       utilidadNeta:
         comparable
-          ? Math.round((ve - g - cp - cf - ga) * 100) / 100
+          ? Math.round((ve - g - cpe - cf - ga) * 100) / 100
           : null,
     };
   }, [days, comparable, adminPercent]);
@@ -334,7 +338,7 @@ export default function GananciaDiariaPage() {
                   : '—'}
               </div>
               <div style={{ fontSize: 12, color: ds.textSecondary, marginTop: 6 }}>
-                Ventas entregadas − gasto Meta − costo producto − flete promedio − gasto administrativo
+                Ventas entregadas − gasto Meta − costo producto entregado − flete promedio − gasto administrativo
               </div>
             </div>
           </div>
@@ -529,6 +533,7 @@ export default function GananciaDiariaPage() {
                       <th style={{ ...thStyle, textAlign: 'right' }}>Cantidad producto</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Gasto administrativo</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Costo producto</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Costo prod. entreg.</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Flete prom.</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Gasto Meta</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Utilidad</th>
@@ -537,6 +542,8 @@ export default function GananciaDiariaPage() {
                   <tbody>
                     {days.map((row) => {
                       const ventasEntregadasRow = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
+                      const costoProductoEntregadoRow =
+                        row.costo_producto_entregado_total || row.costo_producto_total || 0;
                       const utilidadRow =
                         comparable && Number.isFinite(row.utilidad as number)
                           ? (row.utilidad as number) - ventasEntregadasRow * (adminPercent / 100)
@@ -569,6 +576,9 @@ export default function GananciaDiariaPage() {
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                           {formatMoney(row.costo_producto_total || 0, seriesVentasCur)}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {formatMoney(costoProductoEntregadoRow, seriesVentasCur)}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                           {formatMoney(row.costo_flete_promedio_total || 0, seriesVentasCur)}
@@ -605,6 +615,9 @@ export default function GananciaDiariaPage() {
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                         {formatMoney(totals.costoProducto, seriesVentasCur)}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {formatMoney(totals.costoProductoEntregado, seriesVentasCur)}
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                         {formatMoney(totals.costoFletePromedio, seriesVentasCur)}
