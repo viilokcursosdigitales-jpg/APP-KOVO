@@ -136,11 +136,8 @@ export async function downloadMoticoGuidesLayoutExcel(
     'DIRECCIÓN',
     'CIUDAD',
     'PRODUCTO',
-    'DISEÑO',
-    'COLOR',
-    'NÚMERO',
+    'DISEÑO/COLOR',
     'TALLA',
-    'NOMBRE',
     'COBRO',
     'OBSERVACION',
   ];
@@ -154,21 +151,7 @@ export async function downloadMoticoGuidesLayoutExcel(
     cell.border = THIN_BORDER;
   });
 
-  ws.columns = [
-    { width: 5 },
-    { width: 22 },
-    { width: 14 },
-    { width: 36 },
-    { width: 14 },
-    { width: 14 },
-    { width: 22 },
-    { width: 12 },
-    { width: 9 },
-    { width: 18 },
-    { width: 14 },
-    { width: 14 },
-    { width: 28 },
-  ];
+  ws.columns = [{ width: 5 }, { width: 22 }, { width: 14 }, { width: 36 }, { width: 14 }, { width: 22 }, { width: 24 }, { width: 12 }, { width: 14 }, { width: 28 }];
 
   let r = 2;
   for (const ord of orders) {
@@ -179,6 +162,7 @@ export async function downloadMoticoGuidesLayoutExcel(
 
     for (let i = 0; i < n; i++) {
       const line = ord.lines[i];
+      const disenoColor = [line.diseño, line.color].filter((x) => String(x || '').trim()).join(' / ');
       const row = ws.addRow([
         ord.orderIndex,
         ord.cliente,
@@ -186,11 +170,8 @@ export async function downloadMoticoGuidesLayoutExcel(
         ord.direccion,
         ord.ciudad,
         line.producto,
-        line.diseño,
-        line.color,
-        line.numero,
+        disenoColor,
         line.talla,
-        line.nombre,
         cobroStr,
         ord.observacion || '',
       ]);
@@ -198,7 +179,7 @@ export async function downloadMoticoGuidesLayoutExcel(
         cell.border = THIN_BORDER;
         if (col === 1 || col === 5) {
           cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-        } else if (col === 12) {
+        } else if (col === 9) {
           cell.alignment = { vertical: 'middle', horizontal: 'right', wrapText: true };
         } else {
           cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
@@ -208,22 +189,22 @@ export async function downloadMoticoGuidesLayoutExcel(
     }
 
     if (n > 1) {
-      for (const col of [1, 2, 3, 4, 5, 12, 13]) {
+      for (const col of [1, 2, 3, 4, 5, 9, 10]) {
         ws.mergeCells(startRow, col, endRow, col);
       }
-      for (const col of [1, 2, 3, 4, 5, 12, 13]) {
+      for (const col of [1, 2, 3, 4, 5, 9, 10]) {
         const cell = ws.getCell(startRow, col);
         cell.alignment = {
           ...cell.alignment,
           vertical: 'middle',
-          horizontal: col === 1 || col === 5 ? 'center' : col === 12 ? 'right' : 'left',
+          horizontal: col === 1 || col === 5 ? 'center' : col === 9 ? 'right' : 'left',
           wrapText: true,
         };
       }
     } else {
-      const cell = ws.getCell(startRow, 12);
+      const cell = ws.getCell(startRow, 9);
       cell.alignment = { vertical: 'middle', horizontal: 'right', wrapText: true };
-      const obsCell = ws.getCell(startRow, 13);
+      const obsCell = ws.getCell(startRow, 10);
       obsCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
     }
   }
