@@ -2056,6 +2056,15 @@ function parseMarketingTargetNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
+function parseManualPricingNum(v) {
+  if (v === null || v === undefined || v === '') return { ok: true, value: null };
+  const n = Number.parseFloat(String(v).replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) {
+    return { ok: false, value: null };
+  }
+  return { ok: true, value: n };
+}
+
 app.get('/api/shopify/product-marketing-targets', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const r = await pool.query(
@@ -2129,6 +2138,64 @@ app.put('/api/shopify/product-marketing-targets', verifyToken, scopeToOrganizati
     }
     console.error(e);
     res.status(500).json({ error: 'Error al guardar indicadores de marketing' });
+  }
+});
+
+app.put('/api/shopify/product-manual-pricing', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const pid = Number.parseInt(String(req.body?.product_id ?? ''), 10);
+    if (!Number.isFinite(pid)) {
+      return res.status(400).json({ error: 'product_id inválido' });
+    }
+    const productPriceParsed = parseManualPricingNum(req.body?.manual_product_price);
+    if (!productPriceParsed.ok) {
+      return res.status(400).json({ error: 'manual_product_price inválido' });
+    }
+    const freightPriceParsed = parseManualPricingNum(req.body?.manual_avg_freight_price);
+    if (!freightPriceParsed.ok) {
+      return res.status(400).json({ error: 'manual_avg_freight_price inválido' });
+    }
+    const manualProductPrice = productPriceParsed.value;
+    const manualAvgFreightPrice = freightPriceParsed.value;
+    if (manualProductPrice == null && manualAvgFreightPrice == null) {
+      await pool.query(
+        `DELETE FROM shopify_product_manual_pricing
+         WHERE organization_id = $1 AND shopify_product_id = $2`,
+        [req.organizationId, pid],
+      );
+      return res.json({
+        ok: true,
+        product_id: pid,
+        manual_product_price: null,
+        manual_avg_freight_price: null,
+      });
+    }
+    await pool.query(
+      `INSERT INTO shopify_product_manual_pricing
+        (organization_id, shopify_product_id, manual_product_price, manual_avg_freight_price, updated_at)
+       VALUES ($1, $2, $3, $4, now())
+       ON CONFLICT (organization_id, shopify_product_id) DO UPDATE SET
+         manual_product_price = EXCLUDED.manual_product_price,
+         manual_avg_freight_price = EXCLUDED.manual_avg_freight_price,
+         updated_at = now()`,
+      [req.organizationId, pid, manualProductPrice, manualAvgFreightPrice],
+    );
+    return res.json({
+      ok: true,
+      product_id: pid,
+      manual_product_price: manualProductPrice,
+      manual_avg_freight_price: manualAvgFreightPrice,
+    });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error:
+          'Falta la tabla shopify_product_manual_pricing. Reinicia el backend o aplica backend/db/schema.sql.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    return res.status(500).json({ error: 'Error al guardar precios manuales de inventario' });
   }
 });
 
@@ -4123,7 +4190,43 @@ app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, r
     if (!r.ok) {
       return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
     }
-    res.json(r.data);
+    const pricingByProductId = new Map();
+    try {
+      const pricingRes = await pool.query(
+        `SELECT shopify_product_id, manual_product_price, manual_avg_freight_price
+         FROM shopify_product_manual_pricing
+         WHERE organization_id = $1`,
+        [req.organizationId],
+      );
+      for (const rowPricing of pricingRes.rows) {
+        pricingByProductId.set(Number(rowPricing.shopify_product_id), {
+          manual_product_price:
+            rowPricing.manual_product_price != null ? Number(rowPricing.manual_product_price) : null,
+          manual_avg_freight_price:
+            rowPricing.manual_avg_freight_price != null ? Number(rowPricing.manual_avg_freight_price) : null,
+        });
+      }
+    } catch (pricingErr) {
+      if (!pricingErr || pricingErr.code !== '42P01') {
+        throw pricingErr;
+      }
+    }
+    const payload = r.data && typeof r.data === 'object' ? { ...r.data } : { products: [] };
+    const products = Array.isArray(payload.products) ? payload.products : [];
+    payload.products = products.map((product) => {
+      if (!product || typeof product !== 'object') return product;
+      const productId = Number(product.id);
+      const manual = pricingByProductId.get(productId) || {
+        manual_product_price: null,
+        manual_avg_freight_price: null,
+      };
+      return {
+        ...product,
+        manual_product_price: manual.manual_product_price,
+        manual_avg_freight_price: manual.manual_avg_freight_price,
+      };
+    });
+    res.json(payload);
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener productos' });

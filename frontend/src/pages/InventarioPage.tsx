@@ -27,6 +27,8 @@ type ShopifyProduct = {
   product_type?: string;
   images?: ShopifyImage[];
   variants?: ShopifyVariant[];
+  manual_product_price?: number | null;
+  manual_avg_freight_price?: number | null;
 };
 
 function stockVariant(q: number): StatusBadgeVariant {
@@ -84,9 +86,27 @@ function normalizeProducts(raw: unknown): ShopifyProduct[] {
       product_type: String(row.product_type || ''),
       variants,
       images,
+      manual_product_price:
+        row.manual_product_price == null ? null : Number.isFinite(Number(row.manual_product_price)) ? Number(row.manual_product_price) : null,
+      manual_avg_freight_price:
+        row.manual_avg_freight_price == null
+          ? null
+          : Number.isFinite(Number(row.manual_avg_freight_price))
+            ? Number(row.manual_avg_freight_price)
+            : null,
     });
   }
   return out;
+}
+
+type PricingDraft = {
+  productPrice: string;
+  avgFreightPrice: string;
+  dirty: boolean;
+};
+
+function toDraftAmount(value: number | null | undefined) {
+  return value == null ? '' : String(value);
 }
 
 export default function InventarioPage() {
@@ -95,6 +115,10 @@ export default function InventarioPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
+  const [pricingDrafts, setPricingDrafts] = useState<Record<number, PricingDraft>>({});
+  const [savingPricing, setSavingPricing] = useState<Record<number, boolean>>({});
+  const [pricingErrors, setPricingErrors] = useState<Record<number, string>>({});
+  const [pricingSaved, setPricingSaved] = useState<Record<number, boolean>>({});
 
   const loadInventory = useCallback(async (opts?: { silent?: boolean }) => {
     const silent = Boolean(opts?.silent);
@@ -155,9 +179,132 @@ export default function InventarioPage() {
         barcode: firstBarcode,
         imageUrl,
         imageCount: (p.images || []).filter((img) => (img.src || '').trim()).length,
+        manualProductPrice: p.manual_product_price ?? null,
+        manualAvgFreightPrice: p.manual_avg_freight_price ?? null,
       };
     });
   }, [products]);
+
+  useEffect(() => {
+    setPricingDrafts((prev) => {
+      const next: Record<number, PricingDraft> = {};
+      for (const row of viewRows) {
+        const prevDraft = prev[row.id];
+        if (prevDraft?.dirty) {
+          next[row.id] = prevDraft;
+          continue;
+        }
+        next[row.id] = {
+          productPrice: toDraftAmount(row.manualProductPrice),
+          avgFreightPrice: toDraftAmount(row.manualAvgFreightPrice),
+          dirty: false,
+        };
+      }
+      return next;
+    });
+  }, [viewRows]);
+
+  const setPricingDraftField = useCallback((productId: number, field: 'productPrice' | 'avgFreightPrice', value: string) => {
+    setPricingDrafts((prev) => {
+      const current = prev[productId] || { productPrice: '', avgFreightPrice: '', dirty: false };
+      return {
+        ...prev,
+        [productId]: {
+          ...current,
+          [field]: value,
+          dirty: true,
+        },
+      };
+    });
+    setPricingErrors((prev) => {
+      if (!prev[productId]) return prev;
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+    setPricingSaved((prev) => {
+      if (!prev[productId]) return prev;
+      const next = { ...prev };
+      delete next[productId];
+      return next;
+    });
+  }, []);
+
+  const saveManualPricing = useCallback(
+    async (productId: number) => {
+      const draft = pricingDrafts[productId];
+      const rawProductPrice = (draft?.productPrice || '').trim();
+      const rawAvgFreightPrice = (draft?.avgFreightPrice || '').trim();
+      const productPrice = rawProductPrice === '' ? null : Number.parseFloat(rawProductPrice.replace(',', '.'));
+      const avgFreightPrice = rawAvgFreightPrice === '' ? null : Number.parseFloat(rawAvgFreightPrice.replace(',', '.'));
+      if ((rawProductPrice !== '' && (!Number.isFinite(productPrice) || productPrice < 0)) || (rawAvgFreightPrice !== '' && (!Number.isFinite(avgFreightPrice) || avgFreightPrice < 0))) {
+        setPricingErrors((prev) => ({
+          ...prev,
+          [productId]: 'Los valores deben ser números válidos mayores o iguales a 0.',
+        }));
+        return;
+      }
+      setSavingPricing((prev) => ({ ...prev, [productId]: true }));
+      setPricingErrors((prev) => {
+        if (!prev[productId]) return prev;
+        const next = { ...prev };
+        delete next[productId];
+        return next;
+      });
+      try {
+        const res = await apiFetch('/api/shopify/product-manual-pricing', {
+          method: 'PUT',
+          body: JSON.stringify({
+            product_id: productId,
+            manual_product_price: productPrice,
+            manual_avg_freight_price: avgFreightPrice,
+          }),
+        });
+        const data = (await res.json().catch(() => ({}))) as {
+          error?: string;
+          manual_product_price?: number | null;
+          manual_avg_freight_price?: number | null;
+        };
+        if (!res.ok) {
+          setPricingErrors((prev) => ({
+            ...prev,
+            [productId]: typeof data.error === 'string' ? data.error : 'No se pudo guardar la configuración manual.',
+          }));
+          return;
+        }
+        const savedProductPrice = data.manual_product_price == null ? null : Number(data.manual_product_price);
+        const savedAvgFreightPrice = data.manual_avg_freight_price == null ? null : Number(data.manual_avg_freight_price);
+        setProducts((prev) =>
+          prev.map((p) =>
+            p.id === productId
+              ? {
+                  ...p,
+                  manual_product_price: savedProductPrice,
+                  manual_avg_freight_price: savedAvgFreightPrice,
+                }
+              : p,
+          ),
+        );
+        setPricingDrafts((prev) => ({
+          ...prev,
+          [productId]: {
+            productPrice: toDraftAmount(savedProductPrice),
+            avgFreightPrice: toDraftAmount(savedAvgFreightPrice),
+            dirty: false,
+          },
+        }));
+        setPricingSaved((prev) => ({ ...prev, [productId]: true }));
+      } catch {
+        setPricingErrors((prev) => ({
+          ...prev,
+          [productId]: 'Error de red al guardar la configuración manual.',
+        }));
+      } finally {
+        setSavingPricing((prev) => ({ ...prev, [productId]: false }));
+      }
+    },
+    [pricingDrafts],
+  );
 
   const subtitle = useMemo(() => {
     if (error) return 'Sincronización con Shopify con incidencias';
@@ -291,6 +438,85 @@ export default function InventarioPage() {
                 ) : null}
               </div>
             ) : null}
+            <div
+              style={{
+                marginTop: 12,
+                borderRadius: 10,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.bgSubtle,
+                padding: '10px 10px 9px',
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 600, color: ds.textPrimary, marginBottom: 8 }}>
+                Configuración manual de costos
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
+                <label style={{ fontSize: 10.5, color: ds.textMuted }}>
+                  Precio del producto
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={pricingDrafts[p.id]?.productPrice ?? ''}
+                    onChange={(e) => setPricingDraftField(p.id, 'productPrice', e.target.value)}
+                    placeholder="Ej: 49.90"
+                    style={{
+                      marginTop: 4,
+                      width: '100%',
+                      borderRadius: 8,
+                      border: `1px solid ${ds.borderCard}`,
+                      background: ds.bgCard,
+                      color: ds.textPrimary,
+                      fontSize: 12,
+                      padding: '7px 9px',
+                    }}
+                  />
+                </label>
+                <label style={{ fontSize: 10.5, color: ds.textMuted }}>
+                  Precio del flete promedio
+                  <input
+                    type="text"
+                    inputMode="decimal"
+                    value={pricingDrafts[p.id]?.avgFreightPrice ?? ''}
+                    onChange={(e) => setPricingDraftField(p.id, 'avgFreightPrice', e.target.value)}
+                    placeholder="Ej: 8.50"
+                    style={{
+                      marginTop: 4,
+                      width: '100%',
+                      borderRadius: 8,
+                      border: `1px solid ${ds.borderCard}`,
+                      background: ds.bgCard,
+                      color: ds.textPrimary,
+                      fontSize: 12,
+                      padding: '7px 9px',
+                    }}
+                  />
+                </label>
+              </div>
+              {pricingErrors[p.id] ? (
+                <div style={{ marginTop: 8, fontSize: 11, color: ds.dangerText }}>{pricingErrors[p.id]}</div>
+              ) : null}
+              {pricingSaved[p.id] ? (
+                <div style={{ marginTop: 8, fontSize: 11, color: ds.successText }}>Guardado correctamente.</div>
+              ) : null}
+              <button
+                type="button"
+                onClick={() => void saveManualPricing(p.id)}
+                disabled={Boolean(savingPricing[p.id])}
+                style={{
+                  marginTop: 9,
+                  padding: '7px 12px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textSecondary,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: savingPricing[p.id] ? 'wait' : 'pointer',
+                }}
+              >
+                {savingPricing[p.id] ? 'Guardando...' : 'Guardar precios'}
+              </button>
+            </div>
           </div>
         ))}
       </div>

@@ -151,6 +151,18 @@ CREATE TABLE IF NOT EXISTS shopify_product_marketing_targets (
 
 CREATE INDEX IF NOT EXISTS idx_shopify_mkt_targets_org ON shopify_product_marketing_targets (organization_id);
 
+CREATE TABLE IF NOT EXISTS shopify_product_manual_pricing (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  shopify_product_id BIGINT NOT NULL,
+  manual_product_price NUMERIC(14, 4),
+  manual_avg_freight_price NUMERIC(14, 4),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (organization_id, shopify_product_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_shopify_manual_pricing_org ON shopify_product_manual_pricing (organization_id);
+
 CREATE TABLE IF NOT EXISTS motico_org_settings (
   organization_id INTEGER PRIMARY KEY REFERENCES organizations (id) ON DELETE CASCADE,
   logo_data_url TEXT,
