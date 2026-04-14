@@ -253,12 +253,18 @@ export default function GananciaDiariaPage() {
     };
   }, [days, comparable, adminPercent]);
 
+  const utilidadKpiValue =
+    totals.utilidadNeta != null && Number.isFinite(totals.utilidadNeta) ? totals.utilidadNeta : null;
+  const utilidadKpiStyle: CSSProperties = {
+    ...cardBase,
+    borderColor: utilidadKpiValue == null ? ds.borderCard : utilidadKpiValue < 0 ? ds.dangerText : ds.successText,
+    background: utilidadKpiValue == null ? ds.bgCard : utilidadKpiValue < 0 ? ds.dangerBg : ds.successBg,
+  };
+  const utilidadKpiLabelColor = utilidadKpiValue == null ? ds.textMuted : utilidadKpiValue < 0 ? ds.dangerText : ds.successText;
+
   return (
     <div style={{ width: '100%', maxWidth: 1440 }}>
-      <PageHeader
-        title="Ganancia Diaria"
-        subtitle="Ventas despachadas (Shopify + estado KOVO), ventas entregadas (según % de efectividad), gasto Meta, costo del producto y costo de flete promedio. Solo desde el 1 de enero del año en curso hasta hoy (calendario de la tienda)."
-      />
+      <PageHeader title="GANANCIA DIARIA ESTIMADA" />
 
       {!seriesError ? (
         <>
@@ -280,65 +286,16 @@ export default function GananciaDiariaPage() {
 
           <div
             style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))',
-              gap: 14,
+              display: 'flex',
               marginBottom: 24,
             }}
           >
-            <div style={cardBase}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted, marginBottom: 8 }}>
-                Ventas despachadas
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
-                {formatMoney(totals.ventas || 0, seriesVentasCur)}
-              </div>
-              <div style={{ fontSize: 12, color: ds.textHint, marginTop: 6 }}>
-                {totals.pedidos ?? 0} pedidos
-              </div>
-            </div>
-            <div style={cardBase}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted, marginBottom: 8 }}>
-                Gasto publicitario (Meta)
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
-                {formatMoney(totals.gasto || 0, seriesMetaCur || seriesVentasCur)}
-              </div>
-              <div style={{ fontSize: 12, color: ds.textHint, marginTop: 6 }}>
-                Cuentas vinculadas · {seriesData?.meta_currency || '—'}
-              </div>
-            </div>
-            <div style={cardBase}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted, marginBottom: 8 }}>
-                Costo del producto
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
-                {formatMoney(totals.costoProducto || 0, seriesVentasCur)}
-              </div>
-              <div style={{ fontSize: 12, color: ds.textHint, marginTop: 6 }}>
-                Basado en costo manual por producto en Inventario
-              </div>
-            </div>
-            <div style={cardBase}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted, marginBottom: 8 }}>
-                Costo flete promedio
-              </div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
-                {formatMoney(totals.costoFletePromedio || 0, seriesVentasCur)}
-              </div>
-              <div style={{ fontSize: 12, color: ds.textHint, marginTop: 6 }}>
-                Basado en flete promedio manual por producto
-              </div>
-            </div>
-            <div style={{ ...cardBase, borderColor: ds.brand, background: ds.brandBg }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: ds.brand, marginBottom: 8 }}>Utilidad</div>
+            <div style={{ ...utilidadKpiStyle, width: '100%', maxWidth: 420 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: utilidadKpiLabelColor, marginBottom: 8 }}>Utilidad</div>
               <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
                 {totals.utilidadNeta != null && Number.isFinite(totals.utilidadNeta)
                   ? formatMoney(totals.utilidadNeta, seriesVentasCur)
                   : '—'}
-              </div>
-              <div style={{ fontSize: 12, color: ds.textSecondary, marginTop: 6 }}>
-                Ventas entregadas − gasto Meta − costo producto entregado − flete promedio − gasto administrativo
               </div>
             </div>
           </div>
