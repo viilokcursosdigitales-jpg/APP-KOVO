@@ -88,7 +88,7 @@ const thStyle: CSSProperties = {
   textAlign: 'left',
   fontSize: 10,
   fontWeight: 700,
-  color: '#9b80ff',
+  color: '#ffffff',
   backgroundColor: '#6c47ff',
   textTransform: 'uppercase',
   letterSpacing: '0.02em',
@@ -107,6 +107,8 @@ const tableStyle: CSSProperties = {
   width: '100%',
   borderCollapse: 'collapse',
   tableLayout: 'fixed',
+  border: '1px solid #6c47ff',
+  boxSizing: 'border-box',
 };
 
 const tdStyle: CSSProperties = {
