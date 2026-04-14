@@ -134,10 +134,37 @@ const thStyle: CSSProperties = {
 
 const thRight: CSSProperties = { ...thStyle, textAlign: 'right' };
 
+/** Ancho según el texto más ancho de la columna + 8px izq. y 8px der. */
+const thTdFitContent: CSSProperties = {
+  width: '1%',
+  whiteSpace: 'nowrap',
+  paddingTop: 8,
+  paddingBottom: 8,
+  paddingLeft: 8,
+  paddingRight: 8,
+  boxSizing: 'border-box',
+};
+
+const thDiaFit: CSSProperties = { ...thStyle, ...thTdFitContent, wordBreak: 'normal', hyphens: 'manual' };
+const thRightFit: CSSProperties = { ...thRight, ...thTdFitContent, wordBreak: 'normal', hyphens: 'manual' };
+const tdDiaFit: CSSProperties = {
+  ...tdStyle,
+  ...thTdFitContent,
+  fontWeight: 500,
+  wordBreak: 'normal',
+};
+const tdRightFit: CSSProperties = {
+  ...tdStyle,
+  ...thTdFitContent,
+  textAlign: 'right',
+  fontVariantNumeric: 'tabular-nums',
+  wordBreak: 'normal',
+};
+
 const tableStyle: CSSProperties = {
   width: '100%',
   borderCollapse: 'collapse',
-  tableLayout: 'fixed',
+  tableLayout: 'auto',
 };
 
 const tdStyle: CSSProperties = {
@@ -634,28 +661,15 @@ export default function GananciaDiariaPage() {
             ) : (
               <div style={{ overflowX: 'auto' }}>
                 <table style={tableStyle}>
-                  <colgroup>
-                    <col style={{ width: '11%' }} />
-                    <col style={{ width: '8%' }} />
-                    <col style={{ width: '8%' }} />
-                    <col style={{ width: '6%' }} />
-                    <col style={{ width: '7%' }} />
-                    <col style={{ width: '9%' }} />
-                    <col style={{ width: '8%' }} />
-                    <col style={{ width: '8%' }} />
-                    <col style={{ width: '7%' }} />
-                    <col style={{ width: '7%' }} />
-                    <col style={{ width: '11%' }} />
-                  </colgroup>
                   <thead>
                     <tr style={{ background: '#6c47ff' }}>
-                      <th style={thStyle}>Día</th>
-                      <th style={thRight}>
+                      <th style={thDiaFit}>Día</th>
+                      <th style={thRightFit}>
                         Vta.
                         <br />
                         desp.
                       </th>
-                      <th style={thRight}>
+                      <th style={thRightFit}>
                         Vta.
                         <br />
                         entreg.
@@ -666,7 +680,7 @@ export default function GananciaDiariaPage() {
                         <br />
                         prod.
                       </th>
-                      <th style={thRight}>
+                      <th style={thRightFit}>
                         G.
                         <br />
                         admin.
@@ -713,11 +727,11 @@ export default function GananciaDiariaPage() {
                               : 'transparent';
                       return (
                         <tr key={row.date} style={rowBg !== 'transparent' ? { background: rowBg } : undefined}>
-                          <td style={{ ...tdStyle, fontWeight: 500 }}>{formatTableDate(row.date)}</td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          <td style={tdDiaFit}>{formatTableDate(row.date)}</td>
+                        <td style={tdRightFit}>
                           {formatMoney(row.ventas_despachadas_total, seriesVentasCur)}
                         </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        <td style={tdRightFit}>
                           {formatMoney(ventasEntregadasRow, seriesVentasCur)}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -726,7 +740,7 @@ export default function GananciaDiariaPage() {
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                           {Number(row.cantidad_producto_total || 0).toLocaleString('es-CO')}
                         </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        <td style={tdRightFit}>
                           {formatMoney(ventasEntregadasRow * (adminPercent / 100), seriesVentasCur)}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -752,11 +766,11 @@ export default function GananciaDiariaPage() {
                   </tbody>
                   <tfoot>
                     <tr style={{ background: ds.bgSubtle }}>
-                      <td style={{ ...tdStyle, fontWeight: 700 }}>Total período</td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdDiaFit, fontWeight: 700 }}>Total período</td>
+                      <td style={{ ...tdRightFit, fontWeight: 700 }}>
                         {formatMoney(totals.ventas, seriesVentasCur)}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdRightFit, fontWeight: 700 }}>
                         {formatMoney(totals.ventasEntregadas, seriesVentasCur)}
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
@@ -765,7 +779,7 @@ export default function GananciaDiariaPage() {
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                         {Number(totals.cantidadProducto || 0).toLocaleString('es-CO')}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdRightFit, fontWeight: 700 }}>
                         {formatMoney(totals.gastoAdministrativo, seriesVentasCur)}
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
