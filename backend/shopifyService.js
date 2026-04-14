@@ -484,6 +484,7 @@ function normalizeShopifyOrdersForApp(apiData) {
     ];
     const lineItemsDetail = lineItems.map((li) => ({
       id: li.id,
+      product_id: li.product_id != null ? Number(li.product_id) : null,
       title: String(li.title || li.name || '').trim() || 'Producto',
       name: String(li.name || '').trim(),
       variant_title: li.variant_title != null ? String(li.variant_title).trim() : '',

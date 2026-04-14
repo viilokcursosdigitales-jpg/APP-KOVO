@@ -2511,6 +2511,59 @@ async function loadLocalFieldsMap(organizationId, orderIds) {
   return m;
 }
 
+async function loadProductManualPricingMap(organizationId, productIds) {
+  if (!productIds.length) return new Map();
+  const CHUNK = 2500;
+  const m = new Map();
+  for (let i = 0; i < productIds.length; i += CHUNK) {
+    const slice = productIds.slice(i, i + CHUNK);
+    const { rows } = await pool.query(
+      `SELECT shopify_product_id, manual_product_price, manual_avg_freight_price
+       FROM shopify_product_manual_pricing
+       WHERE organization_id = $1 AND shopify_product_id = ANY($2::bigint[])`,
+      [organizationId, slice],
+    );
+    for (const r of rows) {
+      m.set(Number(r.shopify_product_id), {
+        manual_product_price:
+          r.manual_product_price != null && Number.isFinite(Number(r.manual_product_price))
+            ? Number(r.manual_product_price)
+            : null,
+        manual_avg_freight_price:
+          r.manual_avg_freight_price != null && Number.isFinite(Number(r.manual_avg_freight_price))
+            ? Number(r.manual_avg_freight_price)
+            : null,
+      });
+    }
+  }
+  return m;
+}
+
+function calculateOrderManualCosts(order, pricingMap) {
+  const detail = Array.isArray(order?.lineItemsDetail) ? order.lineItemsDetail : [];
+  let productCost = 0;
+  let avgFreightCost = 0;
+  for (const li of detail) {
+    if (!li || typeof li !== 'object') continue;
+    const pid = Number(li.product_id);
+    if (!Number.isFinite(pid)) continue;
+    const qty = Number.parseInt(String(li.quantity ?? 0), 10);
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    const pricing = pricingMap.get(pid);
+    if (!pricing) continue;
+    if (pricing.manual_product_price != null && Number.isFinite(pricing.manual_product_price)) {
+      productCost += pricing.manual_product_price * qty;
+    }
+    if (pricing.manual_avg_freight_price != null && Number.isFinite(pricing.manual_avg_freight_price)) {
+      avgFreightCost += pricing.manual_avg_freight_price * qty;
+    }
+  }
+  return {
+    productCost,
+    avgFreightCost,
+  };
+}
+
 function shopifyConfigured() {
   return Boolean(SHOPIFY_API_KEY && SHOPIFY_API_SECRET && SHOPIFY_REDIRECT_URI);
 }
@@ -3100,10 +3153,28 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
     const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
     const localMap = await loadLocalFieldsMap(req.organizationId, ids);
+    const productIds = [];
+    for (const o of normalized) {
+      const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
+      for (const li of detail) {
+        const pid = Number(li?.product_id);
+        if (Number.isFinite(pid)) productIds.push(pid);
+      }
+    }
+    let manualPricingMap = new Map();
+    try {
+      manualPricingMap = await loadProductManualPricingMap(req.organizationId, [
+        ...new Set(productIds),
+      ]);
+    } catch (pricingErr) {
+      if (!(pricingErr && pricingErr.code === '42P01')) throw pricingErr;
+    }
 
     const excludeFin = new Set(['voided', 'cancelled']);
     let ventasTotal = 0;
     let ventasPedidos = 0;
+    let costoProductoTotal = 0;
+    let costoFletePromedioTotal = 0;
     for (const o of normalized) {
       const lf = localMap.get(Number(o.id));
       const st = String(lf?.internal_status || '')
@@ -3117,6 +3188,9 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasTotal += amt;
       ventasPedidos += 1;
+      const costs = calculateOrderManualCosts(o, manualPricingMap);
+      costoProductoTotal += costs.productCost;
+      costoFletePromedioTotal += costs.avgFreightCost;
     }
 
     let gastoAds = 0;
@@ -3157,9 +3231,12 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       (gastoAds === 0 && Boolean(shopC) && !metaC) ||
       (gastoAds === 0 && !shopC && !metaC);
     let ganancia = null;
+    let utilidad = null;
     let warning = null;
     if (sameCurrency && shopC) {
       ganancia = Math.round((ventasTotal - gastoAds) * 100) / 100;
+      utilidad =
+        Math.round((ventasTotal - gastoAds - costoProductoTotal - costoFletePromedioTotal) * 100) / 100;
     } else if (gastoAds > 0 && shopC && !metaC) {
       warning =
         'Hay gasto en Meta pero no se pudo determinar la divisa de la cuenta; no se calcula la ganancia automática.';
@@ -3174,10 +3251,13 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       shop_calendar_timezone: iana,
       ventas_despachadas_total: Math.round(ventasTotal * 100) / 100,
       ventas_despachadas_pedidos: ventasPedidos,
+      costo_producto_total: Math.round(costoProductoTotal * 100) / 100,
+      costo_flete_promedio_total: Math.round(costoFletePromedioTotal * 100) / 100,
       ventas_currency: shopCurrency || null,
       gasto_publicitario_total: Math.round(gastoAds * 100) / 100,
       meta_currency: metaCurrency || null,
       ganancia,
+      utilidad,
       ganancia_comparable: ganancia != null,
       warning,
       meta_partial_errors: metaPartialErrors,
@@ -3253,13 +3333,33 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
     const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
     const localMap = await loadLocalFieldsMap(req.organizationId, ids);
+    const productIds = [];
+    for (const o of normalized) {
+      const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
+      for (const li of detail) {
+        const pid = Number(li?.product_id);
+        if (Number.isFinite(pid)) productIds.push(pid);
+      }
+    }
+    let manualPricingMap = new Map();
+    try {
+      manualPricingMap = await loadProductManualPricingMap(req.organizationId, [
+        ...new Set(productIds),
+      ]);
+    } catch (pricingErr) {
+      if (!(pricingErr && pricingErr.code === '42P01')) throw pricingErr;
+    }
 
     const daySet = new Set(sortedAsc);
     const ventasByDay = new Map();
     const pedidosByDay = new Map();
+    const costoProductoByDay = new Map();
+    const costoFletePromedioByDay = new Map();
     for (const k of sortedAsc) {
       ventasByDay.set(k, 0);
       pedidosByDay.set(k, 0);
+      costoProductoByDay.set(k, 0);
+      costoFletePromedioByDay.set(k, 0);
     }
 
     const excludeFin = new Set(['voided', 'cancelled']);
@@ -3281,6 +3381,12 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasByDay.set(key, (ventasByDay.get(key) || 0) + amt);
       pedidosByDay.set(key, (pedidosByDay.get(key) || 0) + 1);
+      const costs = calculateOrderManualCosts(o, manualPricingMap);
+      costoProductoByDay.set(key, (costoProductoByDay.get(key) || 0) + costs.productCost);
+      costoFletePromedioByDay.set(
+        key,
+        (costoFletePromedioByDay.get(key) || 0) + costs.avgFreightCost,
+      );
     }
 
     let spendByDay = {};
@@ -3337,17 +3443,25 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     for (const dateStr of sortedDesc) {
       const ventasTotal = ventasByDay.get(dateStr) || 0;
       const ventasPedidos = pedidosByDay.get(dateStr) || 0;
+      const costoProducto = costoProductoByDay.get(dateStr) || 0;
+      const costoFletePromedio = costoFletePromedioByDay.get(dateStr) || 0;
       const gastoAds = Number(spendByDay[dateStr] || 0);
       let ganancia = null;
+      let utilidad = null;
       if (gananciaComparable) {
         ganancia = Math.round((ventasTotal - gastoAds) * 100) / 100;
+        utilidad =
+          Math.round((ventasTotal - gastoAds - costoProducto - costoFletePromedio) * 100) / 100;
       }
       days.push({
         date: dateStr,
         ventas_despachadas_total: Math.round(ventasTotal * 100) / 100,
         ventas_despachadas_pedidos: ventasPedidos,
+        costo_producto_total: Math.round(costoProducto * 100) / 100,
+        costo_flete_promedio_total: Math.round(costoFletePromedio * 100) / 100,
         gasto_publicitario_total: Math.round(gastoAds * 100) / 100,
         ganancia,
+        utilidad,
       });
     }
 

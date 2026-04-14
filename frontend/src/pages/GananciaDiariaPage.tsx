@@ -9,10 +9,13 @@ type GananciaPayload = {
   shop_calendar_timezone?: string;
   ventas_despachadas_total?: number;
   ventas_despachadas_pedidos?: number;
+  costo_producto_total?: number;
+  costo_flete_promedio_total?: number;
   ventas_currency?: string | null;
   gasto_publicitario_total?: number;
   meta_currency?: string | null;
   ganancia?: number | null;
+  utilidad?: number | null;
   ganancia_comparable?: boolean;
   warning?: string | null;
   meta_partial_errors?: { adAccountId: string; error: string }[];
@@ -24,8 +27,11 @@ type SeriesDayRow = {
   date: string;
   ventas_despachadas_total: number;
   ventas_despachadas_pedidos: number;
+  costo_producto_total: number;
+  costo_flete_promedio_total: number;
   gasto_publicitario_total: number;
   ganancia: number | null;
+  utilidad: number | null;
 };
 
 type SeriesPayload = {
@@ -247,19 +253,28 @@ export default function GananciaDiariaPage() {
   const totals = useMemo(() => {
     let v = 0;
     let p = 0;
+    let cp = 0;
+    let cf = 0;
     let g = 0;
     let ganSum = 0;
+    let utiSum = 0;
     for (const row of days) {
       v += row.ventas_despachadas_total;
       p += row.ventas_despachadas_pedidos;
+      cp += row.costo_producto_total || 0;
+      cf += row.costo_flete_promedio_total || 0;
       g += row.gasto_publicitario_total;
       if (row.ganancia != null && Number.isFinite(row.ganancia)) ganSum += row.ganancia;
+      if (row.utilidad != null && Number.isFinite(row.utilidad)) utiSum += row.utilidad;
     }
     return {
       ventas: v,
       pedidos: p,
+      costoProducto: cp,
+      costoFletePromedio: cf,
       gasto: g,
       ganancia: comparable ? Math.round(ganSum * 100) / 100 : null,
+      utilidad: comparable ? Math.round(utiSum * 100) / 100 : null,
     };
   }, [days, comparable]);
 
@@ -267,7 +282,7 @@ export default function GananciaDiariaPage() {
     <div style={{ maxWidth: 960 }}>
       <PageHeader
         title="Ganancia Diaria"
-        subtitle="Ventas despachadas (Shopify + estado KOVO) menos gasto publicitario (Meta). Solo desde el 1 de enero del año en curso hasta hoy (calendario de la tienda)."
+        subtitle="Ventas despachadas (Shopify + estado KOVO) menos gasto Meta, costo del producto y costo de flete promedio. Solo desde el 1 de enero del año en curso hasta hoy (calendario de la tienda)."
       />
 
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 20 }}>
@@ -354,15 +369,37 @@ export default function GananciaDiariaPage() {
                 Cuentas vinculadas · {data.meta_currency || '—'}
               </div>
             </div>
-            <div style={{ ...cardBase, borderColor: ds.brand, background: ds.brandBg }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: ds.brand, marginBottom: 8 }}>Ganancia</div>
+            <div style={cardBase}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted, marginBottom: 8 }}>
+                Costo del producto
+              </div>
               <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
-                {data.ganancia != null && Number.isFinite(data.ganancia)
-                  ? formatMoney(data.ganancia, ventasCur)
+                {formatMoney(Number(data.costo_producto_total) || 0, ventasCur)}
+              </div>
+              <div style={{ fontSize: 12, color: ds.textHint, marginTop: 6 }}>
+                Basado en costo manual por producto en Inventario
+              </div>
+            </div>
+            <div style={cardBase}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted, marginBottom: 8 }}>
+                Costo flete promedio
+              </div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
+                {formatMoney(Number(data.costo_flete_promedio_total) || 0, ventasCur)}
+              </div>
+              <div style={{ fontSize: 12, color: ds.textHint, marginTop: 6 }}>
+                Basado en flete promedio manual por producto
+              </div>
+            </div>
+            <div style={{ ...cardBase, borderColor: ds.brand, background: ds.brandBg }}>
+              <div style={{ fontSize: 11, fontWeight: 600, color: ds.brand, marginBottom: 8 }}>Utilidad</div>
+              <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
+                {data.utilidad != null && Number.isFinite(data.utilidad)
+                  ? formatMoney(data.utilidad, ventasCur)
                   : '—'}
               </div>
               <div style={{ fontSize: 12, color: ds.textSecondary, marginTop: 6 }}>
-                Ventas − gasto (misma divisa)
+                Ventas − gasto Meta − costo producto − flete promedio
               </div>
             </div>
           </div>
@@ -546,8 +583,10 @@ export default function GananciaDiariaPage() {
                       <th style={thStyle}>Día</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Ventas desp.</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Pedidos</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Costo producto</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Flete prom.</th>
                       <th style={{ ...thStyle, textAlign: 'right' }}>Gasto Meta</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Ganancia</th>
+                      <th style={{ ...thStyle, textAlign: 'right' }}>Utilidad</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -561,11 +600,17 @@ export default function GananciaDiariaPage() {
                           {row.ventas_despachadas_pedidos}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {formatMoney(row.costo_producto_total || 0, seriesVentasCur)}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                          {formatMoney(row.costo_flete_promedio_total || 0, seriesVentasCur)}
+                        </td>
+                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                           {formatMoney(row.gasto_publicitario_total, seriesMetaCur || seriesVentasCur)}
                         </td>
                         <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                          {row.ganancia != null && Number.isFinite(row.ganancia)
-                            ? formatMoney(row.ganancia, seriesVentasCur)
+                          {row.utilidad != null && Number.isFinite(row.utilidad)
+                            ? formatMoney(row.utilidad, seriesVentasCur)
                             : '—'}
                         </td>
                       </tr>
@@ -581,10 +626,16 @@ export default function GananciaDiariaPage() {
                         {totals.pedidos}
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {formatMoney(totals.costoProducto, seriesVentasCur)}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                        {formatMoney(totals.costoFletePromedio, seriesVentasCur)}
+                      </td>
+                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                         {formatMoney(totals.gasto, seriesMetaCur || seriesVentasCur)}
                       </td>
                       <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
-                        {totals.ganancia != null ? formatMoney(totals.ganancia, seriesVentasCur) : '—'}
+                        {totals.utilidad != null ? formatMoney(totals.utilidad, seriesVentasCur) : '—'}
                       </td>
                     </tr>
                   </tfoot>
