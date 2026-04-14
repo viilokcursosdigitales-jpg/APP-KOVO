@@ -1982,7 +1982,13 @@ export default function MoticoPage() {
                     String(o.price_override ?? o.shopifyTotal ?? ''),
                     o.currency,
                   );
-                  const showQty = o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity;
+                  const qtyFromLines = Array.isArray(o.lineItemsDetail)
+                    ? o.lineItemsDetail.reduce((sum, li) => {
+                        const q = Number(li?.quantity ?? 0);
+                        return sum + (Number.isFinite(q) && q > 0 ? q : 0);
+                      }, 0)
+                    : 0;
+                  const showQty = o.quantity_override ?? (qtyFromLines > 0 ? qtyFromLines : null) ?? o.defaultQuantity ?? o.shopifyQuantity;
                   return (
                     <tr
                       key={o.id}
