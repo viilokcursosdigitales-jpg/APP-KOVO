@@ -26,35 +26,6 @@ const PERIOD_LABELS: Record<MetaInsightPeriod, string> = {
   custom: 'Personalizado',
 };
 
-/** Rango ISO para filtrar pedidos Shopify; alineado de forma razonable con los presets de Meta. */
-function shopifyDateRangeForMetaPeriod(period: MetaInsightPeriod): { min: string; max: string } | null {
-  const now = new Date();
-  const dayBounds = (d: Date) => {
-    const s = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
-    const e = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
-    return { min: s.toISOString(), max: e.toISOString() };
-  };
-  if (period === 'hoy') return dayBounds(now);
-  if (period === 'ayer') {
-    const y = new Date(now);
-    y.setDate(y.getDate() - 1);
-    return dayBounds(y);
-  }
-  const rollingDays: Record<string, number> = { '3d': 3, '7d': 7, '14d': 14, '30d': 30 };
-  const n = rollingDays[period];
-  if (n) {
-    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    const startDay = new Date(now);
-    startDay.setDate(startDay.getDate() - (n - 1));
-    const start = new Date(startDay.getFullYear(), startDay.getMonth(), startDay.getDate(), 0, 0, 0, 0);
-    return { min: start.toISOString(), max: end.toISOString() };
-  }
-  if (period === 'custom') {
-    return shopifyDateRangeForMetaPeriod('7d');
-  }
-  return shopifyDateRangeForMetaPeriod('7d');
-}
-
 function formatNumber(n: number): string {
   return new Intl.NumberFormat('es-ES').format(Math.round(n));
 }
@@ -206,6 +177,24 @@ function adRowsWhoseIdAppearsInHaystack(rows: InsightRow[], hay: string): Insigh
   });
 }
 
+/** Meta suele enviar el nombre del anuncio en utm_term / utm_content, no el id numérico. */
+function adRowsMatchingUtmCreativeName(rows: InsightRow[], utm: Record<string, string>): InsightRow[] {
+  const rawStrings = [String(utm['utm_term'] || '').trim(), String(utm['utm_content'] || '').trim()].filter(Boolean);
+  const norms = [...new Set(rawStrings.map((s) => normalizeAttributionKey(s)).filter(Boolean))];
+  if (norms.length === 0) return [];
+
+  return rows.filter((r) => {
+    const nameNorm = r.name ? normalizeAttributionKey(String(r.name)) : '';
+    if (!nameNorm) return false;
+    for (const u of norms) {
+      if (u === nameNorm) return true;
+      if (nameNorm.length <= 4 || u.length <= 4) continue;
+      if (nameNorm.length >= 6 && u.length >= 6 && (u.includes(nameNorm) || nameNorm.includes(u))) return true;
+    }
+    return false;
+  });
+}
+
 /**
  * Si varios anuncios matchean el mismo texto (p. ej. URL con campaña + id de anuncio),
  * reduce por utm_campaign / adset en el haystack; si sigue habiendo varios, elige uno
@@ -285,6 +274,21 @@ function buildCountsByAdFromOrders(rows: InsightRow[], orders: ShopifyOrderAttri
         const picked = pickSingleAdRowFromCandidates(byContent, utm, hay, campaignRows, true);
         if (picked) target = String(picked.id).trim();
       }
+    }
+
+    if (!target) {
+      const utmIdDig = digitsOnlyKey(String(utm['utm_id'] || '').trim());
+      if (utmIdDig.length >= 10) {
+        const byUtmId = rows.filter((r) => utmIdDig === digitsOnlyKey(String(r.id || '')));
+        const picked = pickSingleAdRowFromCandidates(byUtmId, utm, hay, campaignRows, true);
+        if (picked) target = String(picked.id).trim();
+      }
+    }
+
+    if (!target) {
+      const byName = adRowsMatchingUtmCreativeName(rows, utm);
+      const picked = pickSingleAdRowFromCandidates(byName, utm, hay, campaignRows, true);
+      if (picked) target = String(picked.id).trim();
     }
 
     if (!target && hay) {
@@ -679,18 +683,10 @@ export function MetaInsightsPanel({
   }, []);
 
   const loadShopifyPedidosCounts = useCallback(async () => {
-    const range = shopifyDateRangeForMetaPeriod(period);
-    if (!range) {
-      setShopifyPedidosByCampaign({});
-      setShopifyComprasByAd({});
-      setShopifyPedidosAvailable(false);
-      return;
-    }
     try {
       const qs = new URLSearchParams({
         limit: '250',
-        created_at_min: range.min,
-        created_at_max: range.max,
+        meta_period: period,
       });
       const res = await apiFetch(`/api/shopify/orders?${qs.toString()}`);
       const raw = (await res.json().catch(() => ({}))) as {
@@ -1163,7 +1159,7 @@ export function MetaInsightsPanel({
                   key={h}
                   title={
                     h === 'Compras Shopify'
-                      ? 'Pedidos con utm_term / utm_content o URL que incluyen el id del anuncio; si hay varios candidatos se acota por campaña/adset. Cada pedido cuenta una sola vez en total. Solo adset sin id de anuncio: solo si queda un anuncio claro.'
+                      ? 'Pedidos del mismo rango que Meta: fechas en calendario de la tienda Shopify. Atribución por id en utm_term / utm_content / utm_id, por nombre del anuncio (como en Meta), o por URL; un pedido = una fila. Pedidos con UTM pero sin anuncio en esta lista no suman aquí.'
                       : undefined
                   }
                   style={{

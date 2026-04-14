@@ -35,6 +35,7 @@ const {
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
   mapFinancialToBadge,
+  shopifyOrderCreatedRangeForMetaPeriod,
 } = require('./shopifyService');
 const {
   getPublicAppUrl,
@@ -2631,10 +2632,26 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
     qs.set('limit', String(limit));
     qs.set('status', 'any');
     qs.set('fields', SHOPIFY_ORDER_LIST_FIELDS);
-    const min = req.query.created_at_min;
-    const max = req.query.created_at_max;
-    if (typeof min === 'string' && min.trim()) qs.set('created_at_min', min.trim());
-    if (typeof max === 'string' && max.trim()) qs.set('created_at_max', max.trim());
+    let min = typeof req.query.created_at_min === 'string' ? req.query.created_at_min.trim() : '';
+    let max = typeof req.query.created_at_max === 'string' ? req.query.created_at_max.trim() : '';
+    const metaPeriodRaw = typeof req.query.meta_period === 'string' ? req.query.meta_period.trim().toLowerCase() : '';
+    const metaPeriodAllowed = new Set(['hoy', 'ayer', '3d', '7d', '14d', '30d', 'custom']);
+    let shopCalendarTz = null;
+    let metaPeriodApplied = null;
+    if (metaPeriodRaw && metaPeriodAllowed.has(metaPeriodRaw)) {
+      const sr = await shopifyRequest(row.shop_domain, row.access_token, 'shop.json?fields=iana_timezone');
+      shopCalendarTz =
+        sr.ok && sr.data && sr.data.shop && sr.data.shop.iana_timezone
+          ? String(sr.data.shop.iana_timezone)
+          : 'UTC';
+      const eff = metaPeriodRaw === 'custom' ? '7d' : metaPeriodRaw;
+      const range = shopifyOrderCreatedRangeForMetaPeriod(eff, shopCalendarTz);
+      min = range.min;
+      max = range.max;
+      metaPeriodApplied = eff;
+    }
+    if (min) qs.set('created_at_min', min);
+    if (max) qs.set('created_at_max', max);
     const r = await shopifyRequest(row.shop_domain, row.access_token, `orders.json?${qs.toString()}`);
     if (!r.ok) {
       return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
@@ -2700,6 +2717,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
     res.json({
       source: 'shopify',
       shop_domain: row.shop_domain,
+      ...(shopCalendarTz ? { shop_calendar_timezone: shopCalendarTz, meta_period: metaPeriodApplied } : {}),
       fetchedAt: new Date().toISOString(),
       orders,
     });

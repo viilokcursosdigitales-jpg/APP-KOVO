@@ -473,6 +473,89 @@ function normalizeShopifyOrdersForApp(apiData) {
   });
 }
 
+/**
+ * Reloj de pared en `timeZone` para un instante UTC (ms).
+ * @param {number} utcMillis
+ * @param {string} timeZone IANA, ej. America/Bogota
+ */
+function wallClockPartsInZone(utcMillis, timeZone) {
+  const tz = String(timeZone || 'UTC').trim() || 'UTC';
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: tz,
+    year: 'numeric',
+    month: 'numeric',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: 'numeric',
+    second: 'numeric',
+    hour12: false,
+  }).formatToParts(new Date(utcMillis));
+  const o = { year: 0, month: 0, day: 0, hour: 0, minute: 0, second: 0 };
+  for (const p of parts) {
+    if (p.type !== 'literal') o[p.type] = parseInt(p.value, 10);
+  }
+  return { y: o.year, m: o.month, d: o.day, H: o.hour, M: o.minute, S: o.second };
+}
+
+function addCalendarDaysYmd(y, m, d, delta) {
+  const x = new Date(Date.UTC(y, m - 1, d + delta));
+  return { y: x.getUTCFullYear(), m: x.getUTCMonth() + 1, d: x.getUTCDate() };
+}
+
+/** Primer instante UTC (ms) del día de calendario y-m-d en la zona `timeZone`. */
+function utcMillisStartOfZonedCalendarDay(timeZone, y, m, d) {
+  const tz = String(timeZone || 'UTC').trim() || 'UTC';
+  let t = Date.UTC(y, m - 1, d - 1, 0, 0, 0);
+  const end = Date.UTC(y, m - 1, d + 2, 0, 0, 0);
+  while (t < end) {
+    const w = wallClockPartsInZone(t, tz);
+    if (w.y === y && w.m === m && w.d === d) {
+      while (t > Date.UTC(y, m - 1, d - 2, 0, 0, 0)) {
+        const w2 = wallClockPartsInZone(t - 1000, tz);
+        if (w2.y !== y || w2.m !== m || w2.d !== d) break;
+        t -= 1000;
+      }
+      return t;
+    }
+    t += 60000;
+  }
+  return Date.UTC(y, m - 1, d, 12, 0, 0);
+}
+
+/**
+ * Rango created_at para Shopify alineado al calendario de la tienda (como el admin de Shopify / Meta “hoy”).
+ * @param {'hoy'|'ayer'|'3d'|'7d'|'14d'|'30d'|'custom'} period custom → últimos 7 días
+ * @param {string} ianaTimezone ej. America/Bogota
+ * @param {Date} [ref]
+ * @returns {{ min: string, max: string }}
+ */
+function shopifyOrderCreatedRangeForMetaPeriod(period, ianaTimezone, ref = new Date()) {
+  const tz = String(ianaTimezone || 'UTC').trim() || 'UTC';
+  const refMs = ref instanceof Date ? ref.getTime() : Date.now();
+  const { y: Y, m: M, d: D } = wallClockPartsInZone(refMs, tz);
+
+  if (period === 'hoy') {
+    const minMs = utcMillisStartOfZonedCalendarDay(tz, Y, M, D);
+    const next = addCalendarDaysYmd(Y, M, D, 1);
+    const nextStart = utcMillisStartOfZonedCalendarDay(tz, next.y, next.m, next.d);
+    return { min: new Date(minMs).toISOString(), max: new Date(nextStart - 1).toISOString() };
+  }
+  if (period === 'ayer') {
+    const prev = addCalendarDaysYmd(Y, M, D, -1);
+    const minMs = utcMillisStartOfZonedCalendarDay(tz, prev.y, prev.m, prev.d);
+    const todayStart = utcMillisStartOfZonedCalendarDay(tz, Y, M, D);
+    return { min: new Date(minMs).toISOString(), max: new Date(todayStart - 1).toISOString() };
+  }
+
+  const rolling = { '3d': 3, '7d': 7, '14d': 14, '30d': 30 };
+  const n = rolling[period] || 7;
+  const startDay = addCalendarDaysYmd(Y, M, D, -(n - 1));
+  const minMs = utcMillisStartOfZonedCalendarDay(tz, startDay.y, startDay.m, startDay.d);
+  const nextToday = addCalendarDaysYmd(Y, M, D, 1);
+  const maxMs = utcMillisStartOfZonedCalendarDay(tz, nextToday.y, nextToday.m, nextToday.d) - 1;
+  return { min: new Date(minMs).toISOString(), max: new Date(maxMs).toISOString() };
+}
+
 function mapFinancialToBadge(financial) {
   const f = String(financial || '').toLowerCase();
   if (f === 'paid') return { label: 'Pagado', variant: 'success' };
@@ -498,5 +581,6 @@ module.exports = {
   extractUtmParamsFromUrl,
   utmFromNoteAttributes,
   mapFinancialToBadge,
+  shopifyOrderCreatedRangeForMetaPeriod,
   DEFAULT_API_VERSION,
 };
