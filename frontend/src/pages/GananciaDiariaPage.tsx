@@ -134,31 +134,27 @@ const thStyle: CSSProperties = {
 
 const thRight: CSSProperties = { ...thStyle, textAlign: 'right' };
 
-/** Ancho según el texto más ancho de la columna + 8px izq. y 8px der. */
-const thTdFitContent: CSSProperties = {
+/** Columna al ancho del texto más largo + 20px izq. y 20px der. */
+const thTdColSizing: CSSProperties = {
   width: '1%',
   whiteSpace: 'nowrap',
   paddingTop: 8,
   paddingBottom: 8,
-  paddingLeft: 8,
-  paddingRight: 8,
+  paddingLeft: 20,
+  paddingRight: 20,
   boxSizing: 'border-box',
+  wordBreak: 'normal',
+  hyphens: 'manual',
 };
 
-const thDiaFit: CSSProperties = { ...thStyle, ...thTdFitContent, wordBreak: 'normal', hyphens: 'manual' };
-const thRightFit: CSSProperties = { ...thRight, ...thTdFitContent, wordBreak: 'normal', hyphens: 'manual' };
-const tdDiaFit: CSSProperties = {
+const thColLeft: CSSProperties = { ...thStyle, ...thTdColSizing };
+const thColRight: CSSProperties = { ...thRight, ...thTdColSizing };
+const tdColLeft: CSSProperties = { ...tdStyle, ...thTdColSizing, fontWeight: 500 };
+const tdColRight: CSSProperties = {
   ...tdStyle,
-  ...thTdFitContent,
-  fontWeight: 500,
-  wordBreak: 'normal',
-};
-const tdRightFit: CSSProperties = {
-  ...tdStyle,
-  ...thTdFitContent,
+  ...thTdColSizing,
   textAlign: 'right',
   fontVariantNumeric: 'tabular-nums',
-  wordBreak: 'normal',
 };
 
 const tableStyle: CSSProperties = {
@@ -663,49 +659,49 @@ export default function GananciaDiariaPage() {
                 <table style={tableStyle}>
                   <thead>
                     <tr style={{ background: '#6c47ff' }}>
-                      <th style={thDiaFit}>Día</th>
-                      <th style={thRightFit}>
+                      <th style={thColLeft}>Día</th>
+                      <th style={thColRight}>
                         Vta.
                         <br />
                         desp.
                       </th>
-                      <th style={thRightFit}>
+                      <th style={thColRight}>
                         Vta.
                         <br />
                         entreg.
                       </th>
-                      <th style={thRight}>Ped.</th>
-                      <th style={thRight}>
+                      <th style={thColRight}>Ped.</th>
+                      <th style={thColRight}>
                         Cant.
                         <br />
                         prod.
                       </th>
-                      <th style={thRightFit}>
+                      <th style={thColRight}>
                         G.
                         <br />
                         admin.
                       </th>
-                      <th style={thRight}>
+                      <th style={thColRight}>
                         Cto.
                         <br />
                         prod.
                       </th>
-                      <th style={thRight}>
+                      <th style={thColRight}>
                         Cto.
                         <br />
                         entreg.
                       </th>
-                      <th style={thRight}>
+                      <th style={thColRight}>
                         Fl.
                         <br />
                         prom.
                       </th>
-                      <th style={thRight}>
+                      <th style={thColRight}>
                         Gasto
                         <br />
                         Meta
                       </th>
-                      <th style={thRight}>Util.</th>
+                      <th style={thColRight}>Util.</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -727,74 +723,74 @@ export default function GananciaDiariaPage() {
                               : 'transparent';
                       return (
                         <tr key={row.date} style={rowBg !== 'transparent' ? { background: rowBg } : undefined}>
-                          <td style={tdDiaFit}>{formatTableDate(row.date)}</td>
-                        <td style={tdRightFit}>
+                          <td style={tdColLeft}>{formatTableDate(row.date)}</td>
+                        <td style={tdColRight}>
                           {formatMoney(row.ventas_despachadas_total, seriesVentasCur)}
                         </td>
-                        <td style={tdRightFit}>
+                        <td style={tdColRight}>
                           {formatMoney(ventasEntregadasRow, seriesVentasCur)}
                         </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        <td style={tdColRight}>
                           {row.ventas_despachadas_pedidos}
                         </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        <td style={tdColRight}>
                           {Number(row.cantidad_producto_total || 0).toLocaleString('es-CO')}
                         </td>
-                        <td style={tdRightFit}>
+                        <td style={tdColRight}>
                           {formatMoney(ventasEntregadasRow * (adminPercent / 100), seriesVentasCur)}
                         </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        <td style={tdColRight}>
                           {formatMoney(row.costo_producto_total || 0, seriesVentasCur)}
                         </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        <td style={tdColRight}>
                           {formatMoney(costoProductoEntregadoRow, seriesVentasCur)}
                         </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        <td style={tdColRight}>
                           {formatMoney(row.costo_flete_promedio_total || 0, seriesVentasCur)}
                         </td>
-                        <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        <td style={tdColRight}>
                           {formatMoney(row.gasto_publicitario_total, seriesMetaCur || seriesVentasCur)}
                         </td>
-                          <td style={{ ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                        <td style={tdColRight}>
                           {utilidadRow != null && Number.isFinite(utilidadRow)
                             ? formatMoney(utilidadRow, seriesVentasCur)
                             : '—'}
-                          </td>
+                        </td>
                         </tr>
                       );
                     })}
                   </tbody>
                   <tfoot>
                     <tr style={{ background: ds.bgSubtle }}>
-                      <td style={{ ...tdDiaFit, fontWeight: 700 }}>Total período</td>
-                      <td style={{ ...tdRightFit, fontWeight: 700 }}>
+                      <td style={{ ...tdColLeft, fontWeight: 700 }}>Total período</td>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {formatMoney(totals.ventas, seriesVentasCur)}
                       </td>
-                      <td style={{ ...tdRightFit, fontWeight: 700 }}>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {formatMoney(totals.ventasEntregadas, seriesVentasCur)}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {totals.pedidos}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {Number(totals.cantidadProducto || 0).toLocaleString('es-CO')}
                       </td>
-                      <td style={{ ...tdRightFit, fontWeight: 700 }}>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {formatMoney(totals.gastoAdministrativo, seriesVentasCur)}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {formatMoney(totals.costoProducto, seriesVentasCur)}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {formatMoney(totals.costoProductoEntregado, seriesVentasCur)}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {formatMoney(totals.costoFletePromedio, seriesVentasCur)}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {formatMoney(totals.gasto, seriesMetaCur || seriesVentasCur)}
                       </td>
-                      <td style={{ ...tdStyle, textAlign: 'right', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {totals.utilidad != null ? formatMoney(totals.utilidad, seriesVentasCur) : '—'}
                       </td>
                     </tr>
