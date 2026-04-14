@@ -196,15 +196,73 @@ function haystackContainsMetaEntityId(hay: string, metaId: string | undefined): 
 }
 
 /**
- * Cada pedido suma como máximo 1 a la tabla total.
- * Prioridad: utm_term = id del anuncio → utm_content numérico = id →
- * haystack contiene un único id de anuncio de la lista. Sin reparto por adset/campaña.
+ * Anuncios cuyo id aparece en el haystack del pedido.
+ */
+function adRowsWhoseIdAppearsInHaystack(rows: InsightRow[], hay: string): InsightRow[] {
+  if (!hay) return [];
+  return rows.filter((r) => {
+    const adId = String(r.id || '').trim();
+    return adId && haystackContainsMetaEntityId(hay, adId);
+  });
+}
+
+/**
+ * Si varios anuncios matchean el mismo texto (p. ej. URL con campaña + id de anuncio),
+ * reduce por utm_campaign / adset en el haystack; si sigue habiendo varios, elige uno
+ * estable (cada pedido cuenta solo 1 vez en total, sin reparto a todo el adset).
+ * @param allowGuessWhenAmbiguous si false, no elige un anuncio al azar cuando solo hay señal de adset/campaña ambigua.
+ */
+function pickSingleAdRowFromCandidates(
+  hits: InsightRow[],
+  utm: Record<string, string>,
+  hay: string,
+  campaignRows: { id: string; name: string }[],
+  allowGuessWhenAmbiguous = true,
+): InsightRow | null {
+  if (hits.length === 0) return null;
+  if (hits.length === 1) return hits[0];
+
+  const byCamp = campaignsMatchedByUtm(utm, campaignRows);
+  if (byCamp.size > 0) {
+    const narrowed = hits.filter((r) => byCamp.has(String(r.campaignId || '').trim()));
+    if (narrowed.length === 1) return narrowed[0];
+    if (narrowed.length > 0) {
+      const byAdset = narrowed.filter((r) => {
+        const aid = String(r.adsetId || '').trim();
+        return aid && haystackContainsMetaEntityId(hay, aid);
+      });
+      if (byAdset.length === 1) return byAdset[0];
+      const pool = byAdset.length > 0 ? byAdset : narrowed;
+      if (!allowGuessWhenAmbiguous && pool.length > 1) return null;
+      const sorted = [...pool].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+      return sorted[0] ?? null;
+    }
+  }
+
+  const byAdsetOnly = hits.filter((r) => {
+    const aid = String(r.adsetId || '').trim();
+    return aid && haystackContainsMetaEntityId(hay, aid);
+  });
+  if (byAdsetOnly.length === 1) return byAdsetOnly[0];
+  const pool = byAdsetOnly.length > 0 ? byAdsetOnly : hits;
+  if (!allowGuessWhenAmbiguous && pool.length > 1) return null;
+  const sorted = [...pool].sort((a, b) => String(a.id).localeCompare(String(b.id)));
+  return sorted[0] ?? null;
+}
+
+/**
+ * Cada pedido suma como máximo 1 en toda la tabla.
+ * utm_term / utm_content = id de anuncio; si no, ids de anuncio en el haystack (con desempate);
+ * si no hay id de anuncio en el texto, un único anuncio cuyo adset aparece en el haystack.
  */
 function buildCountsByAdFromOrders(rows: InsightRow[], orders: ShopifyOrderAttribution[]): Record<string, number> {
   const countsByAd: Record<string, number> = {};
   if (rows.length === 0 || orders.length === 0) return countsByAd;
 
+  const campaignRows = campaignsFromInsightRows(rows, 'ads');
+
   for (const o of orders) {
+    const hay = buildShopifyAttributionHaystack(o);
     const utm = o.utm && typeof o.utm === 'object' ? o.utm : {};
     const termRaw = String(utm['utm_term'] || '').trim();
     const termDig = digitsOnlyKey(termRaw);
@@ -212,30 +270,36 @@ function buildCountsByAdFromOrders(rows: InsightRow[], orders: ShopifyOrderAttri
     let target: string | null = null;
 
     if (termDig.length >= 10) {
-      const m = rows.find(
+      const byTerm = rows.filter(
         (r) => termDig === digitsOnlyKey(String(r.id || '')) || termRaw === String(r.id || '').trim(),
       );
-      if (m) target = String(m.id).trim();
+      const picked = pickSingleAdRowFromCandidates(byTerm, utm, hay, campaignRows, true);
+      if (picked) target = String(picked.id).trim();
     }
 
     if (!target) {
       const contentRaw = String(utm['utm_content'] || '').trim();
       const contentDig = digitsOnlyKey(contentRaw);
       if (contentDig.length >= 10) {
-        const m = rows.find((r) => contentDig === digitsOnlyKey(String(r.id || '')));
-        if (m) target = String(m.id).trim();
+        const byContent = rows.filter((r) => contentDig === digitsOnlyKey(String(r.id || '')));
+        const picked = pickSingleAdRowFromCandidates(byContent, utm, hay, campaignRows, true);
+        if (picked) target = String(picked.id).trim();
       }
     }
 
-    if (!target) {
-      const hay = buildShopifyAttributionHaystack(o);
-      if (hay) {
-        const hits = rows.filter((r) => {
-          const adId = String(r.id || '').trim();
-          return adId && haystackContainsMetaEntityId(hay, adId);
-        });
-        if (hits.length === 1) target = String(hits[0].id).trim();
-      }
+    if (!target && hay) {
+      const idHits = adRowsWhoseIdAppearsInHaystack(rows, hay);
+      const picked = pickSingleAdRowFromCandidates(idHits, utm, hay, campaignRows, true);
+      if (picked) target = String(picked.id).trim();
+    }
+
+    if (!target && hay) {
+      const adsetHits = rows.filter((r) => {
+        const aid = String(r.adsetId || '').trim();
+        return aid && haystackContainsMetaEntityId(hay, aid);
+      });
+      const picked = pickSingleAdRowFromCandidates(adsetHits, utm, hay, campaignRows, false);
+      if (picked) target = String(picked.id).trim();
     }
 
     if (target) {
@@ -1099,7 +1163,7 @@ export function MetaInsightsPanel({
                   key={h}
                   title={
                     h === 'Compras Shopify'
-                      ? 'Número de pedidos atribuidos a este anuncio (utm_term o utm_content numérico = id; si no, solo si la URL apunta a un único anuncio). Cada pedido cuenta una sola vez en toda la tabla.'
+                      ? 'Pedidos con utm_term / utm_content o URL que incluyen el id del anuncio; si hay varios candidatos se acota por campaña/adset. Cada pedido cuenta una sola vez en total. Solo adset sin id de anuncio: solo si queda un anuncio claro.'
                       : undefined
                   }
                   style={{
@@ -1212,7 +1276,7 @@ export function MetaInsightsPanel({
                     {level === 'ads' && (
                       <td
                         style={{ padding: '12px 16px' }}
-                        title="Pedidos con utm_term (o utm_content numérico) igual al id del anuncio; sin ambigüedad en la URL no se reparte a varios anuncios"
+                        title="Atribución por id de anuncio en UTMs o URL; con varios ids se desempata por campaña/adset. Sin id de anuncio no se adivina entre varios del mismo adset"
                       >
                         {shopifyPedidosAvailable
                           ? formatNumber(shopifyComprasCountForAdRow(shopifyComprasByAd, row))

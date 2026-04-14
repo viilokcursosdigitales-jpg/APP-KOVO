@@ -340,6 +340,8 @@ function utmFromNoteAttributes(noteAttributes) {
       .trim()
       .toLowerCase()
       .replace(/\s+/g, '_');
+    // "utmterm" / "utm_term" / nombres con guión bajo tras normalizar
+    if (n === 'utmterm' || n === 'utm-term') n = 'utm_term';
     if (!n.startsWith('utm_')) continue;
     let v = na.value != null ? String(na.value).trim() : '';
     if (!v) continue;

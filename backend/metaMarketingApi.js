@@ -140,7 +140,7 @@ function normalizeEntity(entity, level, adAccountId, adAccountName) {
   return {
     adAccountId,
     adAccountName,
-    id: entity.id,
+    id: entity.id != null ? String(entity.id) : '',
     name: entity.name || '(sin nombre)',
     status: entity.effective_status || entity.status || '',
     campaignId: entity.campaign_id ? String(entity.campaign_id) : '',
