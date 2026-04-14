@@ -4,25 +4,6 @@ import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
 
-type GananciaPayload = {
-  date?: string;
-  shop_calendar_timezone?: string;
-  ventas_despachadas_total?: number;
-  ventas_despachadas_pedidos?: number;
-  costo_producto_total?: number;
-  costo_flete_promedio_total?: number;
-  ventas_currency?: string | null;
-  gasto_publicitario_total?: number;
-  meta_currency?: string | null;
-  ganancia?: number | null;
-  utilidad?: number | null;
-  ganancia_comparable?: boolean;
-  warning?: string | null;
-  meta_partial_errors?: { adAccountId: string; error: string }[];
-  error?: string;
-  code?: string;
-};
-
 type SeriesDayRow = {
   date: string;
   ventas_despachadas_total: number;
@@ -121,10 +102,6 @@ const tdStyle: CSSProperties = {
 };
 
 export default function GananciaDiariaPage() {
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [data, setData] = useState<GananciaPayload | null>(null);
-
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [seriesLoading, setSeriesLoading] = useState(true);
   const [seriesError, setSeriesError] = useState('');
@@ -132,30 +109,16 @@ export default function GananciaDiariaPage() {
   const [monthOptions, setMonthOptions] = useState<string[]>([]);
   const [monthsPanelOpen, setMonthsPanelOpen] = useState(false);
   const [pendingMonths, setPendingMonths] = useState<string[]>([]);
-  const [adminPercentInput, setAdminPercentInput] = useState('0');
+  const [adminPercentInput, setAdminPercentInput] = useState(() => {
+    try {
+      return localStorage.getItem('kovo_ganancia_admin_percent') || '0';
+    } catch {
+      return '0';
+    }
+  });
   const skipSeriesEffectOnce = useRef(false);
   const appliedDefaultMonthsOnce = useRef(false);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError('');
-    try {
-      const res = await apiFetch('/api/ganancia-diaria');
-      const body = (await res.json().catch(() => ({}))) as GananciaPayload;
-      if (!res.ok) {
-        setData(null);
-        setError(typeof body.error === 'string' ? body.error : 'No se pudo cargar');
-        return;
-      }
-      setData(body);
-    } catch {
-      setData(null);
-      setError('Error de red');
-    } finally {
-      setLoading(false);
-    }
-  }, []);
 
   const loadSeries = useCallback(async () => {
     setSeriesLoading(true);
@@ -190,16 +153,20 @@ export default function GananciaDiariaPage() {
   }, [selectedMonths]);
 
   useEffect(() => {
-    void load();
-  }, [load]);
-
-  useEffect(() => {
     if (skipSeriesEffectOnce.current) {
       skipSeriesEffectOnce.current = false;
       return;
     }
     void loadSeries();
   }, [selectedMonths, loadSeries]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('kovo_ganancia_admin_percent', adminPercentInput);
+    } catch {
+      /* noop */
+    }
+  }, [adminPercentInput]);
 
   useEffect(() => {
     if (!monthsPanelOpen) return;
@@ -211,14 +178,6 @@ export default function GananciaDiariaPage() {
     document.addEventListener('mousedown', onDown);
     return () => document.removeEventListener('mousedown', onDown);
   }, [monthsPanelOpen]);
-
-  const ventasCur = data?.ventas_currency;
-  const metaCur = data?.meta_currency;
-
-  const metaNote = useMemo(() => {
-    if (!data?.meta_partial_errors?.length) return null;
-    return data.meta_partial_errors.map((e) => `${e.adAccountId}: ${e.error}`).join(' · ');
-  }, [data]);
 
   const seriesMetaNote = useMemo(() => {
     if (!seriesData?.meta_partial_errors?.length) return null;
@@ -279,6 +238,10 @@ export default function GananciaDiariaPage() {
       gasto: g,
       ganancia: comparable ? Math.round(ganSum * 100) / 100 : null,
       utilidad: comparable ? Math.round(utiSum * 100) / 100 : null,
+      utilidadNeta:
+        comparable
+          ? Math.round((v - g - cp - cf - ga) * 100) / 100
+          : null,
     };
   }, [days, comparable, adminPercent]);
 
@@ -289,42 +252,22 @@ export default function GananciaDiariaPage() {
         subtitle="Ventas despachadas (Shopify + estado KOVO) menos gasto Meta, costo del producto y costo de flete promedio. Solo desde el 1 de enero del año en curso hasta hoy (calendario de la tienda)."
       />
 
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 20 }}>
-        <button
-          type="button"
-          onClick={() => void load()}
-          disabled={loading}
-          style={{
-            padding: '8px 16px',
-            borderRadius: 8,
-            border: `1px solid ${ds.borderCard}`,
-            background: ds.brand,
-            color: '#fff',
-            fontWeight: 600,
-            fontSize: 13,
-            cursor: loading ? 'wait' : 'pointer',
-          }}
-        >
-          {loading ? 'Calculando…' : 'Actualizar'}
-        </button>
-      </div>
-
-      {error ? (
-        <p style={{ color: ds.dangerText, fontSize: 14 }}>{error}</p>
-      ) : null}
-
-      {data && !error ? (
+      {!seriesError ? (
         <>
           <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted }}>
-            Fecha contable: <strong style={{ color: ds.textSecondary }}>{data.date}</strong>
-            {data.shop_calendar_timezone ? (
+            Periodo aplicado:{' '}
+            <strong style={{ color: ds.textSecondary }}>
+              {(seriesData?.months_applied || selectedMonths).length
+                ? (seriesData?.months_applied || selectedMonths).map(formatMonthLabel).join(', ')
+                : 'Mes actual'}
+            </strong>
+            {seriesData?.shop_calendar_timezone ? (
               <>
                 {' '}
-                · Zona tienda: <code style={{ fontSize: 11 }}>{data.shop_calendar_timezone}</code>
+                · Zona tienda: <code style={{ fontSize: 11 }}>{seriesData.shop_calendar_timezone}</code>
               </>
             ) : null}
-            . Los pedidos se filtran por <strong>fecha de creación</strong> en Shopify en ese día; solo cuentan con
-            estado interno <strong>Despachado</strong> en Pedidos KOVO (excluye anulados/cancelados).
+            . Los KPI se calculan con el/los mes(es) seleccionados.
           </p>
 
           <div
@@ -340,10 +283,10 @@ export default function GananciaDiariaPage() {
                 Ventas despachadas
               </div>
               <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
-                {formatMoney(Number(data.ventas_despachadas_total) || 0, ventasCur)}
+                {formatMoney(totals.ventas || 0, seriesVentasCur)}
               </div>
               <div style={{ fontSize: 12, color: ds.textHint, marginTop: 6 }}>
-                {data.ventas_despachadas_pedidos ?? 0} pedidos
+                {totals.pedidos ?? 0} pedidos
               </div>
             </div>
             <div style={cardBase}>
@@ -351,10 +294,10 @@ export default function GananciaDiariaPage() {
                 Gasto publicitario (Meta)
               </div>
               <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
-                {formatMoney(Number(data.gasto_publicitario_total) || 0, metaCur || ventasCur)}
+                {formatMoney(totals.gasto || 0, seriesMetaCur || seriesVentasCur)}
               </div>
               <div style={{ fontSize: 12, color: ds.textHint, marginTop: 6 }}>
-                Cuentas vinculadas · {data.meta_currency || '—'}
+                Cuentas vinculadas · {seriesData?.meta_currency || '—'}
               </div>
             </div>
             <div style={cardBase}>
@@ -362,7 +305,7 @@ export default function GananciaDiariaPage() {
                 Costo del producto
               </div>
               <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
-                {formatMoney(Number(data.costo_producto_total) || 0, ventasCur)}
+                {formatMoney(totals.costoProducto || 0, seriesVentasCur)}
               </div>
               <div style={{ fontSize: 12, color: ds.textHint, marginTop: 6 }}>
                 Basado en costo manual por producto en Inventario
@@ -373,7 +316,7 @@ export default function GananciaDiariaPage() {
                 Costo flete promedio
               </div>
               <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
-                {formatMoney(Number(data.costo_flete_promedio_total) || 0, ventasCur)}
+                {formatMoney(totals.costoFletePromedio || 0, seriesVentasCur)}
               </div>
               <div style={{ fontSize: 12, color: ds.textHint, marginTop: 6 }}>
                 Basado en flete promedio manual por producto
@@ -382,37 +325,15 @@ export default function GananciaDiariaPage() {
             <div style={{ ...cardBase, borderColor: ds.brand, background: ds.brandBg }}>
               <div style={{ fontSize: 11, fontWeight: 600, color: ds.brand, marginBottom: 8 }}>Utilidad</div>
               <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
-                {data.utilidad != null && Number.isFinite(data.utilidad)
-                  ? formatMoney(data.utilidad, ventasCur)
+                {totals.utilidadNeta != null && Number.isFinite(totals.utilidadNeta)
+                  ? formatMoney(totals.utilidadNeta, seriesVentasCur)
                   : '—'}
               </div>
               <div style={{ fontSize: 12, color: ds.textSecondary, marginTop: 6 }}>
-                Ventas − gasto Meta − costo producto − flete promedio
+                Ventas − gasto Meta − costo producto − flete promedio − gasto administrativo
               </div>
             </div>
           </div>
-
-          {data.warning ? (
-            <p
-              style={{
-                margin: '0 0 12px',
-                padding: '10px 12px',
-                borderRadius: 10,
-                background: ds.warningBg,
-                color: ds.warningText,
-                fontSize: 13,
-                lineHeight: 1.45,
-              }}
-            >
-              {data.warning}
-            </p>
-          ) : null}
-
-          {metaNote ? (
-            <p style={{ margin: '0 0 20px', fontSize: 12, color: ds.textHint }}>Meta: {metaNote}</p>
-          ) : (
-            <div style={{ marginBottom: 20 }} />
-          )}
 
           <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: ds.textPrimary, flex: '1 1 auto' }}>
