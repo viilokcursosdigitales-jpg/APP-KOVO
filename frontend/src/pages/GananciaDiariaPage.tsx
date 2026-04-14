@@ -294,7 +294,7 @@ export default function GananciaDiariaPage() {
   }, [days, comparable, adminPercent]);
 
   return (
-    <div style={{ maxWidth: 960 }}>
+    <div style={{ width: '100%', maxWidth: 1440 }}>
       <PageHeader
         title="Ganancia Diaria"
         subtitle="Ventas despachadas (Shopify + estado KOVO) menos gasto Meta, costo del producto y costo de flete promedio. Solo desde el 1 de enero del año en curso hasta hoy (calendario de la tienda)."
@@ -357,7 +357,7 @@ export default function GananciaDiariaPage() {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 240px), 1fr))',
               gap: 14,
               marginBottom: 24,
             }}
@@ -487,6 +487,7 @@ export default function GananciaDiariaPage() {
                   fontSize: 13,
                   cursor: !availableMonths.length ? 'not-allowed' : 'pointer',
                   minWidth: 200,
+                  maxWidth: 'min(92vw, 580px)',
                   textAlign: 'left',
                   opacity: !availableMonths.length ? 0.55 : 1,
                 }}
