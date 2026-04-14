@@ -2883,6 +2883,38 @@ function gananciaMergeProductDay(innerMap, contrib) {
   }
 }
 
+/**
+ * Unidades de producto para ganancia diaria (tabla / totales): misma prioridad que Motico "cantidad final".
+ * Suma cantidades de líneas si hay alguna > 0; si no, override (shopify_order_local_fields o pedido manual);
+ * luego defaultQuantity / shopifyQuantity.
+ */
+function effectiveOrderProductQuantityForGanancia(order, localFieldsRow) {
+  const detail = Array.isArray(order?.lineItemsDetail) ? order.lineItemsDetail : [];
+  let fromLines = 0;
+  for (const li of detail) {
+    const q = Number.parseInt(String(li?.quantity ?? 0), 10);
+    if (Number.isFinite(q) && q > 0) fromLines += q;
+  }
+  if (fromLines > 0) return fromLines;
+  let qo = null;
+  if (localFieldsRow) {
+    const raw = localFieldsRow.quantity_override;
+    if (raw != null && raw !== '' && Number.isFinite(Number(raw))) {
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) qo = n;
+    }
+  }
+  if (qo == null && order?.quantity_override != null && Number.isFinite(Number(order.quantity_override))) {
+    const n = Number(order.quantity_override);
+    if (n > 0) qo = n;
+  }
+  if (qo != null) return qo;
+  const def = Number(order?.defaultQuantity ?? 0);
+  if (Number.isFinite(def) && def > 0) return def;
+  const sq = Number(order?.shopifyQuantity ?? 0);
+  return Number.isFinite(sq) && sq > 0 ? sq : 0;
+}
+
 function shopifyConfigured() {
   return Boolean(SHOPIFY_API_KEY && SHOPIFY_API_SECRET && SHOPIFY_REDIRECT_URI);
 }
@@ -3764,13 +3796,8 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasByDay.set(key, (ventasByDay.get(key) || 0) + amt);
       pedidosByDay.set(key, (pedidosByDay.get(key) || 0) + 1);
-      const qtyOverrideRaw = lf?.quantity_override;
-      const qtyOverride =
-        qtyOverrideRaw != null && qtyOverrideRaw !== '' && Number.isFinite(Number(qtyOverrideRaw))
-          ? Number(qtyOverrideRaw)
-          : null;
-      const qtyOrder = qtyOverride != null ? qtyOverride : Number(o.defaultQuantity || 0);
-      qtyByDay.set(key, (qtyByDay.get(key) || 0) + (Number.isFinite(qtyOrder) && qtyOrder > 0 ? qtyOrder : 0));
+      const qtyOrder = effectiveOrderProductQuantityForGanancia(o, lf);
+      qtyByDay.set(key, (qtyByDay.get(key) || 0) + qtyOrder);
       const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap);
       ventasEntregadasByDay.set(
         key,
@@ -3803,13 +3830,8 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasByDay.set(key, (ventasByDay.get(key) || 0) + amt);
       pedidosByDay.set(key, (pedidosByDay.get(key) || 0) + 1);
-      const qtyOverrideRaw = o?.quantity_override;
-      const qtyOverride =
-        qtyOverrideRaw != null && qtyOverrideRaw !== '' && Number.isFinite(Number(qtyOverrideRaw))
-          ? Number(qtyOverrideRaw)
-          : null;
-      const qtyOrder = qtyOverride != null ? qtyOverride : Number(o?.defaultQuantity || 0);
-      qtyByDay.set(key, (qtyByDay.get(key) || 0) + (Number.isFinite(qtyOrder) && qtyOrder > 0 ? qtyOrder : 0));
+      const qtyOrder = effectiveOrderProductQuantityForGanancia(o, null);
+      qtyByDay.set(key, (qtyByDay.get(key) || 0) + qtyOrder);
       const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap);
       ventasEntregadasByDay.set(
         key,
@@ -4062,6 +4084,8 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           .map((li) => (li.variant_title ? `${li.title} (${li.variant_title})` : li.title))
           .join(' + ')
           .slice(0, 600);
+        // La cantidad vive en las líneas; el override de cabecera deja de aplicar y evita mostrar 1 cuando hay 2+ unidades en líneas.
+        quantity_override = null;
       }
       await pool.query(
         `UPDATE motico_manual_orders SET

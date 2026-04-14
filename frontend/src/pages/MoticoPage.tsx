@@ -1119,6 +1119,7 @@ export default function MoticoPage() {
           return;
         }
         patchBody.line_items = normalizedItems;
+        patchBody.quantity_override = null;
       }
 
       const okLocal = await patchLocalFields(editorOrder.id, patchBody);
@@ -1992,12 +1993,14 @@ export default function MoticoPage() {
                         return sum + (Number.isFinite(q) && q > 0 ? q : 0);
                       }, 0)
                     : 0;
-                  /** Última edición KOVO: override de cabecera; si no, suma de líneas; si no, cantidad del pedido (Shopify o manual). */
+                  /** Con líneas: suma de cantidades (fuente de verdad tras editar productos). Sin líneas útiles: override KOVO, luego defaults. */
                   const finalQuantity =
-                    o.quantity_override ?? (qtyFromLines > 0 ? qtyFromLines : null) ?? o.defaultQuantity ?? o.shopifyQuantity;
+                    qtyFromLines > 0
+                      ? qtyFromLines
+                      : (o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity);
                   const finalQtyTitle = [
-                    o.quantity_override != null ? `Override KOVO: ${o.quantity_override}` : null,
                     qtyFromLines > 0 ? `Suma líneas: ${qtyFromLines}` : null,
+                    o.quantity_override != null ? `Override cabecera KOVO: ${o.quantity_override}` : null,
                     o.defaultQuantity != null ? `Predeterminado pedido: ${o.defaultQuantity}` : null,
                     `Cantidad Shopify (referencia): ${o.shopifyQuantity}`,
                   ]
