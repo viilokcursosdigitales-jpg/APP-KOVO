@@ -2581,7 +2581,30 @@ async function loadProductManualPricingMap(organizationId, productIds) {
   return m;
 }
 
-function calculateOrderManualCosts(order, pricingMap) {
+function normalizeLineItemLookupKey(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function buildLineItemTitleToProductIdMap(orders) {
+  const m = new Map();
+  for (const o of Array.isArray(orders) ? orders : []) {
+    const detail = Array.isArray(o?.lineItemsDetail) ? o.lineItemsDetail : [];
+    for (const li of detail) {
+      if (!li || typeof li !== 'object') continue;
+      const pid = Number(li.product_id);
+      if (!Number.isFinite(pid) || pid <= 0) continue;
+      const key = normalizeLineItemLookupKey(li.title || li.name || '');
+      if (!key || m.has(key)) continue;
+      m.set(key, pid);
+    }
+  }
+  return m;
+}
+
+function calculateOrderManualCosts(order, pricingMap, titleToProductIdMap) {
   const detail = Array.isArray(order?.lineItemsDetail) ? order.lineItemsDetail : [];
   let productCost = 0;
   let productDeliveredCost = 0;
@@ -2590,8 +2613,15 @@ function calculateOrderManualCosts(order, pricingMap) {
   let deliveryEffectivenessQty = 0;
   for (const li of detail) {
     if (!li || typeof li !== 'object') continue;
-    const pid = Number(li.product_id);
-    if (!Number.isFinite(pid)) continue;
+    let pid = Number(li.product_id);
+    if (!Number.isFinite(pid) || pid <= 0) {
+      const key = normalizeLineItemLookupKey(li.title || li.name || '');
+      if (key && titleToProductIdMap instanceof Map) {
+        const mappedPid = Number(titleToProductIdMap.get(key));
+        if (Number.isFinite(mappedPid) && mappedPid > 0) pid = mappedPid;
+      }
+    }
+    if (!Number.isFinite(pid) || pid <= 0) continue;
     const qty = Number.parseInt(String(li.quantity ?? 0), 10);
     if (!Number.isFinite(qty) || qty <= 0) continue;
     const pricing = pricingMap.get(pid);
@@ -3241,6 +3271,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
         if (Number.isFinite(pid)) productIds.push(pid);
       }
     }
+    const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap([...normalized, ...manualRows]);
     let manualPricingMap = new Map();
     try {
       manualPricingMap = await loadProductManualPricingMap(req.organizationId, [
@@ -3270,7 +3301,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasTotal += amt;
       ventasPedidos += 1;
-      const costs = calculateOrderManualCosts(o, manualPricingMap);
+      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap);
       ventasEntregadasTotal += amt * ((costs.deliveryEffectivenessPct ?? 100) / 100);
       costoProductoTotal += costs.productCost;
       costoProductoEntregadoTotal += costs.productDeliveredCost;
@@ -3290,7 +3321,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasTotal += amt;
       ventasPedidos += 1;
-      const costs = calculateOrderManualCosts(o, manualPricingMap);
+      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap);
       ventasEntregadasTotal += amt * ((costs.deliveryEffectivenessPct ?? 100) / 100);
       costoProductoTotal += costs.productCost;
       costoProductoEntregadoTotal += costs.productDeliveredCost;
@@ -3461,6 +3492,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         if (Number.isFinite(pid)) productIds.push(pid);
       }
     }
+    const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap([...normalized, ...manualRows]);
     let manualPricingMap = new Map();
     try {
       manualPricingMap = await loadProductManualPricingMap(req.organizationId, [
@@ -3514,7 +3546,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
           : null;
       const qtyOrder = qtyOverride != null ? qtyOverride : Number(o.defaultQuantity || 0);
       qtyByDay.set(key, (qtyByDay.get(key) || 0) + (Number.isFinite(qtyOrder) && qtyOrder > 0 ? qtyOrder : 0));
-      const costs = calculateOrderManualCosts(o, manualPricingMap);
+      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap);
       ventasEntregadasByDay.set(
         key,
         (ventasEntregadasByDay.get(key) || 0) + amt * ((costs.deliveryEffectivenessPct ?? 100) / 100),
@@ -3551,7 +3583,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
           : null;
       const qtyOrder = qtyOverride != null ? qtyOverride : Number(o?.defaultQuantity || 0);
       qtyByDay.set(key, (qtyByDay.get(key) || 0) + (Number.isFinite(qtyOrder) && qtyOrder > 0 ? qtyOrder : 0));
-      const costs = calculateOrderManualCosts(o, manualPricingMap);
+      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap);
       ventasEntregadasByDay.set(
         key,
         (ventasEntregadasByDay.get(key) || 0) + amt * ((costs.deliveryEffectivenessPct ?? 100) / 100),
