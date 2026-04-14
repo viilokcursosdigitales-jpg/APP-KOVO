@@ -39,6 +39,11 @@ const {
   shopifyOrderCreatedRangeForCalendarDate,
   shopCalendarYmdFromInstant,
   parseIsoDateYmd,
+  shopifyFetchAllOrders,
+  shopifyOrderCreatedRangeLastNDaysInclusive,
+  shopifyOrderCreatedRangeNDaysEndingOnInstant,
+  shopifyClampCreatedAtRangeMaxSpanDays,
+  addCalendarDaysYmd,
 } = require('./shopifyService');
 const {
   getPublicAppUrl,
@@ -2260,6 +2265,9 @@ const SHOPIFY_MOTICO_STATUSES = new Set([
 const SHOPIFY_ORDER_LIST_FIELDS =
   'id,name,phone,email,created_at,total_price,total_outstanding,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address,billing_address,landing_site,referring_site,source_name,note_attributes';
 
+/** Máximo de días de calendario (tienda) para listados de pedidos Shopify y analíticas relacionadas. */
+const SHOPIFY_ORDERS_MAX_RANGE_DAYS = 60;
+
 /** Total a pagar por defecto (Shopify): pagado → 0; si no, total_outstanding o total del pedido. */
 function shopifyDefaultTotalAPagar(o) {
   const fin = String(o.financialStatus || '').toLowerCase();
@@ -2275,13 +2283,17 @@ function shopifyDefaultTotalAPagar(o) {
 
 async function loadLocalFieldsMap(organizationId, orderIds) {
   if (!orderIds.length) return new Map();
-  const { rows } = await pool.query(
-    `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, total_a_pagar_override
-     FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = ANY($2::bigint[])`,
-    [organizationId, orderIds],
-  );
+  const CHUNK = 2500;
   const m = new Map();
-  for (const r of rows) m.set(Number(r.shopify_order_id), r);
+  for (let i = 0; i < orderIds.length; i += CHUNK) {
+    const slice = orderIds.slice(i, i + CHUNK);
+    const { rows } = await pool.query(
+      `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, total_a_pagar_override
+       FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = ANY($2::bigint[])`,
+      [organizationId, slice],
+    );
+    for (const r of rows) m.set(Number(r.shopify_order_id), r);
+  }
   return m;
 }
 
@@ -2632,9 +2644,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
-    const limit = Math.min(250, Math.max(1, parseInt(String(req.query.limit || '100'), 10) || 100));
     const qs = new URLSearchParams();
-    qs.set('limit', String(limit));
     qs.set('status', 'any');
     qs.set('fields', SHOPIFY_ORDER_LIST_FIELDS);
     let min = typeof req.query.created_at_min === 'string' ? req.query.created_at_min.trim() : '';
@@ -2655,13 +2665,48 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       max = range.max;
       metaPeriodApplied = eff;
     }
+    if (!shopCalendarTz) {
+      const srTz = await shopifyRequest(row.shop_domain, row.access_token, 'shop.json?fields=iana_timezone');
+      shopCalendarTz =
+        srTz.ok && srTz.data && srTz.data.shop && srTz.data.shop.iana_timezone
+          ? String(srTz.data.shop.iana_timezone)
+          : 'UTC';
+    }
+    const shopTz = shopCalendarTz || 'UTC';
+    if (!metaPeriodRaw || !metaPeriodAllowed.has(metaPeriodRaw)) {
+      if (!min && !max) {
+        const r60 = shopifyOrderCreatedRangeLastNDaysInclusive(shopTz, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
+        min = r60.min;
+        max = r60.max;
+      } else if (min && !max) {
+        const endHoy = shopifyOrderCreatedRangeForMetaPeriod('hoy', shopTz);
+        max = endHoy.max;
+        const c = shopifyClampCreatedAtRangeMaxSpanDays(shopTz, min, max, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
+        min = c.min;
+        max = c.max;
+      } else if (!min && max) {
+        const rEnd = shopifyOrderCreatedRangeNDaysEndingOnInstant(
+          shopTz,
+          SHOPIFY_ORDERS_MAX_RANGE_DAYS,
+          max,
+        );
+        min = rEnd.min;
+        max = rEnd.max;
+      }
+    }
+    if (min && max) {
+      const c = shopifyClampCreatedAtRangeMaxSpanDays(shopTz, min, max, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
+      min = c.min;
+      max = c.max;
+    }
     if (min) qs.set('created_at_min', min);
     if (max) qs.set('created_at_max', max);
-    const r = await shopifyRequest(row.shop_domain, row.access_token, `orders.json?${qs.toString()}`);
+    const r = await shopifyFetchAllOrders(row.shop_domain, row.access_token, qs);
     if (!r.ok) {
-      return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
+      const st = Number(r.status) >= 400 ? Number(r.status) : 502;
+      return res.status(Number.isFinite(st) ? st : 502).json({ error: r.error, data: r.data });
     }
-    const normalized = normalizeShopifyOrdersForApp(r.data);
+    const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
     const ids = normalized.map((o) => o.id);
     let localMap;
     try {
@@ -2752,20 +2797,26 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     if (!ymd) {
       ymd = shopCalendarYmdFromInstant(Date.now(), iana);
     }
+    const todayYmd = shopCalendarYmdFromInstant(Date.now(), iana);
+    const earliestYmd = addCalendarDaysYmd(todayYmd.y, todayYmd.m, todayYmd.d, -(SHOPIFY_ORDERS_MAX_RANGE_DAYS - 1));
+    const ymdKey = (x) => `${String(x.y).padStart(4, '0')}-${String(x.m).padStart(2, '0')}-${String(x.d).padStart(2, '0')}`;
+    if (ymdKey(ymd) < ymdKey(earliestYmd)) {
+      ymd = earliestYmd;
+    }
     const dateStr = `${String(ymd.y).padStart(4, '0')}-${String(ymd.m).padStart(2, '0')}-${String(ymd.d).padStart(2, '0')}`;
     const range = shopifyOrderCreatedRangeForCalendarDate(iana, ymd.y, ymd.m, ymd.d);
 
     const qs = new URLSearchParams();
-    qs.set('limit', '250');
     qs.set('status', 'any');
     qs.set('fields', SHOPIFY_ORDER_LIST_FIELDS);
     qs.set('created_at_min', range.min);
     qs.set('created_at_max', range.max);
-    const r = await shopifyRequest(shopRow.shop_domain, shopRow.access_token, `orders.json?${qs.toString()}`);
+    const r = await shopifyFetchAllOrders(shopRow.shop_domain, shopRow.access_token, qs);
     if (!r.ok) {
-      return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error || 'Error Shopify', data: r.data });
+      const st = Number(r.status) >= 400 ? Number(r.status) : 502;
+      return res.status(Number.isFinite(st) ? st : 502).json({ error: r.error || 'Error Shopify', data: r.data });
     }
-    const normalized = normalizeShopifyOrdersForApp(r.data);
+    const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
     const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
     const localMap = await loadLocalFieldsMap(req.organizationId, ids);
 
@@ -3137,28 +3188,52 @@ app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, 
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
-    const limit = 250;
+    const srTz = await shopifyRequest(row.shop_domain, row.access_token, 'shop.json?fields=iana_timezone');
+    const shopTz =
+      srTz.ok && srTz.data && srTz.data.shop && srTz.data.shop.iana_timezone
+        ? String(srTz.data.shop.iana_timezone)
+        : 'UTC';
+    let min = typeof req.query.created_at_min === 'string' ? req.query.created_at_min.trim() : '';
+    let max = typeof req.query.created_at_max === 'string' ? req.query.created_at_max.trim() : '';
+    if (!min && !max) {
+      const r60 = shopifyOrderCreatedRangeLastNDaysInclusive(shopTz, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
+      min = r60.min;
+      max = r60.max;
+    } else if (min && !max) {
+      const endHoy = shopifyOrderCreatedRangeForMetaPeriod('hoy', shopTz);
+      max = endHoy.max;
+      const c = shopifyClampCreatedAtRangeMaxSpanDays(shopTz, min, max, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
+      min = c.min;
+      max = c.max;
+    } else if (!min && max) {
+      const rEnd = shopifyOrderCreatedRangeNDaysEndingOnInstant(shopTz, SHOPIFY_ORDERS_MAX_RANGE_DAYS, max);
+      min = rEnd.min;
+      max = rEnd.max;
+    }
+    if (min && max) {
+      const c = shopifyClampCreatedAtRangeMaxSpanDays(shopTz, min, max, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
+      min = c.min;
+      max = c.max;
+    }
     const qs = new URLSearchParams();
-    qs.set('limit', String(limit));
     qs.set('status', 'any');
     qs.set(
       'fields',
       'id,name,email,created_at,total_price,currency,financial_status,line_items,customer,order_number',
     );
-    const min = req.query.created_at_min;
-    const max = req.query.created_at_max;
-    if (typeof min === 'string' && min.trim()) qs.set('created_at_min', min.trim());
-    if (typeof max === 'string' && max.trim()) qs.set('created_at_max', max.trim());
+    if (min) qs.set('created_at_min', min);
+    if (max) qs.set('created_at_max', max);
 
     const productIdFilter = req.query.product_id;
     const hasProductFilter = typeof productIdFilter === 'string' && productIdFilter.trim() !== '';
 
-    const r = await shopifyRequest(row.shop_domain, row.access_token, `orders.json?${qs.toString()}`);
+    const r = await shopifyFetchAllOrders(row.shop_domain, row.access_token, qs);
     if (!r.ok) {
-      return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
+      const st = Number(r.status) >= 400 ? Number(r.status) : 502;
+      return res.status(Number.isFinite(st) ? st : 502).json({ error: r.error, data: r.data });
     }
 
-    let orders = (r.data && r.data.orders) || [];
+    let orders = r.orders || [];
     if (hasProductFilter) {
       const pid = productIdFilter.trim();
       orders = orders.filter((o) =>
@@ -3380,11 +3455,23 @@ app.get('/api/shopify/analytics', verifyToken, scopeToOrganization, async (req, 
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
-    const r = await shopifyRequest(row.shop_domain, row.access_token, 'orders.json?status=paid&limit=250');
+    const srTz = await shopifyRequest(row.shop_domain, row.access_token, 'shop.json?fields=iana_timezone');
+    const shopTz =
+      srTz.ok && srTz.data && srTz.data.shop && srTz.data.shop.iana_timezone
+        ? String(srTz.data.shop.iana_timezone)
+        : 'UTC';
+    const r60 = shopifyOrderCreatedRangeLastNDaysInclusive(shopTz, SHOPIFY_ORDERS_MAX_RANGE_DAYS);
+    const qsPaid = new URLSearchParams();
+    qsPaid.set('status', 'paid');
+    qsPaid.set('fields', 'id,total_price,currency');
+    qsPaid.set('created_at_min', r60.min);
+    qsPaid.set('created_at_max', r60.max);
+    const r = await shopifyFetchAllOrders(row.shop_domain, row.access_token, qsPaid);
     if (!r.ok) {
-      return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
+      const st = Number(r.status) >= 400 ? Number(r.status) : 502;
+      return res.status(Number.isFinite(st) ? st : 502).json({ error: r.error, data: r.data });
     }
-    const orders = (r.data && r.data.orders) || [];
+    const orders = r.orders || [];
     let revenue = 0;
     for (const o of orders) {
       revenue += Number.parseFloat(String(o.total_price ?? 0)) || 0;

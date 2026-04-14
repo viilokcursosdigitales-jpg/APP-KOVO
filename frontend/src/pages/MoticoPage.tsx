@@ -547,7 +547,7 @@ export default function MoticoPage() {
       else setRefreshing(true);
       setError('');
       try {
-        const qs = new URLSearchParams({ limit: '250', mensajero_filter: 'motico' });
+        const qs = new URLSearchParams({ mensajero_filter: 'motico' });
         if (dateQuery.min) qs.set('created_at_min', dateQuery.min);
         if (dateQuery.max) qs.set('created_at_max', dateQuery.max);
         if (productId.trim()) qs.set('product_id', productId.trim());

@@ -86,6 +86,80 @@ async function shopifyRequest(shop, accessToken, endpoint, apiVersion = DEFAULT_
 }
 
 /**
+ * @param {string|null|undefined} linkHeader
+ * @param {'next'|'previous'} rel
+ * @returns {string|null} URL absoluta
+ */
+function parseShopifyRestLinkRel(linkHeader, rel) {
+  if (!linkHeader || typeof linkHeader !== 'string') return null;
+  for (const segment of linkHeader.split(',')) {
+    const m = segment.trim().match(/<([^>]+)>\s*;\s*rel="([^"]+)"/);
+    if (m && m[2] === rel) return m[1].trim();
+  }
+  return null;
+}
+
+/**
+ * GET orders.json paginando con cursor (250/página, máximo de Shopify).
+ * @param {string} shop
+ * @param {string} accessToken
+ * @param {URLSearchParams} baseQs parámetros del primer listado (status, fields, created_at_*, etc.; sin page_info)
+ * @param {{ maxPages?: number }} [opts]
+ * @returns {Promise<{ ok: boolean, orders: object[], error?: string, status?: number, data?: object }>}
+ */
+async function shopifyFetchAllOrders(shop, accessToken, baseQs, opts = {}) {
+  const domain = sanitizeShopDomain(shop);
+  if (!domain || !accessToken) {
+    return { ok: false, orders: [], error: 'shop_or_token_invalid' };
+  }
+  const maxPages = Number.isFinite(Number(opts.maxPages)) && Number(opts.maxPages) > 0 ? Number(opts.maxPages) : 2000;
+  const v = DEFAULT_API_VERSION;
+  const all = [];
+  let nextAbsUrl = null;
+  for (let page = 0; page < maxPages; page += 1) {
+    let url;
+    if (nextAbsUrl) {
+      url = nextAbsUrl;
+    } else {
+      const qs = new URLSearchParams(baseQs);
+      qs.set('limit', '250');
+      url = `https://${domain}/admin/api/${v}/orders.json?${qs.toString()}`;
+    }
+    let res;
+    try {
+      res = await fetch(url, {
+        method: 'GET',
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          'Content-Type': 'application/json',
+        },
+      });
+    } catch (e) {
+      return { ok: false, orders: all, error: e.message || 'network', status: 503 };
+    }
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      return {
+        ok: false,
+        orders: all,
+        error: (data.errors && JSON.stringify(data.errors)) || data.error || res.statusText,
+        status: res.status || 502,
+        data,
+      };
+    }
+    const chunk = Array.isArray(data.orders) ? data.orders : [];
+    all.push(...chunk);
+    const link = res.headers.get('link');
+    const next = parseShopifyRestLinkRel(link, 'next');
+    if (!next || chunk.length === 0) {
+      break;
+    }
+    nextAbsUrl = next;
+  }
+  return { ok: true, orders: all };
+}
+
+/**
  * GET/PUT/PATCH a la Admin API (JSON).
  * @param {string} shop
  * @param {string} accessToken
@@ -588,6 +662,60 @@ function parseIsoDateYmd(s) {
   return { y, m: mo, d };
 }
 
+/**
+ * Últimos `numInclusiveDays` días de calendario en la zona de la tienda hasta el final del día de `ref`.
+ * @param {string} ianaTimezone
+ * @param {number} numInclusiveDays ej. 60
+ * @param {Date} [ref]
+ */
+function shopifyOrderCreatedRangeLastNDaysInclusive(ianaTimezone, numInclusiveDays, ref = new Date()) {
+  const tz = String(ianaTimezone || 'UTC').trim() || 'UTC';
+  const n = Math.max(1, Math.min(Math.floor(Number(numInclusiveDays)) || 60, 366));
+  const refMs = ref instanceof Date ? ref.getTime() : Date.now();
+  const { y: Y, m: M, d: D } = wallClockPartsInZone(refMs, tz);
+  const startDay = addCalendarDaysYmd(Y, M, D, -(n - 1));
+  const minMs = utcMillisStartOfZonedCalendarDay(tz, startDay.y, startDay.m, startDay.d);
+  const nextToday = addCalendarDaysYmd(Y, M, D, 1);
+  const maxMs = utcMillisStartOfZonedCalendarDay(tz, nextToday.y, nextToday.m, nextToday.d) - 1;
+  return { min: new Date(minMs).toISOString(), max: new Date(maxMs).toISOString() };
+}
+
+/**
+ * Rango de numInclusiveDays terminando el día de calendario que contiene `endIso` (UTC).
+ * @param {string} ianaTimezone
+ * @param {number} numInclusiveDays
+ * @param {string} endIso
+ */
+function shopifyOrderCreatedRangeNDaysEndingOnInstant(ianaTimezone, numInclusiveDays, endIso) {
+  const tz = String(ianaTimezone || 'UTC').trim() || 'UTC';
+  const n = Math.max(1, Math.min(Math.floor(Number(numInclusiveDays)) || 60, 366));
+  const t = Date.parse(String(endIso));
+  const endMs = Number.isFinite(t) ? t : Date.now();
+  const { y, m, d } = wallClockPartsInZone(endMs, tz);
+  const endR = shopifyOrderCreatedRangeForCalendarDate(tz, y, m, d);
+  const startDay = addCalendarDaysYmd(y, m, d, -(n - 1));
+  const minMs = utcMillisStartOfZonedCalendarDay(tz, startDay.y, startDay.m, startDay.d);
+  return { min: new Date(minMs).toISOString(), max: endR.max };
+}
+
+/**
+ * Si min es anterior a (día de max − maxSpanDays + 1) en calendario tienda, acorta `min`.
+ */
+function shopifyClampCreatedAtRangeMaxSpanDays(ianaTimezone, minIso, maxIso, maxSpanInclusiveDays) {
+  const tz = String(ianaTimezone || 'UTC').trim() || 'UTC';
+  const span = Math.max(1, Math.min(Math.floor(Number(maxSpanInclusiveDays)) || 60, 366));
+  const tMin = Date.parse(String(minIso));
+  const tMax = Date.parse(String(maxIso));
+  if (!Number.isFinite(tMin) || !Number.isFinite(tMax) || tMax < tMin) {
+    return { min: String(minIso), max: String(maxIso) };
+  }
+  const { y, m, d } = wallClockPartsInZone(tMax, tz);
+  const earliest = addCalendarDaysYmd(y, m, d, -(span - 1));
+  const earliestMs = utcMillisStartOfZonedCalendarDay(tz, earliest.y, earliest.m, earliest.d);
+  if (tMin >= earliestMs) return { min: String(minIso), max: String(maxIso) };
+  return { min: new Date(earliestMs).toISOString(), max: String(maxIso) };
+}
+
 function mapFinancialToBadge(financial) {
   const f = String(financial || '').toLowerCase();
   if (f === 'paid') return { label: 'Pagado', variant: 'success' };
@@ -617,5 +745,10 @@ module.exports = {
   shopifyOrderCreatedRangeForCalendarDate,
   shopCalendarYmdFromInstant,
   parseIsoDateYmd,
+  shopifyFetchAllOrders,
+  shopifyOrderCreatedRangeLastNDaysInclusive,
+  shopifyOrderCreatedRangeNDaysEndingOnInstant,
+  shopifyClampCreatedAtRangeMaxSpanDays,
+  addCalendarDaysYmd,
   DEFAULT_API_VERSION,
 };

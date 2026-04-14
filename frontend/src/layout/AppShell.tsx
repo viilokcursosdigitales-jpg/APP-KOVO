@@ -11,6 +11,7 @@ import {
   IconShare,
   IconTarget,
   IconTruck,
+  IconTrendingUp,
   IconUser,
 } from '../design-system/icons';
 
@@ -54,6 +55,12 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
       moduleId: 'indicadores_marketing',
     },
     { to: '/canales', label: 'Canales', icon: <IconShare />, moduleId: 'canales' },
+    {
+      to: '/ganancia-diaria',
+      label: 'Ganancia Diaria',
+      icon: <IconTrendingUp />,
+      moduleId: 'ganancia_diaria',
+    },
   ];
   const account: NavItem[] = [];
   if (canManageOrg) {

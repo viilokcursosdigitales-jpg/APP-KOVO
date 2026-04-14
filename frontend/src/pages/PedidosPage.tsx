@@ -348,7 +348,7 @@ export default function PedidosPage() {
       else setRefreshing(true);
       setShopifyError('');
       try {
-        const qs = new URLSearchParams({ limit: '250' });
+        const qs = new URLSearchParams();
         if (dateQuery.min) qs.set('created_at_min', dateQuery.min);
         if (dateQuery.max) qs.set('created_at_max', dateQuery.max);
         const res = await apiFetch(`/api/shopify/orders?${qs.toString()}`);

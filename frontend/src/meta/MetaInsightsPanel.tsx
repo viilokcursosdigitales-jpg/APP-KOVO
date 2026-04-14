@@ -685,7 +685,6 @@ export function MetaInsightsPanel({
   const loadShopifyPedidosCounts = useCallback(async () => {
     try {
       const qs = new URLSearchParams({
-        limit: '250',
         meta_period: period,
       });
       const res = await apiFetch(`/api/shopify/orders?${qs.toString()}`);
