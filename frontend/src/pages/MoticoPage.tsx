@@ -317,6 +317,8 @@ type ManualCreateDraft = {
   client_email: string;
   order_name: string;
   phone: string;
+  /** Valor input datetime-local; vacío = fecha/hora actual en el servidor. */
+  created_at: string;
   product_summary: string;
   total: string;
   quantity: string;
@@ -335,6 +337,7 @@ function emptyManualDraft(): ManualCreateDraft {
     client_email: '',
     order_name: '',
     phone: '',
+    created_at: '',
     product_summary: '',
     total: '',
     quantity: '1',
@@ -978,25 +981,35 @@ export default function MoticoPage() {
     setManualError('');
     setManualSaving(true);
     try {
+      const payload: Record<string, unknown> = {
+        client_name: manualDraft.client_name.trim(),
+        client_email: manualDraft.client_email.trim(),
+        order_name: manualDraft.order_name.trim(),
+        phone: manualDraft.phone.trim(),
+        product_summary: manualDraft.product_summary.trim(),
+        total: manualDraft.total.trim(),
+        quantity: manualDraft.quantity.trim() || '1',
+        financial_status: manualDraft.financial_status,
+        province: manualDraft.province.trim(),
+        city: manualDraft.city.trim(),
+        address1: manualDraft.address1.trim(),
+        address2: manualDraft.address2.trim(),
+        zip: manualDraft.zip.trim(),
+        country: manualDraft.country.trim(),
+      };
+      const ca = manualDraft.created_at.trim();
+      if (ca) {
+        const ms = Date.parse(ca);
+        if (!Number.isFinite(ms)) {
+          setManualError('Revisa la fecha y hora de creación.');
+          return;
+        }
+        payload.created_at = new Date(ms).toISOString();
+      }
       const res = await apiFetch('/api/motico/manual-orders', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          client_name: manualDraft.client_name.trim(),
-          client_email: manualDraft.client_email.trim(),
-          order_name: manualDraft.order_name.trim(),
-          phone: manualDraft.phone.trim(),
-          product_summary: manualDraft.product_summary.trim(),
-          total: manualDraft.total.trim(),
-          quantity: manualDraft.quantity.trim() || '1',
-          financial_status: manualDraft.financial_status,
-          province: manualDraft.province.trim(),
-          city: manualDraft.city.trim(),
-          address1: manualDraft.address1.trim(),
-          address2: manualDraft.address2.trim(),
-          zip: manualDraft.zip.trim(),
-          country: manualDraft.country.trim(),
-        }),
+        body: JSON.stringify(payload),
       });
       const data = (await res.json().catch(() => ({}))) as { error?: string };
       if (!res.ok) {
@@ -2150,7 +2163,7 @@ export default function MoticoPage() {
             </h3>
             <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted, lineHeight: 1.45 }}>
               El pedido queda solo en KOVO (Motico), no en Shopify. La referencia es opcional; si la dejas vacía se
-              genera una automática (por ejemplo M-42).
+              genera una automática (por ejemplo M-42). La fecha de creación es opcional (por defecto: ahora).
             </p>
             {manualError ? (
               <p style={{ margin: '0 0 12px', fontSize: 13, color: ds.dangerText }}>{manualError}</p>
@@ -2193,6 +2206,15 @@ export default function MoticoPage() {
                 onChange={(e) => setManualDraft((d) => ({ ...d, order_name: e.target.value }))}
                 style={modalFieldStyle}
                 placeholder="Ej. WhatsApp 12 mar"
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Fecha y hora de creación (opcional)
+              <input
+                type="datetime-local"
+                value={manualDraft.created_at}
+                onChange={(e) => setManualDraft((d) => ({ ...d, created_at: e.target.value }))}
+                style={modalFieldStyle}
               />
             </label>
             <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>

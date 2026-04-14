@@ -3760,6 +3760,24 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
     const line_items_json = [{ id: 1, title: product_summary, quantity: qty, price: String(unitPrice) }];
     const total_outstanding = financial_status === 'paid' ? 0 : total;
 
+    let createdAtParam = null;
+    const rawCreated = body.created_at != null ? String(body.created_at).trim() : '';
+    if (rawCreated) {
+      const t = Date.parse(rawCreated);
+      if (!Number.isFinite(t)) {
+        return res.status(400).json({ error: 'Fecha de creación no válida' });
+      }
+      const now = Date.now();
+      if (t > now + 60_000) {
+        return res.status(400).json({ error: 'La fecha de creación no puede ser futura' });
+      }
+      const minMs = now - 10 * 365 * 86400000;
+      if (t < minMs) {
+        return res.status(400).json({ error: 'La fecha de creación no puede ser anterior a hace 10 años' });
+      }
+      createdAtParam = new Date(t).toISOString();
+    }
+
     const initialOrderName = order_name_in || 'M';
     const { rows: insRows } = await pool.query(
       `INSERT INTO motico_manual_orders (
@@ -3773,8 +3791,9 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
         currency,
         shipping_json,
         product_summary,
-        line_items_json
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb)
+        line_items_json,
+        created_at
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, COALESCE($12::timestamptz, now()))
       RETURNING *`,
       [
         req.organizationId,
@@ -3788,6 +3807,7 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
         JSON.stringify(shipping_json),
         product_summary.slice(0, 600),
         JSON.stringify(line_items_json),
+        createdAtParam,
       ],
     );
     const row = insRows[0];
