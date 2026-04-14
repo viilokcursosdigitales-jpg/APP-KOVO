@@ -2065,6 +2065,15 @@ function parseManualPricingNum(v) {
   return { ok: true, value: n };
 }
 
+function parseDeliveryEffectivenessPct(v) {
+  if (v === null || v === undefined || v === '') return { ok: true, value: null };
+  const n = Number.parseFloat(String(v).replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0 || n > 100) {
+    return { ok: false, value: null };
+  }
+  return { ok: true, value: n };
+}
+
 app.get('/api/shopify/product-marketing-targets', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const r = await pool.query(
@@ -2155,9 +2164,14 @@ app.put('/api/shopify/product-manual-pricing', verifyToken, scopeToOrganization,
     if (!freightPriceParsed.ok) {
       return res.status(400).json({ error: 'manual_avg_freight_price inválido' });
     }
+    const deliveryEffectivenessParsed = parseDeliveryEffectivenessPct(req.body?.delivery_effectiveness_pct);
+    if (!deliveryEffectivenessParsed.ok) {
+      return res.status(400).json({ error: 'delivery_effectiveness_pct inválido (0-100)' });
+    }
     const manualProductPrice = productPriceParsed.value;
     const manualAvgFreightPrice = freightPriceParsed.value;
-    if (manualProductPrice == null && manualAvgFreightPrice == null) {
+    const deliveryEffectivenessPct = deliveryEffectivenessParsed.value;
+    if (manualProductPrice == null && manualAvgFreightPrice == null && deliveryEffectivenessPct == null) {
       await pool.query(
         `DELETE FROM shopify_product_manual_pricing
          WHERE organization_id = $1 AND shopify_product_id = $2`,
@@ -2168,23 +2182,26 @@ app.put('/api/shopify/product-manual-pricing', verifyToken, scopeToOrganization,
         product_id: pid,
         manual_product_price: null,
         manual_avg_freight_price: null,
+        delivery_effectiveness_pct: null,
       });
     }
     await pool.query(
       `INSERT INTO shopify_product_manual_pricing
-        (organization_id, shopify_product_id, manual_product_price, manual_avg_freight_price, updated_at)
-       VALUES ($1, $2, $3, $4, now())
+        (organization_id, shopify_product_id, manual_product_price, manual_avg_freight_price, delivery_effectiveness_pct, updated_at)
+       VALUES ($1, $2, $3, $4, $5, now())
        ON CONFLICT (organization_id, shopify_product_id) DO UPDATE SET
          manual_product_price = EXCLUDED.manual_product_price,
          manual_avg_freight_price = EXCLUDED.manual_avg_freight_price,
+         delivery_effectiveness_pct = EXCLUDED.delivery_effectiveness_pct,
          updated_at = now()`,
-      [req.organizationId, pid, manualProductPrice, manualAvgFreightPrice],
+      [req.organizationId, pid, manualProductPrice, manualAvgFreightPrice, deliveryEffectivenessPct],
     );
     return res.json({
       ok: true,
       product_id: pid,
       manual_product_price: manualProductPrice,
       manual_avg_freight_price: manualAvgFreightPrice,
+      delivery_effectiveness_pct: deliveryEffectivenessPct,
     });
   } catch (e) {
     if (e && e.code === '42P01') {
@@ -4363,7 +4380,7 @@ app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, r
     const pricingByProductId = new Map();
     try {
       const pricingRes = await pool.query(
-        `SELECT shopify_product_id, manual_product_price, manual_avg_freight_price
+        `SELECT shopify_product_id, manual_product_price, manual_avg_freight_price, delivery_effectiveness_pct
          FROM shopify_product_manual_pricing
          WHERE organization_id = $1`,
         [req.organizationId],
@@ -4374,6 +4391,8 @@ app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, r
             rowPricing.manual_product_price != null ? Number(rowPricing.manual_product_price) : null,
           manual_avg_freight_price:
             rowPricing.manual_avg_freight_price != null ? Number(rowPricing.manual_avg_freight_price) : null,
+          delivery_effectiveness_pct:
+            rowPricing.delivery_effectiveness_pct != null ? Number(rowPricing.delivery_effectiveness_pct) : null,
         });
       }
     } catch (pricingErr) {
@@ -4389,11 +4408,13 @@ app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, r
       const manual = pricingByProductId.get(productId) || {
         manual_product_price: null,
         manual_avg_freight_price: null,
+        delivery_effectiveness_pct: null,
       };
       return {
         ...product,
         manual_product_price: manual.manual_product_price,
         manual_avg_freight_price: manual.manual_avg_freight_price,
+        delivery_effectiveness_pct: manual.delivery_effectiveness_pct,
       };
     });
     res.json(payload);
