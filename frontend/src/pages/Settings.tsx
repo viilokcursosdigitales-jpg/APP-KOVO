@@ -3,6 +3,7 @@ import { apiFetch } from '../auth/api';
 import { useAuth } from '../auth/AuthContext';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
+import { getStoredTheme, setTheme, type ThemeMode } from '../theme/themeMode';
 import { UpgradeButton } from '../components/UpgradeButton';
 import { inputStyle, labelStyle, primaryButton } from './authStyles';
 
@@ -111,6 +112,8 @@ export default function Settings() {
   const [roleModSaving, setRoleModSaving] = useState(false);
   const [roleModErr, setRoleModErr] = useState('');
 
+  const [themeMode, setThemeMode] = useState<ThemeMode>(() => getStoredTheme());
+
   const loadRoleModules = useCallback(async () => {
     setRoleModErr('');
     const res = await apiFetch('/api/organization/role-modules');
@@ -171,6 +174,11 @@ export default function Settings() {
   useEffect(() => {
     if (canManageOrg) void loadRoleModules();
   }, [canManageOrg, loadRoleModules]);
+
+  const selectTheme = useCallback((mode: ThemeMode) => {
+    setTheme(mode);
+    setThemeMode(mode);
+  }, []);
 
   async function saveOrganization(e: FormEvent) {
     e.preventDefault();
@@ -490,6 +498,67 @@ export default function Settings() {
           ) : null}
         </div>
       ) : null}
+
+        {/* Apariencia */}
+        <section
+          style={{
+            background: ds.bgCard,
+            borderRadius: 14,
+            padding: '18px 20px',
+            marginBottom: 20,
+            border: `1px solid ${ds.borderCard}`,
+          }}
+        >
+          <h2 style={{ margin: '0 0 8px', fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Apariencia</h2>
+          <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.45 }}>
+            Elige modo claro u oscuro. La preferencia se guarda en este navegador.
+          </p>
+          <div
+            style={{
+              display: 'inline-flex',
+              flexWrap: 'wrap',
+              gap: 0,
+              borderRadius: 10,
+              border: `1px solid ${ds.borderCard}`,
+              overflow: 'hidden',
+              background: ds.bgSubtle,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => selectTheme('light')}
+              style={{
+                padding: '10px 20px',
+                border: 'none',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                background: themeMode === 'light' ? ds.bgCard : 'transparent',
+                color: themeMode === 'light' ? ds.brand : ds.textMuted,
+                boxShadow: themeMode === 'light' ? `inset 0 0 0 1px ${ds.borderCard}` : 'none',
+              }}
+            >
+              Modo claro
+            </button>
+            <button
+              type="button"
+              onClick={() => selectTheme('dark')}
+              style={{
+                padding: '10px 20px',
+                border: 'none',
+                fontSize: 13,
+                fontWeight: 600,
+                cursor: 'pointer',
+                borderLeft: `1px solid ${ds.borderCard}`,
+                background: themeMode === 'dark' ? ds.bgCard : 'transparent',
+                color: themeMode === 'dark' ? ds.brand : ds.textMuted,
+                boxShadow: themeMode === 'dark' ? `inset 0 0 0 1px ${ds.borderCard}` : 'none',
+              }}
+            >
+              Modo oscuro
+            </button>
+          </div>
+        </section>
 
         {/* Mi organización */}
         <section
