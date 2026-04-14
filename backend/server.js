@@ -2456,6 +2456,11 @@ function mapMoticoManualOrderRowFromDb(r) {
   const moticoRaw = r.motico_status;
   const motico_status =
     typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : 'confirmado';
+  const assignedDateRaw =
+    ship && typeof ship === 'object'
+      ? String(ship.assigned_date || ship.fecha_asignada || ship.assignedDate || '').trim()
+      : '';
+  const assigned_date = /^\d{4}-\d{2}-\d{2}$/.test(assignedDateRaw) ? assignedDateRaw : null;
   return {
     id: vid,
     orderName: String(r.order_name || `M-${r.id}`),
@@ -2492,8 +2497,19 @@ function mapMoticoManualOrderRowFromDb(r) {
     total_a_pagar_override:
       total_a_pagar_override != null && Number.isFinite(total_a_pagar_override) ? total_a_pagar_override : null,
     total_a_pagar,
+    assigned_date,
     is_motico_manual: true,
   };
+}
+
+function moticoManualOrderAssignedYmd(order, shopTz) {
+  const ymdRaw = String(order?.assigned_date || '').trim();
+  const parsedAssigned = parseIsoDateYmd(ymdRaw);
+  if (parsedAssigned) return gananciaDiariaYmdKey(parsedAssigned);
+  const t = Date.parse(String(order?.createdAt || ''));
+  if (!Number.isFinite(t)) return '';
+  const ymd = shopCalendarYmdFromInstant(t, shopTz || 'UTC');
+  return gananciaDiariaYmdKey(ymd);
 }
 
 async function loadMoticoManualOrdersForOrg(organizationId, minIso, maxIso) {
@@ -3201,7 +3217,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     const localMap = await loadLocalFieldsMap(req.organizationId, ids);
     let manualRows = [];
     try {
-      manualRows = await loadMoticoManualOrdersForOrg(req.organizationId, range.min, range.max);
+      manualRows = await loadMoticoManualOrdersForOrg(req.organizationId, null, null);
     } catch (manualErr) {
       if (!(manualErr && manualErr.code === '42P01')) throw manualErr;
     }
@@ -3256,6 +3272,8 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       costoFletePromedioTotal += costs.avgFreightCost;
     }
     for (const o of manualRows) {
+      const manualDay = moticoManualOrderAssignedYmd(o, iana);
+      if (manualDay !== dateStr) continue;
       const st = String(o?.motico_status || '')
         .trim()
         .toLowerCase()
@@ -3419,7 +3437,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     const localMap = await loadLocalFieldsMap(req.organizationId, ids);
     let manualRows = [];
     try {
-      manualRows = await loadMoticoManualOrdersForOrg(req.organizationId, rangeMin, rangeMax);
+      manualRows = await loadMoticoManualOrdersForOrg(req.organizationId, null, null);
     } catch (manualErr) {
       if (!(manualErr && manualErr.code === '42P01')) throw manualErr;
     }
@@ -3507,10 +3525,8 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       );
     }
     for (const o of manualRows) {
-      const t = Date.parse(String(o?.createdAt || ''));
-      if (!Number.isFinite(t)) continue;
-      const od = shopCalendarYmdFromInstant(t, iana);
-      const key = gananciaDiariaYmdKey(od);
+      const key = moticoManualOrderAssignedYmd(o, iana);
+      if (!key) continue;
       if (!daySet.has(key)) continue;
       const st = String(o?.motico_status || '')
         .trim()
@@ -4150,6 +4166,12 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
     const zip = String(body.zip || '').trim();
     const country = String(body.country || '').trim();
     const phone = String(body.phone || '').trim();
+    const rawCreated = body.created_at != null ? String(body.created_at).trim() : '';
+    let assignedDateYmd = null;
+    if (rawCreated) {
+      const parsed = parseIsoDateYmd(rawCreated.slice(0, 10));
+      if (parsed) assignedDateYmd = gananciaDiariaYmdKey(parsed);
+    }
 
     const shipping_json = {
       name: client_name,
@@ -4160,6 +4182,7 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
       zip,
       country,
       phone,
+      assigned_date: assignedDateYmd,
     };
     const unitPrice = qty > 0 ? Math.round((total / qty) * 10000) / 10000 : total;
     const line_items_json = parsedLines.length
@@ -4193,7 +4216,6 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
     const total_outstanding = financial_status === 'paid' ? 0 : total;
 
     let createdAtParam = null;
-    const rawCreated = body.created_at != null ? String(body.created_at).trim() : '';
     if (rawCreated) {
       const t = Date.parse(rawCreated);
       if (!Number.isFinite(t)) {
