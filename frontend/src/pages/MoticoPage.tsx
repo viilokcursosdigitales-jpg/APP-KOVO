@@ -327,7 +327,6 @@ type ManualCreateDraft = {
   city: string;
   address1: string;
   address2: string;
-  zip: string;
   country: string;
 };
 
@@ -345,22 +344,25 @@ function creationDateAt8amLocalToIso(ymd: string): string | null {
 }
 
 function emptyManualDraft(): ManualCreateDraft {
+  const now = new Date();
+  const yyyy = now.getFullYear();
+  const mm = String(now.getMonth() + 1).padStart(2, '0');
+  const dd = String(now.getDate()).padStart(2, '0');
   return {
     client_name: '',
     client_email: '',
-    order_name: '',
+    order_name: 'Whatsapp',
     phone: '',
-    created_at: '',
+    created_at: `${yyyy}-${mm}-${dd}`,
     product_summary: '',
     total: '',
     quantity: '1',
     financial_status: 'pending',
-    province: '',
-    city: '',
+    province: 'CUNDINAMARCA',
+    city: 'BOGOTA',
     address1: '',
     address2: '',
-    zip: '',
-    country: '',
+    country: 'COLOMBIA',
   };
 }
 
@@ -1007,7 +1009,6 @@ export default function MoticoPage() {
         city: manualDraft.city.trim(),
         address1: manualDraft.address1.trim(),
         address2: manualDraft.address2.trim(),
-        zip: manualDraft.zip.trim(),
         country: manualDraft.country.trim(),
       };
       const ca = manualDraft.created_at.trim();
@@ -1054,11 +1055,7 @@ export default function MoticoPage() {
   useEffect(() => {
     if (!manualModalOpen) return;
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        setManualModalOpen(false);
-        setManualDraft(emptyManualDraft());
-        setManualError('');
-      }
+      if (e.key === 'Escape') e.preventDefault();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -2147,13 +2144,6 @@ export default function MoticoPage() {
           role="dialog"
           aria-modal
           aria-labelledby="motico-manual-title"
-          onClick={(e) => {
-            if (e.target === e.currentTarget) {
-              setManualModalOpen(false);
-              setManualDraft(emptyManualDraft());
-              setManualError('');
-            }
-          }}
         >
           <div
             style={{
@@ -2295,12 +2285,14 @@ export default function MoticoPage() {
             </label>
             <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
               Ciudad
-              <input
-                type="text"
+              <select
                 value={manualDraft.city}
                 onChange={(e) => setManualDraft((d) => ({ ...d, city: e.target.value }))}
-                style={modalFieldStyle}
-              />
+                style={{ ...modalFieldStyle, cursor: 'pointer' }}
+              >
+                <option value="BOGOTA">BOGOTA</option>
+                <option value="SOACHA">SOACHA</option>
+              </select>
             </label>
             <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
               Dirección
@@ -2320,26 +2312,15 @@ export default function MoticoPage() {
                 style={modalFieldStyle}
               />
             </label>
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 14 }}>
-              <label style={{ ...labelStyle, display: 'block' }}>
-                Código postal
-                <input
-                  type="text"
-                  value={manualDraft.zip}
-                  onChange={(e) => setManualDraft((d) => ({ ...d, zip: e.target.value }))}
-                  style={modalFieldStyle}
-                />
-              </label>
-              <label style={{ ...labelStyle, display: 'block' }}>
-                País
-                <input
-                  type="text"
-                  value={manualDraft.country}
-                  onChange={(e) => setManualDraft((d) => ({ ...d, country: e.target.value }))}
-                  style={modalFieldStyle}
-                />
-              </label>
-            </div>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              País
+              <input
+                type="text"
+                value={manualDraft.country}
+                onChange={(e) => setManualDraft((d) => ({ ...d, country: e.target.value }))}
+                style={modalFieldStyle}
+              />
+            </label>
             <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
               <button
                 type="button"
