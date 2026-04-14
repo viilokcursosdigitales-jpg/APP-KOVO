@@ -86,21 +86,35 @@ const cardBase: CSSProperties = {
 
 const thStyle: CSSProperties = {
   textAlign: 'left',
-  fontSize: 11,
+  fontSize: 10,
   fontWeight: 700,
-  color: ds.textMuted,
+  color: '#9b80ff',
+  backgroundColor: '#6c47ff',
   textTransform: 'uppercase',
-  letterSpacing: '0.04em',
-  padding: '10px 12px',
-  borderBottom: `1px solid ${ds.borderRow}`,
-  whiteSpace: 'nowrap',
+  letterSpacing: '0.02em',
+  lineHeight: 1.2,
+  padding: '8px 4px',
+  borderBottom: '1px solid rgba(255,255,255,0.12)',
+  whiteSpace: 'normal',
+  verticalAlign: 'bottom',
+  wordBreak: 'break-word',
+  hyphens: 'auto',
+};
+
+const thRight: CSSProperties = { ...thStyle, textAlign: 'right' };
+
+const tableStyle: CSSProperties = {
+  width: '100%',
+  borderCollapse: 'collapse',
+  tableLayout: 'fixed',
 };
 
 const tdStyle: CSSProperties = {
-  fontSize: 14,
+  fontSize: 13,
   color: ds.textPrimary,
-  padding: '10px 12px',
+  padding: '8px 4px',
   borderBottom: `1px solid ${ds.borderRow}`,
+  wordBreak: 'break-word',
 };
 
 export default function GananciaDiariaPage() {
@@ -480,20 +494,65 @@ export default function GananciaDiariaPage() {
               </div>
             ) : (
               <div style={{ overflowX: 'auto' }}>
-                <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+                <table style={tableStyle}>
+                  <colgroup>
+                    <col style={{ width: '11%' }} />
+                    <col style={{ width: '8%' }} />
+                    <col style={{ width: '8%' }} />
+                    <col style={{ width: '6%' }} />
+                    <col style={{ width: '7%' }} />
+                    <col style={{ width: '9%' }} />
+                    <col style={{ width: '8%' }} />
+                    <col style={{ width: '8%' }} />
+                    <col style={{ width: '7%' }} />
+                    <col style={{ width: '7%' }} />
+                    <col style={{ width: '11%' }} />
+                  </colgroup>
                   <thead>
-                    <tr style={{ background: ds.bgSubtle }}>
+                    <tr style={{ background: '#6c47ff' }}>
                       <th style={thStyle}>Día</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Ventas desp.</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Ventas entreg.</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Pedidos</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Cantidad producto</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Gasto administrativo</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Costo producto</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Costo prod. entreg.</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Flete prom.</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Gasto Meta</th>
-                      <th style={{ ...thStyle, textAlign: 'right' }}>Utilidad</th>
+                      <th style={thRight}>
+                        Vta.
+                        <br />
+                        desp.
+                      </th>
+                      <th style={thRight}>
+                        Vta.
+                        <br />
+                        entreg.
+                      </th>
+                      <th style={thRight}>Ped.</th>
+                      <th style={thRight}>
+                        Cant.
+                        <br />
+                        prod.
+                      </th>
+                      <th style={thRight}>
+                        G.
+                        <br />
+                        admin.
+                      </th>
+                      <th style={thRight}>
+                        Cto.
+                        <br />
+                        prod.
+                      </th>
+                      <th style={thRight}>
+                        Cto.
+                        <br />
+                        entreg.
+                      </th>
+                      <th style={thRight}>
+                        Fl.
+                        <br />
+                        prom.
+                      </th>
+                      <th style={thRight}>
+                        Gasto
+                        <br />
+                        Meta
+                      </th>
+                      <th style={thRight}>Util.</th>
                     </tr>
                   </thead>
                   <tbody>
