@@ -3199,8 +3199,21 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
     const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
     const localMap = await loadLocalFieldsMap(req.organizationId, ids);
+    let manualRows = [];
+    try {
+      manualRows = await loadMoticoManualOrdersForOrg(req.organizationId, range.min, range.max);
+    } catch (manualErr) {
+      if (!(manualErr && manualErr.code === '42P01')) throw manualErr;
+    }
     const productIds = [];
     for (const o of normalized) {
+      const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
+      for (const li of detail) {
+        const pid = Number(li?.product_id);
+        if (Number.isFinite(pid)) productIds.push(pid);
+      }
+    }
+    for (const o of manualRows) {
       const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
       for (const li of detail) {
         const pid = Number(li?.product_id);
@@ -3233,6 +3246,24 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       const fs = String(o.financialStatus || '').toLowerCase();
       if (excludeFin.has(fs)) continue;
       const amt = parseFloat(String(o.total || '0').replace(',', '.'));
+      if (!Number.isFinite(amt) || amt < 0) continue;
+      ventasTotal += amt;
+      ventasPedidos += 1;
+      const costs = calculateOrderManualCosts(o, manualPricingMap);
+      ventasEntregadasTotal += amt * ((costs.deliveryEffectivenessPct ?? 100) / 100);
+      costoProductoTotal += costs.productCost;
+      costoProductoEntregadoTotal += costs.productDeliveredCost;
+      costoFletePromedioTotal += costs.avgFreightCost;
+    }
+    for (const o of manualRows) {
+      const st = String(o?.motico_status || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_');
+      if (st !== 'despachado') continue;
+      const fs = String(o?.financialStatus || '').toLowerCase();
+      if (excludeFin.has(fs)) continue;
+      const amt = parseFloat(String(o?.total || '0').replace(',', '.'));
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasTotal += amt;
       ventasPedidos += 1;
@@ -3386,8 +3417,21 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
     const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
     const localMap = await loadLocalFieldsMap(req.organizationId, ids);
+    let manualRows = [];
+    try {
+      manualRows = await loadMoticoManualOrdersForOrg(req.organizationId, rangeMin, rangeMax);
+    } catch (manualErr) {
+      if (!(manualErr && manualErr.code === '42P01')) throw manualErr;
+    }
     const productIds = [];
     for (const o of normalized) {
+      const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
+      for (const li of detail) {
+        const pid = Number(li?.product_id);
+        if (Number.isFinite(pid)) productIds.push(pid);
+      }
+    }
+    for (const o of manualRows) {
       const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
       for (const li of detail) {
         const pid = Number(li?.product_id);
@@ -3446,6 +3490,45 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
           ? Number(qtyOverrideRaw)
           : null;
       const qtyOrder = qtyOverride != null ? qtyOverride : Number(o.defaultQuantity || 0);
+      qtyByDay.set(key, (qtyByDay.get(key) || 0) + (Number.isFinite(qtyOrder) && qtyOrder > 0 ? qtyOrder : 0));
+      const costs = calculateOrderManualCosts(o, manualPricingMap);
+      ventasEntregadasByDay.set(
+        key,
+        (ventasEntregadasByDay.get(key) || 0) + amt * ((costs.deliveryEffectivenessPct ?? 100) / 100),
+      );
+      costoProductoByDay.set(key, (costoProductoByDay.get(key) || 0) + costs.productCost);
+      costoProductoEntregadoByDay.set(
+        key,
+        (costoProductoEntregadoByDay.get(key) || 0) + costs.productDeliveredCost,
+      );
+      costoFletePromedioByDay.set(
+        key,
+        (costoFletePromedioByDay.get(key) || 0) + costs.avgFreightCost,
+      );
+    }
+    for (const o of manualRows) {
+      const t = Date.parse(String(o?.createdAt || ''));
+      if (!Number.isFinite(t)) continue;
+      const od = shopCalendarYmdFromInstant(t, iana);
+      const key = gananciaDiariaYmdKey(od);
+      if (!daySet.has(key)) continue;
+      const st = String(o?.motico_status || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '_');
+      if (st !== 'despachado') continue;
+      const fs = String(o?.financialStatus || '').toLowerCase();
+      if (excludeFin.has(fs)) continue;
+      const amt = parseFloat(String(o?.total || '0').replace(',', '.'));
+      if (!Number.isFinite(amt) || amt < 0) continue;
+      ventasByDay.set(key, (ventasByDay.get(key) || 0) + amt);
+      pedidosByDay.set(key, (pedidosByDay.get(key) || 0) + 1);
+      const qtyOverrideRaw = o?.quantity_override;
+      const qtyOverride =
+        qtyOverrideRaw != null && qtyOverrideRaw !== '' && Number.isFinite(Number(qtyOverrideRaw))
+          ? Number(qtyOverrideRaw)
+          : null;
+      const qtyOrder = qtyOverride != null ? qtyOverride : Number(o?.defaultQuantity || 0);
       qtyByDay.set(key, (qtyByDay.get(key) || 0) + (Number.isFinite(qtyOrder) && qtyOrder > 0 ? qtyOrder : 0));
       const costs = calculateOrderManualCosts(o, manualPricingMap);
       ventasEntregadasByDay.set(
