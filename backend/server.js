@@ -2339,6 +2339,7 @@ const SHOPIFY_MENSAJEROS = new Set(['motico', 'dropi', 'effix']);
 const MOTICO_STATUS_DEFAULT = 'sin_revisar';
 const SHOPIFY_MOTICO_STATUSES = new Set([
   MOTICO_STATUS_DEFAULT,
+  'sin_confirmar',
   'confirmado',
   'imprimir_guia',
   'despachado',

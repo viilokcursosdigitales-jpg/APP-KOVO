@@ -29,7 +29,7 @@ const DEMO = [
 ];
 
 const INTERNAL_OPTIONS = [
-  { value: 'sin_confirmar', label: 'Sin revisar' },
+  { value: 'sin_confirmar', label: 'Sin confirmar' },
   { value: 'confirmado', label: 'Confirmado' },
   { value: 'despachado', label: 'Despachado' },
   { value: 'prueba', label: 'Prueba' },
@@ -282,9 +282,9 @@ function estadoSelectStyle(internalStatus: string): CSSProperties {
   switch (internalStatus) {
     case 'sin_confirmar':
       return {
-        background: '#f3f4f6',
-        color: '#4b5563',
-        borderColor: '#d1d5db',
+        background: '#ffedd5',
+        color: '#9a3412',
+        borderColor: '#fdba74',
       };
     case 'confirmado':
       return {

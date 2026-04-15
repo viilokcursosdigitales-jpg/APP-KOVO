@@ -40,6 +40,14 @@ const MOTICO_STATUS_OPTIONS = [
     chipBorder: '#d1d5db',
   },
   {
+    value: 'sin_confirmar',
+    label: 'Sin confirmar',
+    rowColor: '#fb923c',
+    chipBg: '#ffedd5',
+    chipFg: '#9a3412',
+    chipBorder: '#fdba74',
+  },
+  {
     value: 'confirmado',
     label: 'Confirmado',
     rowColor: '#16a34a',
