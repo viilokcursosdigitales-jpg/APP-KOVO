@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { KpiCard } from '../design-system/KpiCard';
@@ -742,6 +742,8 @@ function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
 }
 
 export default function MoticoPage() {
+  const location = useLocation();
+  const navigate = useNavigate();
   const [datePreset, setDatePreset] = useState<DatePreset>('hoy');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -1764,6 +1766,18 @@ export default function MoticoPage() {
     return () => window.clearInterval(id);
   }, [shopifyConnected, loadData]);
 
+  useEffect(() => {
+    if (!shopifyConnected) return;
+    const qs = new URLSearchParams(location.search);
+    if (qs.get('crear_manual') !== '1') return;
+    setManualOrderNamePreview(`Whatsapp #${getNextManualWhatsappOrderNumber(orders)}`);
+    setManualError('');
+    setManualDraft(emptyManualDraft());
+    setManualModalOpen(true);
+    qs.delete('crear_manual');
+    navigate({ pathname: location.pathname, search: qs.toString() ? `?${qs.toString()}` : '' }, { replace: true });
+  }, [location.pathname, location.search, navigate, orders, shopifyConnected]);
+
   const useLive = shopifyConnected && shopDomain;
 
   return (
@@ -1778,28 +1792,6 @@ export default function MoticoPage() {
         right={
           useLive ? (
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, justifyContent: 'flex-end' }}>
-              <button
-                type="button"
-                disabled={refreshing || loading || manualSaving}
-                onClick={() => {
-                  setManualOrderNamePreview(`Whatsapp #${getNextManualWhatsappOrderNumber(orders)}`);
-                  setManualError('');
-                  setManualDraft(emptyManualDraft());
-                  setManualModalOpen(true);
-                }}
-                style={{
-                  padding: '7px 14px',
-                  borderRadius: 8,
-                  border: `1px solid ${ds.brand}`,
-                  background: ds.brandBg,
-                  color: ds.brand,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor: refreshing || loading || manualSaving ? 'wait' : 'pointer',
-                }}
-              >
-                Nuevo pedido manual
-              </button>
               <button
                 type="button"
                 disabled={refreshing || loading}

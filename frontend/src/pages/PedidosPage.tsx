@@ -875,6 +875,25 @@ export default function PedidosPage() {
               <button
                 type="button"
                 disabled={refreshing || shopifyLoading}
+                onClick={() => navigate('/motico?crear_manual=1')}
+                style={{
+                  padding: '7px 14px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.brand}`,
+                  background: ds.brandBg,
+                  color: ds.brand,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: refreshing || shopifyLoading ? 'wait' : 'pointer',
+                }}
+              >
+                Nuevo pedido manual
+              </button>
+            ) : null}
+            {useLive ? (
+              <button
+                type="button"
+                disabled={refreshing || shopifyLoading}
                 onClick={() => void loadShopifyOrders()}
                 style={{
                   padding: '7px 14px',
