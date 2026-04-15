@@ -517,6 +517,7 @@ function normalizeShopifyOrdersForApp(apiData) {
       return {
       id: li.id,
       product_id: li.product_id != null ? Number(li.product_id) : null,
+      variant_id: li.variant_id != null && Number.isFinite(Number(li.variant_id)) ? Number(li.variant_id) : null,
       title,
       name,
       variant_title,

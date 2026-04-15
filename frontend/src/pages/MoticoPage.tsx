@@ -106,6 +106,32 @@ type LineItemDetail = {
   properties?: { name: string; value: string }[];
 };
 
+const MOTICO_RELACION_MAX_Q_PER_LINE = 50;
+
+/** Una fila de relación por unidad vendida (como pedidos manuales con qty 1 por fila). */
+function expandLineItemsByQuantityForShopifyRelacion(details: LineItemDetail[]): LineItemDetail[] {
+  if (!details.length) return details;
+  const out: LineItemDetail[] = [];
+  let synthetic = 0;
+  for (const li of details) {
+    const q = Math.max(
+      0,
+      Math.min(MOTICO_RELACION_MAX_Q_PER_LINE, Math.floor(Number(li.quantity) || 0)),
+    );
+    if (q <= 0) continue;
+    const baseId = typeof li.id === 'number' && Number.isFinite(li.id) ? li.id : 0;
+    for (let k = 0; k < q; k += 1) {
+      synthetic += 1;
+      out.push({
+        ...li,
+        id: baseId * 1000 + synthetic,
+        quantity: 1,
+      });
+    }
+  }
+  return out.length ? out : details;
+}
+
 type MoticoOrderRow = {
   id: number;
   orderName: string;
@@ -968,7 +994,11 @@ export default function MoticoPage() {
         .flatMap((li) => (Array.isArray(li.properties) ? li.properties : []))
         .find((p) => /^observ/i.test(String(p.name || '').trim()) && String(p.value || '').trim())
         ?.value;
-      const details = o.lineItemsDetail || [];
+      const rawDetails = o.lineItemsDetail || [];
+      const details =
+        !o.is_motico_manual && o.id > 0
+          ? expandLineItemsByQuantityForShopifyRelacion(rawDetails)
+          : rawDetails;
       let lines: MoticoGuideExportLine[];
       if (details.length) {
         lines = details.map((li, idx) => {

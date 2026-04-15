@@ -212,6 +212,36 @@ function formatCobroDisplay(value: number, currency: string): string {
   }
 }
 
+const LOCALE_RELACION_EXCEL = 'es-CO';
+
+/**
+ * Relación Excel / vista previa: minúsculas con mayúscula solo en la inicial de cada palabra (letras Unicode).
+ * Los números finitos no se alteran. No usar sobre el texto ya formateado de COBRO.
+ */
+export function toMoticoRelacionExcelDisplayCase(raw: string | number | null | undefined): string | number {
+  if (raw == null) return '';
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw;
+  const s = String(raw).trim();
+  if (!s) return '';
+  const lower = s.toLocaleLowerCase(LOCALE_RELACION_EXCEL);
+  return lower.replace(/\p{L}+/gu, (w) => {
+    if (!w) return w;
+    return (
+      w.charAt(0).toLocaleUpperCase(LOCALE_RELACION_EXCEL) + w.slice(1).toLocaleLowerCase(LOCALE_RELACION_EXCEL)
+    );
+  });
+}
+
+/** Fila de datos: columna 9 = cobro sin reformatear; el resto pasa por {@link toMoticoRelacionExcelDisplayCase}. */
+function relacionExcelRowDisplayValues(values: (string | number)[]): (string | number)[] {
+  return values.map((v, idx) => {
+    const col = idx + 1;
+    if (col === 9) return v;
+    if (typeof v === 'number' && Number.isFinite(v)) return v;
+    return toMoticoRelacionExcelDisplayCase(v);
+  });
+}
+
 const HEADER_FILL = 'FF6C47FF';
 const THIN_BORDER: Partial<ExcelJS.Borders> = {
   top: { style: 'thin', color: { argb: 'FF000000' } },
@@ -263,15 +293,15 @@ export function buildMoticoGuidesExcelPreviewRows(
       const line = ord.lines[i];
       rows.push({
         orderIndex: ord.orderIndex,
-        cliente: ord.cliente,
-        celular: ord.celular,
-        direccion: ord.direccion,
-        ciudad: ord.ciudad,
-        producto: line.producto,
-        variable: moticoGuideVariableForExcelCell(line.variable),
-        talla: line.talla,
+        cliente: String(toMoticoRelacionExcelDisplayCase(ord.cliente)),
+        celular: String(toMoticoRelacionExcelDisplayCase(ord.celular)),
+        direccion: String(toMoticoRelacionExcelDisplayCase(ord.direccion)),
+        ciudad: String(toMoticoRelacionExcelDisplayCase(ord.ciudad)),
+        producto: String(toMoticoRelacionExcelDisplayCase(line.producto)),
+        variable: String(toMoticoRelacionExcelDisplayCase(moticoGuideVariableForExcelCell(line.variable))),
+        talla: String(toMoticoRelacionExcelDisplayCase(line.talla)),
         cobro: cobroStr,
-        observacion,
+        observacion: String(toMoticoRelacionExcelDisplayCase(observacion)),
         lineIndex: i,
         lineCount: n,
       });
@@ -281,7 +311,7 @@ export function buildMoticoGuidesExcelPreviewRows(
 }
 
 function fillMoticoGuidesWorksheet(ws: ExcelJS.Worksheet, orders: MoticoGuideExportOrder[], currency: string): void {
-  ws.addRow([...MOTICO_GUIAS_EXCEL_COLUMN_HEADERS]);
+  ws.addRow([...MOTICO_GUIAS_EXCEL_COLUMN_HEADERS.map((h) => String(toMoticoRelacionExcelDisplayCase(h)))]);
   const headerRow = ws.getRow(1);
   headerRow.height = 22;
   headerRow.eachCell((cell, col) => {
@@ -302,18 +332,20 @@ function fillMoticoGuidesWorksheet(ws: ExcelJS.Worksheet, orders: MoticoGuideExp
 
     for (let i = 0; i < n; i++) {
       const line = ord.lines[i];
-      const row = ws.addRow([
-        ord.orderIndex,
-        ord.cliente,
-        ord.celular,
-        ord.direccion,
-        ord.ciudad,
-        line.producto,
-        moticoGuideVariableForExcelCell(line.variable),
-        line.talla,
-        cobroStr,
-        ord.observacion || '',
-      ]);
+      const row = ws.addRow(
+        relacionExcelRowDisplayValues([
+          ord.orderIndex,
+          ord.cliente,
+          ord.celular,
+          ord.direccion,
+          ord.ciudad,
+          line.producto,
+          moticoGuideVariableForExcelCell(line.variable),
+          line.talla,
+          cobroStr,
+          ord.observacion || '',
+        ]),
+      );
       row.eachCell((cell, col) => {
         cell.border = THIN_BORDER;
         if (col === 1 || col === 5) {

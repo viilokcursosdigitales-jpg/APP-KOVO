@@ -3262,9 +3262,14 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
+    const mensajeroFilter =
+      typeof req.query.mensajero_filter === 'string' ? req.query.mensajero_filter.trim().toLowerCase() : '';
     const qs = new URLSearchParams();
     qs.set('status', 'any');
-    qs.set('fields', SHOPIFY_ORDER_LIST_FIELDS);
+    /** Motico necesita cada línea de producto completa; `fields` en listados puede acortar `line_items`. */
+    if (mensajeroFilter !== 'motico') {
+      qs.set('fields', SHOPIFY_ORDER_LIST_FIELDS);
+    }
     let min = typeof req.query.created_at_min === 'string' ? req.query.created_at_min.trim() : '';
     let max = typeof req.query.created_at_max === 'string' ? req.query.created_at_max.trim() : '';
     const metaPeriodRaw = typeof req.query.meta_period === 'string' ? req.query.meta_period.trim().toLowerCase() : '';
@@ -3363,7 +3368,6 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         shopifyQuantity: o.defaultQuantity,
       };
     });
-    const mensajeroFilter = typeof req.query.mensajero_filter === 'string' ? req.query.mensajero_filter.trim().toLowerCase() : '';
     if (mensajeroFilter === 'motico') {
       try {
         const minIso = min && String(min).trim() ? String(min).trim() : null;
