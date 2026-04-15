@@ -94,7 +94,7 @@ CREATE TABLE IF NOT EXISTS shopify_order_local_fields (
   price_override NUMERIC(14, 4),
   quantity_override INTEGER,
   mensajero VARCHAR(32),
-  motico_status VARCHAR(32) NOT NULL DEFAULT 'confirmado',
+  motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
   total_a_pagar_override NUMERIC(14, 4),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (organization_id, shopify_order_id)
@@ -188,7 +188,7 @@ CREATE TABLE IF NOT EXISTS motico_manual_orders (
   line_items_json JSONB NOT NULL DEFAULT '[]'::jsonb,
   price_override NUMERIC(14, 4),
   quantity_override INTEGER,
-  motico_status VARCHAR(32) NOT NULL DEFAULT 'confirmado',
+  motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
   total_a_pagar_override NUMERIC(14, 4)
 );
 

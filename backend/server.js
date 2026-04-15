@@ -2336,7 +2336,9 @@ const SHOPIFY_INTERNAL_STATUSES = new Set([
   'cancelado',
 ]);
 const SHOPIFY_MENSAJEROS = new Set(['motico', 'dropi', 'effix']);
+const MOTICO_STATUS_DEFAULT = 'sin_revisar';
 const SHOPIFY_MOTICO_STATUSES = new Set([
+  MOTICO_STATUS_DEFAULT,
   'confirmado',
   'imprimir_guia',
   'despachado',
@@ -2463,7 +2465,7 @@ function mapMoticoManualOrderRowFromDb(r) {
   const phoneLocal = moticoPhoneDigitsLocal(rawPhone);
   const moticoRaw = r.motico_status;
   const motico_status =
-    typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : 'confirmado';
+    typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : MOTICO_STATUS_DEFAULT;
   const assignedDateRaw =
     ship && typeof ship === 'object'
       ? String(ship.assigned_date || ship.fecha_asignada || ship.assignedDate || '').trim()
@@ -3343,7 +3345,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       const lf = localMap.get(Number(o.id));
       const moticoRaw = lf?.motico_status;
       const motico_status =
-        typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : 'confirmado';
+        typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : MOTICO_STATUS_DEFAULT;
       const total_a_pagar_default = shopifyDefaultTotalAPagar(o);
       const total_a_pagar_override =
         lf?.total_a_pagar_override != null && lf.total_a_pagar_override !== ''
@@ -3439,7 +3441,7 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
     const lf = localMap.get(orderId);
     const moticoRaw = lf?.motico_status;
     const motico_status =
-      typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : 'confirmado';
+      typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : MOTICO_STATUS_DEFAULT;
     const total_a_pagar_default = shopifyDefaultTotalAPagar(o);
     const total_a_pagar_override =
       lf?.total_a_pagar_override != null && lf.total_a_pagar_override !== ''
@@ -4058,7 +4060,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       }
       const cur = mrows[0];
       const currentMoticoStatus =
-        cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : 'confirmado';
+        cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : MOTICO_STATUS_DEFAULT;
       if (LOCKED_MOTICO_STATUSES.has(currentMoticoStatus)) {
         return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
       }
@@ -4085,8 +4087,8 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         }
       }
       let motico_status =
-        cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : 'confirmado';
-      if (!SHOPIFY_MOTICO_STATUSES.has(motico_status)) motico_status = 'confirmado';
+        cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : MOTICO_STATUS_DEFAULT;
+      if (!SHOPIFY_MOTICO_STATUSES.has(motico_status)) motico_status = MOTICO_STATUS_DEFAULT;
       if (body.motico_status !== undefined) {
         const ms = String(body.motico_status);
         if (!SHOPIFY_MOTICO_STATUSES.has(ms)) {
@@ -4210,7 +4212,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
     );
     const cur = existing[0] || {};
     const currentMoticoStatus =
-      cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : 'confirmado';
+      cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : MOTICO_STATUS_DEFAULT;
     if (LOCKED_MOTICO_STATUSES.has(currentMoticoStatus)) {
       return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
     }
@@ -4265,8 +4267,8 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
     let motico_status =
       cur.motico_status != null && String(cur.motico_status) !== ''
         ? String(cur.motico_status)
-        : 'confirmado';
-    if (!SHOPIFY_MOTICO_STATUSES.has(motico_status)) motico_status = 'confirmado';
+        : MOTICO_STATUS_DEFAULT;
+    if (!SHOPIFY_MOTICO_STATUSES.has(motico_status)) motico_status = MOTICO_STATUS_DEFAULT;
     if (body.motico_status !== undefined) {
       const ms = String(body.motico_status);
       if (!SHOPIFY_MOTICO_STATUSES.has(ms)) {
@@ -4418,7 +4420,7 @@ app.put(
         const manualStatus =
           rows[0].motico_status != null && String(rows[0].motico_status) !== ''
             ? String(rows[0].motico_status)
-            : 'confirmado';
+            : MOTICO_STATUS_DEFAULT;
         if (LOCKED_MOTICO_STATUSES.has(manualStatus)) {
           return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
         }
@@ -4477,7 +4479,7 @@ app.put(
       const lockedStatus =
         lockRows[0]?.motico_status != null && String(lockRows[0].motico_status) !== ''
           ? String(lockRows[0].motico_status)
-          : 'confirmado';
+          : MOTICO_STATUS_DEFAULT;
       if (LOCKED_MOTICO_STATUSES.has(lockedStatus)) {
         return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
       }

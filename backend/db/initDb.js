@@ -110,16 +110,19 @@ async function initDb(pool) {
       price_override NUMERIC(14, 4),
       quantity_override INTEGER,
       mensajero VARCHAR(32),
-      motico_status VARCHAR(32) NOT NULL DEFAULT 'confirmado',
+      motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (organization_id, shopify_order_id)
     )
   `);
   await pool.query(
-    `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS motico_status VARCHAR(32) DEFAULT 'confirmado'`,
+    `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS motico_status VARCHAR(32) DEFAULT 'sin_revisar'`,
   );
   await pool.query(
-    `UPDATE shopify_order_local_fields SET motico_status = 'confirmado' WHERE motico_status IS NULL`,
+    `UPDATE shopify_order_local_fields SET motico_status = 'sin_revisar' WHERE motico_status IS NULL`,
+  );
+  await pool.query(
+    `ALTER TABLE shopify_order_local_fields ALTER COLUMN motico_status SET DEFAULT 'sin_revisar'`,
   );
   await pool.query(
     `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS total_a_pagar_override NUMERIC(14, 4)`,
@@ -209,10 +212,13 @@ async function initDb(pool) {
       line_items_json JSONB NOT NULL DEFAULT '[]'::jsonb,
       price_override NUMERIC(14, 4),
       quantity_override INTEGER,
-      motico_status VARCHAR(32) NOT NULL DEFAULT 'confirmado',
+      motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
       total_a_pagar_override NUMERIC(14, 4)
     )
   `);
+  await pool.query(
+    `ALTER TABLE motico_manual_orders ALTER COLUMN motico_status SET DEFAULT 'sin_revisar'`,
+  );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_motico_manual_org_created ON motico_manual_orders (organization_id, created_at DESC)`,
   );

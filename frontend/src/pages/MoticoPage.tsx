@@ -29,7 +29,16 @@ import {
 const POLL_MS = 25_000;
 const MOTICO_TOTAL_APAGAR_DEBOUNCE_MS = 450;
 const MAX_LOGO_BYTES = 400_000;
+const MOTICO_STATUS_DEFAULT = 'sin_revisar';
 const MOTICO_STATUS_OPTIONS = [
+  {
+    value: MOTICO_STATUS_DEFAULT,
+    label: 'Sin revisar',
+    rowColor: '#9ca3af',
+    chipBg: '#f3f4f6',
+    chipFg: '#374151',
+    chipBorder: '#d1d5db',
+  },
   {
     value: 'confirmado',
     label: 'Confirmado',
@@ -570,7 +579,7 @@ function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
           }
         : null,
     mensajero: o.mensajero || null,
-    motico_status: allowed.has(o.motico_status) ? o.motico_status : 'confirmado',
+    motico_status: allowed.has(o.motico_status) ? o.motico_status : MOTICO_STATUS_DEFAULT,
     price_override: o.price_override != null ? Number(o.price_override) : null,
     quantity_override: o.quantity_override != null ? Number(o.quantity_override) : null,
     shopifyQuantity: Number(o.shopifyQuantity ?? o.defaultQuantity) || 0,
@@ -2283,7 +2292,7 @@ export default function MoticoPage() {
               </thead>
               <tbody>
                 {filteredOrders.map((o, i, arr) => {
-                  const meta = STATUS_META[o.motico_status] || STATUS_META.confirmado;
+                  const meta = STATUS_META[o.motico_status] || STATUS_META[MOTICO_STATUS_DEFAULT];
                   const sa = o.shippingAddress;
                   const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
                   const showPrice = formatMoneyFromString(
