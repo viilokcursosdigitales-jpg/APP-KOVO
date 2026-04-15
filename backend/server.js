@@ -32,6 +32,7 @@ const {
   verifyShopifyWebhookHmac,
   shopifyRequest,
   shopifySyncFirstLineItemQuantityAndPrice,
+  shopifySyncFirstLineItemVariantQuantityAndPrice,
   shopifyUpdateOrderShippingAddress,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
@@ -3408,6 +3409,73 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
   }
 });
 
+app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const orderId = parseInt(String(req.params.orderId), 10);
+    if (!Number.isFinite(orderId) || orderId <= 0) {
+      return res.status(400).json({ error: 'ID de pedido inválido' });
+    }
+    const row = await getActiveShopifyConnection(req.organizationId);
+    if (!row) {
+      return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
+    }
+    const r = await shopifyRequest(
+      row.shop_domain,
+      row.access_token,
+      `orders/${orderId}.json?fields=${SHOPIFY_ORDER_LIST_FIELDS}`,
+    );
+    if (!r.ok) {
+      const st = Number(r.status) >= 400 ? Number(r.status) : 502;
+      return res.status(Number.isFinite(st) ? st : 502).json({ error: r.error, data: r.data });
+    }
+    const normalized = normalizeShopifyOrdersForApp({
+      orders: r.data && r.data.order ? [r.data.order] : [],
+    });
+    if (!normalized.length) {
+      return res.status(404).json({ error: 'Pedido no encontrado' });
+    }
+    const o = normalized[0];
+    const localMap = await loadLocalFieldsMap(req.organizationId, [orderId]);
+    const lf = localMap.get(orderId);
+    const moticoRaw = lf?.motico_status;
+    const motico_status =
+      typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : 'confirmado';
+    const total_a_pagar_default = shopifyDefaultTotalAPagar(o);
+    const total_a_pagar_override =
+      lf?.total_a_pagar_override != null && lf.total_a_pagar_override !== ''
+        ? Number(lf.total_a_pagar_override)
+        : null;
+    const total_a_pagar =
+      total_a_pagar_override != null && Number.isFinite(total_a_pagar_override)
+        ? total_a_pagar_override
+        : total_a_pagar_default;
+    const enriched = {
+      ...o,
+      internal_status: lf?.internal_status || 'sin_confirmar',
+      price_override: lf?.price_override != null && lf.price_override !== '' ? Number(lf.price_override) : null,
+      quantity_override:
+        lf?.quantity_override != null && lf.quantity_override !== '' ? Number(lf.quantity_override) : null,
+      mensajero: lf?.mensajero || null,
+      motico_status,
+      total_a_pagar_default,
+      total_a_pagar_override:
+        total_a_pagar_override != null && Number.isFinite(total_a_pagar_override) ? total_a_pagar_override : null,
+      total_a_pagar,
+      shopifyTotal: o.total,
+      shopifyQuantity: o.defaultQuantity,
+    };
+    res.json({
+      source: 'shopify',
+      shop_domain: row.shop_domain,
+      fetchedAt: new Date().toISOString(),
+      order: enriched,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener el pedido' });
+  }
+});
+
 function gananciaDiariaYmdKey(x) {
   return `${String(x.y).padStart(4, '0')}-${String(x.m).padStart(2, '0')}-${String(x.d).padStart(2, '0')}`;
 }
@@ -4240,6 +4308,14 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       motico_status,
       total_a_pagar_override,
     ];
+    let variant_id = null;
+    if (body.variant_id !== undefined && body.variant_id !== null && body.variant_id !== '') {
+      const v = Number(body.variant_id);
+      if (!Number.isFinite(v) || v <= 0) {
+        return res.status(400).json({ error: 'Variante no válida' });
+      }
+      variant_id = Math.floor(v);
+    }
 
     const syncToShopify = body.sync_to_shopify === true;
     if (syncToShopify) {
@@ -4256,13 +4332,23 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       try {
         await dbClient.query('BEGIN');
         await dbClient.query(insertSql, insertParams);
-        const syncRes = await shopifySyncFirstLineItemQuantityAndPrice(
-          conn.shop_domain,
-          conn.access_token,
-          orderId,
-          quantity_override,
-          unit,
-        );
+        const syncRes =
+          variant_id != null
+            ? await shopifySyncFirstLineItemVariantQuantityAndPrice(
+                conn.shop_domain,
+                conn.access_token,
+                orderId,
+                variant_id,
+                quantity_override,
+                unit,
+              )
+            : await shopifySyncFirstLineItemQuantityAndPrice(
+                conn.shop_domain,
+                conn.access_token,
+                orderId,
+                quantity_override,
+                unit,
+              );
         if (!syncRes.ok) {
           await dbClient.query('ROLLBACK');
           return res.status(422).json({

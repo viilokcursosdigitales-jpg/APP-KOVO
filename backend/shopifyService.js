@@ -248,6 +248,68 @@ async function shopifySyncFirstLineItemQuantityAndPrice(shop, accessToken, order
 }
 
 /**
+ * Actualiza primera línea del pedido forzando variante + cantidad + precio unitario.
+ * Si la variante cambia, elimina la primera línea y agrega una nueva con la variante indicada.
+ * @returns {Promise<{ ok: boolean, error?: string, data?: object }>}
+ */
+async function shopifySyncFirstLineItemVariantQuantityAndPrice(
+  shop,
+  accessToken,
+  orderId,
+  variantId,
+  quantity,
+  unitPrice,
+) {
+  const oid = Number(orderId);
+  if (!Number.isFinite(oid) || oid <= 0) {
+    return { ok: false, error: 'ID de pedido inválido' };
+  }
+  const vid = Number(variantId);
+  if (!Number.isFinite(vid) || vid <= 0) {
+    return { ok: false, error: 'Variante no válida' };
+  }
+  const q = parseInt(String(quantity), 10);
+  if (!Number.isFinite(q) || q < 1) {
+    return { ok: false, error: 'La cantidad debe ser al menos 1 para sincronizar con Shopify' };
+  }
+  const unit = Number(unitPrice);
+  if (!Number.isFinite(unit) || unit < 0) {
+    return { ok: false, error: 'Precio unitario no válido' };
+  }
+  const priceStr = unit.toFixed(2);
+  const getRes = await shopifyJsonRequest(
+    shop,
+    accessToken,
+    'GET',
+    `orders/${oid}.json?fields=id,line_items`,
+  );
+  if (!getRes.ok || !getRes.data || !getRes.data.order) {
+    return { ok: false, error: getRes.error || 'No se pudo leer el pedido en Shopify' };
+  }
+  const lineItems = getRes.data.order.line_items || [];
+  if (!lineItems.length) {
+    return { ok: false, error: 'El pedido no tiene líneas en Shopify' };
+  }
+  const first = lineItems[0];
+  const firstVariantId = Number(first && first.variant_id != null ? first.variant_id : 0);
+  const keepOtherLines = lineItems.slice(1).map((li) => {
+    const qKeep = parseInt(String(li.quantity), 10);
+    return { id: li.id, quantity: Number.isFinite(qKeep) && qKeep >= 0 ? qKeep : 1 };
+  });
+  const line_items =
+    Number.isFinite(firstVariantId) && firstVariantId === vid
+      ? [{ id: first.id, quantity: q, price: priceStr }, ...keepOtherLines]
+      : [{ id: first.id, quantity: 0 }, { variant_id: vid, quantity: q, price: priceStr }, ...keepOtherLines];
+  const putRes = await shopifyJsonRequest(shop, accessToken, 'PUT', `orders/${oid}.json`, {
+    order: { id: oid, line_items },
+  });
+  if (!putRes.ok) {
+    return { ok: false, error: putRes.error || 'Shopify rechazó la actualización del pedido' };
+  }
+  return { ok: true, data: putRes.data };
+}
+
+/**
  * Actualiza la dirección de envío del pedido en Shopify (REST Admin).
  * Conserva nombre y códigos de país/provincia si no se envían en updates.
  * @param {Record<string, string>} updates province, city, address1, address2, zip, country, phone (opcionales por clave)
@@ -752,6 +814,7 @@ module.exports = {
   shopifyRequest,
   shopifyJsonRequest,
   shopifySyncFirstLineItemQuantityAndPrice,
+  shopifySyncFirstLineItemVariantQuantityAndPrice,
   shopifyUpdateOrderShippingAddress,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,

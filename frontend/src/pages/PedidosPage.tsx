@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { alpha, ds } from '../design-system/ds';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
+import { IconPencil } from '../design-system/icons';
 import {
   orderListStickyCheckboxTd,
   orderListStickyCheckboxTh,
@@ -258,6 +259,35 @@ const estadoSelectInTableStyle: CSSProperties = {
   maxWidth: 'none',
   minWidth: `${ESTADO_SELECT_MIN_WIDTH_CH}ch`,
   boxSizing: 'border-box',
+};
+
+const PEDIDOS_ESTADO_COL_PX = 172;
+const PEDIDOS_EDIT_COL_PX = 54;
+const PEDIDOS_STICKY_EDIT_LEFT = 64 + PEDIDOS_ESTADO_COL_PX;
+const pedidosStickyEditTh: CSSProperties = {
+  ...orderListTheadStickyCell,
+  left: PEDIDOS_STICKY_EDIT_LEFT,
+  zIndex: 5,
+  background: ds.bgApp,
+  width: PEDIDOS_EDIT_COL_PX,
+  minWidth: PEDIDOS_EDIT_COL_PX,
+  maxWidth: PEDIDOS_EDIT_COL_PX,
+  padding: '8px 6px',
+  textAlign: 'center',
+  boxShadow: '4px 0 14px -6px rgba(15, 23, 42, 0.14)',
+};
+const pedidosStickyEditTd: CSSProperties = {
+  position: 'sticky',
+  left: PEDIDOS_STICKY_EDIT_LEFT,
+  zIndex: 3,
+  background: ds.bgCard,
+  width: PEDIDOS_EDIT_COL_PX,
+  minWidth: PEDIDOS_EDIT_COL_PX,
+  maxWidth: PEDIDOS_EDIT_COL_PX,
+  textAlign: 'center',
+  verticalAlign: 'middle',
+  padding: '8px 6px',
+  boxShadow: '4px 0 14px -6px rgba(15, 23, 42, 0.14)',
 };
 
 /** Colores del desplegable Estado (valor seleccionado). */
@@ -1344,7 +1374,7 @@ export default function PedidosPage() {
           <div style={{ padding: 24, color: ds.textMuted, fontSize: 13 }}>Cargando pedidos de Shopify…</div>
         ) : (
           <div style={orderListTableScrollWrapperStyle}>
-            <table style={{ ...tableBase, tableLayout: 'auto', minWidth: useLive ? 1588 : 1080 }}>
+            <table style={{ ...tableBase, tableLayout: 'auto', minWidth: useLive ? 1650 : 1080 }}>
               <thead>
                 <tr>
                   {useLive ? (
@@ -1374,10 +1404,14 @@ export default function PedidosPage() {
                       padding: 8,
                       borderRadius: 8,
                       whiteSpace: 'nowrap',
+                      width: PEDIDOS_ESTADO_COL_PX,
+                      minWidth: PEDIDOS_ESTADO_COL_PX,
+                      maxWidth: PEDIDOS_ESTADO_COL_PX,
                     }}
                   >
                     Estado
                   </Th>
+                  {useLive ? <Th style={pedidosStickyEditTh}>Editar</Th> : null}
                   <Th style={orderListTheadStickyCell}>Pedido</Th>
                   <Th style={orderListTheadStickyCell}>Fecha</Th>
                   <Th style={orderListTheadStickyCell}>Cliente</Th>
@@ -1432,6 +1466,9 @@ export default function PedidosPage() {
                               padding: 8,
                               verticalAlign: 'middle',
                               borderRadius: 8,
+                              width: PEDIDOS_ESTADO_COL_PX,
+                              minWidth: PEDIDOS_ESTADO_COL_PX,
+                              maxWidth: PEDIDOS_ESTADO_COL_PX,
                             }}
                           >
                             <select
@@ -1456,6 +1493,34 @@ export default function PedidosPage() {
                                 </option>
                               ))}
                             </select>
+                          </Td>
+                          <Td isLast={i === arr.length - 1} style={pedidosStickyEditTd}>
+                            <button
+                              type="button"
+                              onClick={() => window.open(`/pedidos/editar/${o.id}`, '_blank', 'noopener,noreferrer')}
+                              disabled={isLocked}
+                              aria-label={`Editar pedido ${o.orderName}`}
+                              title={
+                                isLocked
+                                  ? 'Pedido despachado/cancelado: edición bloqueada'
+                                  : 'Abrir editor en pestaña nueva'
+                              }
+                              style={{
+                                width: 32,
+                                height: 32,
+                                borderRadius: 8,
+                                border: `1px solid ${ds.borderCard}`,
+                                background: ds.bgCard,
+                                color: ds.brand,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: isLocked ? 'not-allowed' : 'pointer',
+                                opacity: isLocked ? 0.5 : 1,
+                              }}
+                            >
+                              <IconPencil size={14} />
+                            </button>
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>

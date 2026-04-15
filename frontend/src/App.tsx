@@ -14,6 +14,7 @@ import GananciaDiariaPage from './pages/GananciaDiariaPage';
 import MetaAdsPage from './pages/MetaAdsPage';
 import MoticoPage from './pages/MoticoPage';
 import PedidosPage from './pages/PedidosPage';
+import PedidosOrderEditPage from './pages/PedidosOrderEditPage';
 import Profile from './pages/Profile';
 import AcceptInvitation from './pages/AcceptInvitation';
 import Register from './pages/Register';
@@ -35,6 +36,7 @@ export default function App() {
           <Route element={<ModuleGuard />}>
             <Route path="/dashboard" element={<DashboardHome />} />
             <Route path="/pedidos" element={<PedidosPage />} />
+            <Route path="/pedidos/editar/:orderId" element={<PedidosOrderEditPage />} />
             <Route path="/motico" element={<MoticoPage />} />
             <Route path="/inventario" element={<InventarioPage />} />
             <Route path="/meta-ads" element={<MetaAdsPage />} />
