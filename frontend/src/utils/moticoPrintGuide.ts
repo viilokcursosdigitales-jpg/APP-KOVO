@@ -1,4 +1,8 @@
-import { mapLineItemToExportLine, type MoticoGuideLineSource } from './moticoGuidesExcelExport';
+import {
+  mapLineItemToExportLine,
+  moticoGuideVariableFromLineSource,
+  type MoticoGuideLineSource,
+} from './moticoGuidesExcelExport';
 
 export type MoticoShippingAddress = {
   name: string;
@@ -106,8 +110,8 @@ export function formatValorCobrarDisplay(amount: number, currency: string): stri
 }
 
 /**
- * Observación de guía: por línea → cantidad, nombre de producto, nombre de variable (variante u opciones) y talla.
- * En mayúsculas, separado con " · " entre partes y ", " entre líneas.
+ * Observación de guía: por línea → solo nombre de producto y variable (sin talla ni cantidad).
+ * En mayúsculas; varias líneas separadas por ", ".
  */
 export function buildObservacionLine(
   lineItems: MoticoGuideLineSource[],
@@ -119,14 +123,8 @@ export function buildObservacionLine(
       const m = mapLineItemToExportLine(li);
       const producto =
         String(m.producto || '').trim() || String(li.title || li.name || '').trim() || 'Producto';
-      const variable =
-        String(li.variant_title || '').trim() ||
-        [m.diseño, m.color].filter((x) => String(x || '').trim()).join(' / ');
-      const talla = String(m.talla || '').trim();
-      const parts: string[] = [`${li.quantity} ${producto}`.trim()];
-      if (variable) parts.push(variable);
-      if (talla) parts.push(talla);
-      return parts.join(' · ');
+      const variable = moticoGuideVariableFromLineSource(li);
+      return `${producto} · ${variable}`.trim();
     });
     return lines.join(', ').toUpperCase();
   }

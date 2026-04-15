@@ -83,15 +83,44 @@ function isGenericVariantTitle(raw: string): boolean {
 }
 
 /**
- * Texto para la columna VARIABLE: variante Shopify si aplica; si no, diseño/color de props; si no, «NO APLICA».
+ * Una sola parte del título de variante y coincide con patrón de talla/medida (no cuenta como variable de producto).
+ */
+function variantTitleIsOnlySizeLike(raw: string): boolean {
+  const v = raw.trim();
+  if (!v) return true;
+  const parts = v.split('/').map((s) => s.trim()).filter(Boolean);
+  if (parts.length >= 2) return false;
+  const one = parts[0] || v;
+  return /\d\s*-\s*\d|meses?|MES|años?|AÑO|cm|CM|\bXL\b|\bXXL\b|\bXS\b|\bS\b|\bM\b|\bL\b/i.test(one);
+}
+
+/**
+ * Texto para la columna VARIABLE: variante u opciones (diseño/color) si aplica; si no hay, «NO APLICA» (nunca vacío).
  */
 export function moticoGuideVariableFromLineSource(li: MoticoGuideLineSource): string {
-  const vt = String(li.variant_title || '').trim();
-  if (vt && !isGenericVariantTitle(vt)) return vt;
   const m = mapLineItemToExportLineCore(li);
+  const tallaNorm = String(m.talla || '').trim().toLowerCase();
+
+  const vt = String(li.variant_title || '').trim();
+  if (vt && !isGenericVariantTitle(vt) && !variantTitleIsOnlySizeLike(vt)) {
+    const vNorm = vt.toLowerCase();
+    if (!tallaNorm || vNorm !== tallaNorm) {
+      return vt;
+    }
+  }
+
   const fromOpts = [m.diseño, m.color].filter((x) => String(x || '').trim()).join(' / ').trim();
-  if (fromOpts) return fromOpts;
+  if (fromOpts) {
+    if (tallaNorm && fromOpts.toLowerCase() === tallaNorm) return 'NO APLICA';
+    return fromOpts;
+  }
+
   return 'NO APLICA';
+}
+
+function moticoGuideVariableCellDisplay(raw: string | undefined | null): string {
+  const s = String(raw ?? '').trim();
+  return s || 'NO APLICA';
 }
 
 function mapLineItemToExportLineCore(li: MoticoGuideLineSource): Omit<MoticoGuideExportLine, 'numero' | 'variable'> {
@@ -205,7 +234,7 @@ export function buildMoticoGuidesExcelPreviewRows(
         direccion: ord.direccion,
         ciudad: ord.ciudad,
         producto: line.producto,
-        variable: line.variable,
+        variable: moticoGuideVariableCellDisplay(line.variable),
         talla: line.talla,
         cobro: cobroStr,
         observacion,
@@ -246,7 +275,7 @@ function fillMoticoGuidesWorksheet(ws: ExcelJS.Worksheet, orders: MoticoGuideExp
         ord.direccion,
         ord.ciudad,
         line.producto,
-        line.variable,
+        moticoGuideVariableCellDisplay(line.variable),
         line.talla,
         cobroStr,
         ord.observacion || '',
