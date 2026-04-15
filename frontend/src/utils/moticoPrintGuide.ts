@@ -130,8 +130,8 @@ function phoneWithoutColombia57(raw: string): string {
 }
 
 /**
- * Observación de guía: por línea → nombre de producto y **variable completa** (sin truncar en «/»;
- * sin talla ni cantidad). En mayúsculas; varias líneas separadas por ", ".
+ * Observación de guía: por línea → cantidad + nombre de producto + variable completa.
+ * En mayúsculas; varias líneas separadas por ", ".
  */
 export function buildObservacionLine(
   lineItems: MoticoGuideLineSource[],
@@ -146,9 +146,7 @@ export function buildObservacionLine(
         String(m.producto || '').trim() || String(li.title || li.name || '').trim() || 'Producto';
       const variableCompleta = moticoGuideVariableFromLineSource(li);
       const variable = variableCompleta && variableCompleta.trim().toUpperCase() !== 'NO APLICA' ? variableCompleta : '';
-      const talla = String(m.talla || '').trim();
-      const extras = [variable, talla].filter((x) => String(x || '').trim()).join(' · ').trim();
-      return `${qty} x ${producto}${extras ? ` · ${extras}` : ''}`.trim();
+      return `${qty} x ${producto}${variable ? ` · ${variable}` : ''}`.trim();
     });
     return lines.join(', ').toUpperCase();
   }
@@ -325,7 +323,7 @@ function buildBatchPrintDocument(
       display: flex;
       align-items: center;
       justify-content: center;
-      color: #9ca3af; /* gris claro */
+      color: #000;
       font-size: 8pt;
       line-height: 1;
       user-select: none;
@@ -339,7 +337,7 @@ function buildBatchPrintDocument(
     .guide-cut-sep::after {
       content: "";
       flex: 1 1 auto;
-      border-top: 1px dotted #cbd5e1;
+      border-top: 1px solid #000;
     }
     .guide-cut-sep::before { margin-right: 10px; }
     .guide-cut-sep::after { margin-left: 10px; }
