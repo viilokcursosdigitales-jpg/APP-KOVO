@@ -2,9 +2,10 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
+import { KpiCard } from '../design-system/KpiCard';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
 import { orderListTableScrollWrapperStyle, orderListTheadStickyCell } from '../design-system/orderListTableScroll';
-import { IconPencil, IconTruck } from '../design-system/icons';
+import { IconCart, IconPencil, IconTruck } from '../design-system/icons';
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
@@ -28,6 +29,7 @@ import {
 
 const POLL_MS = 25_000;
 const MOTICO_TOTAL_APAGAR_DEBOUNCE_MS = 450;
+const SEARCH_DEBOUNCE_MS = 240;
 const MAX_LOGO_BYTES = 400_000;
 const MOTICO_STATUS_DEFAULT = 'sin_revisar';
 const MOTICO_STATUS_OPTIONS = [
@@ -563,6 +565,14 @@ function formatDate(iso: string) {
   }
 }
 
+function normalizeSearchText(v: string) {
+  return String(v || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
 function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
   const bv = o.badgeVariant;
   const safeBv = (['success', 'paused', 'error', 'info', 'warning'].includes(bv) ? bv : 'info') as StatusBadgeVariant;
@@ -619,6 +629,8 @@ export default function MoticoPage() {
   const [customTo, setCustomTo] = useState('');
   const [productId, setProductId] = useState('');
   const [statusFilter, setStatusFilter] = useState<string>('');
+  const [searchInput, setSearchInput] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
 
   const [shopifyConnected, setShopifyConnected] = useState(false);
   const [shopDomain, setShopDomain] = useState<string | null>(null);
@@ -718,10 +730,47 @@ export default function MoticoPage() {
     [productTitleById],
   );
 
+  const normalizedSearchTerm = useMemo(() => normalizeSearchText(searchTerm), [searchTerm]);
+
   const filteredOrders = useMemo(() => {
-    if (!statusFilter) return orders;
-    return orders.filter((o) => o.motico_status === statusFilter);
-  }, [orders, statusFilter]);
+    return orders.filter((o) => {
+      if (statusFilter && o.motico_status !== statusFilter) return false;
+      if (!normalizedSearchTerm) return true;
+      const sa = o.shippingAddress;
+      const statusLabel = STATUS_META[o.motico_status]?.label || o.motico_status;
+      const haystack = normalizeSearchText(
+        [
+          o.orderName,
+          o.client,
+          o.email,
+          o.phoneLocal,
+          sa?.city,
+          sa?.province,
+          sa?.address1,
+          sa?.address2,
+          statusLabel,
+          o.motico_status,
+        ]
+          .filter(Boolean)
+          .join(' '),
+      );
+      if (haystack.includes(normalizedSearchTerm)) return true;
+      return String(o.id || '').includes(normalizedSearchTerm);
+    });
+  }, [orders, statusFilter, normalizedSearchTerm]);
+
+  const despachadoKpis = useMemo(() => {
+    let total = 0;
+    let count = 0;
+    for (const o of filteredOrders) {
+      if (String(o.motico_status || '') !== 'despachado') continue;
+      count += 1;
+      const base = o.price_override != null ? Number(o.price_override) : Number.parseFloat(String(o.shopifyTotal || o.total || '0'));
+      if (Number.isFinite(base) && base >= 0) total += base;
+    }
+    const currency = filteredOrders.find((o) => String(o.motico_status || '') === 'despachado')?.currency || templateCurrency || 'COP';
+    return { total, count, currency };
+  }, [filteredOrders, templateCurrency]);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
@@ -736,6 +785,13 @@ export default function MoticoPage() {
   useEffect(() => {
     setSelectedIds((ids) => ids.filter((id) => orders.some((o) => o.id === id)));
   }, [orders]);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setSearchTerm(searchInput);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [searchInput]);
 
   const allVisibleSelected =
     filteredOrders.length > 0 && filteredOrders.every((o) => selectedSet.has(o.id));
@@ -1578,6 +1634,30 @@ export default function MoticoPage() {
       />
 
       {useLive ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: 12,
+            marginBottom: 16,
+          }}
+        >
+          <KpiCard
+            variant="sales"
+            label="Total ventas despachadas"
+            value={formatMoneyAmount(despachadoKpis.total, despachadoKpis.currency)}
+            icon={<IconCart />}
+          />
+          <KpiCard
+            variant="traffic"
+            label="Pedidos despachados"
+            value={despachadoKpis.count}
+            icon={<IconTruck />}
+          />
+        </div>
+      ) : null}
+
+      {useLive ? (
         <div style={{ marginBottom: 18 }}>
           <button
             type="button"
@@ -1843,6 +1923,14 @@ export default function MoticoPage() {
             </option>
           ))}
         </select>
+        <input
+          type="search"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Buscar pedido, cliente, email, teléfono..."
+          disabled={!useLive}
+          style={{ ...filterCtl, minWidth: 260, maxWidth: 360 }}
+        />
 
         {useLive ? (
           <>
@@ -2233,7 +2321,7 @@ export default function MoticoPage() {
         title="Pedidos Motico"
         subtitle={
           useLive
-            ? `${filteredOrders.length} pedido${filteredOrders.length === 1 ? '' : 's'}${statusFilter ? ' (filtrados)' : ''} · ${orders.length} en el rango`
+            ? `${filteredOrders.length} pedido${filteredOrders.length === 1 ? '' : 's'}${statusFilter || searchTerm.trim() ? ' (filtrados)' : ''} · ${orders.length} en el rango`
             : 'Sin conexión a Shopify'
         }
       >
