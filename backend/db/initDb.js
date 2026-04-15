@@ -131,6 +131,9 @@ async function initDb(pool) {
     `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS total_a_pagar_override NUMERIC(14, 4)`,
   );
   await pool.query(
+    `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS payment_status_override VARCHAR(32)`,
+  );
+  await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_shopify_order_local_org ON shopify_order_local_fields (organization_id)`,
   );
 
