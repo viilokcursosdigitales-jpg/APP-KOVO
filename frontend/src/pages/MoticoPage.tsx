@@ -2540,9 +2540,9 @@ export default function MoticoPage() {
                     final
                   </Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Total del pedido</Th>
-                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Anticipo</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pendiente de pago</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Productos</Th>
                   <Th style={{ ...moticoEditColTh, ...orderListTheadStickyCell }} title="Editar pedido">
                     <IconPencil size={14} style={{ opacity: 0.4, display: 'block' }} aria-hidden />
@@ -2737,30 +2737,6 @@ export default function MoticoPage() {
                         </div>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <select
-                          style={{
-                            ...moticoEstadoSelectStyle,
-                            minWidth: 132,
-                            maxWidth: 160,
-                            background: '#fff',
-                            color: ds.textPrimary,
-                            borderColor: ds.borderCard,
-                            cursor: 'pointer',
-                            opacity: 1,
-                          }}
-                          value={paymentStatus}
-                          onChange={(e) => void onPaymentStatusChange(o, e.target.value as MoticoPaymentStatusValue)}
-                          aria-label={`Pago pedido ${o.orderName}`}
-                          title="Cambiar estado de pago"
-                        >
-                          {MOTICO_PAYMENT_OPTIONS.map((opt) => (
-                            <option key={opt.value} value={opt.value}>
-                              {opt.label}
-                            </option>
-                          ))}
-                        </select>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
                           {formatMoneyAmount(computeAnticipoAmountFromRow(o), o.currency)}
                         </div>
@@ -2795,6 +2771,30 @@ export default function MoticoPage() {
                         <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4, lineHeight: 1.3 }}>
                           Calculado Shopify: {formatMoneyAmount(o.total_a_pagar_default, o.currency)}
                         </div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <select
+                          style={{
+                            ...moticoEstadoSelectStyle,
+                            minWidth: 132,
+                            maxWidth: 160,
+                            background: '#fff',
+                            color: ds.textPrimary,
+                            borderColor: ds.borderCard,
+                            cursor: 'pointer',
+                            opacity: 1,
+                          }}
+                          value={paymentStatus}
+                          onChange={(e) => void onPaymentStatusChange(o, e.target.value as MoticoPaymentStatusValue)}
+                          aria-label={`Pago pedido ${o.orderName}`}
+                          title="Cambiar estado de pago"
+                        >
+                          {MOTICO_PAYMENT_OPTIONS.map((opt) => (
+                            <option key={opt.value} value={opt.value}>
+                              {opt.label}
+                            </option>
+                          ))}
+                        </select>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div style={{ fontSize: 11, color: ds.textSecondary, lineHeight: 1.35 }}>
