@@ -44,7 +44,6 @@ const ESTADO_SELECT_MIN_WIDTH_CH = Math.max(...INTERNAL_OPTIONS.map((o) => o.lab
 
 type InternalStatusValue = (typeof INTERNAL_OPTIONS)[number]['value'];
 const LOCKED_INTERNAL_STATUSES = new Set<InternalStatusValue>(['despachado', 'cancelado', 'motico']);
-const HARD_LOCKED_INTERNAL_STATUSES = new Set<InternalStatusValue>(['despachado', 'cancelado']);
 
 function isOrderLockedByInternalStatus(internalStatus: string) {
   const s = String(internalStatus || '').toLowerCase() as InternalStatusValue;
@@ -374,6 +373,9 @@ export default function PedidosPage() {
 
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
+  const [unlockOrder, setUnlockOrder] = useState<ShopifyOrderRow | null>(null);
+  const [unlockReason, setUnlockReason] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
   const priceTimers = useRef<Map<number, number>>(new Map());
   const qtyTimers = useRef<Map<number, number>>(new Map());
   const ordersRequestAbortRef = useRef<AbortController | null>(null);
@@ -650,9 +652,40 @@ export default function PedidosPage() {
       setShopifyError('Edita desde el módulo Motico.');
       return;
     }
-    if (HARD_LOCKED_INTERNAL_STATUSES.has(st)) return;
+    if (st === 'cancelado') {
+      setShopifyError('Pedido cancelado: edición bloqueada.');
+      return;
+    }
+    if (st === 'despachado') {
+      setUnlockOrder(row);
+      setUnlockReason('');
+      setShopifyError('');
+      return;
+    }
     navigate(`/pedidos/editar/${row.id}`);
   }, [navigate]);
+
+  const submitUnlockDespachado = useCallback(async () => {
+    if (!unlockOrder) return;
+    const reason = unlockReason.trim();
+    if (reason.length < 5) {
+      setShopifyError('Escribe un motivo de desbloqueo (mínimo 5 caracteres).');
+      return;
+    }
+    setUnlocking(true);
+    try {
+      const ok = await patchLocalFields(unlockOrder.id, {
+        internal_status: 'sin_revisar',
+        unlock_reason: reason,
+      });
+      if (!ok) return;
+      setUnlockOrder(null);
+      setUnlockReason('');
+      navigate(`/pedidos/editar/${unlockOrder.id}`);
+    } finally {
+      setUnlocking(false);
+    }
+  }, [navigate, patchLocalFields, unlockOrder, unlockReason]);
 
   useEffect(() => {
     return () => {
@@ -1575,13 +1608,15 @@ export default function PedidosPage() {
                             <button
                               type="button"
                               onClick={() => handleOpenOrderEdit(o)}
-                              disabled={HARD_LOCKED_INTERNAL_STATUSES.has(String(o.internal_status || '').toLowerCase() as InternalStatusValue)}
+                              disabled={String(o.internal_status || '').toLowerCase() === 'cancelado'}
                               aria-label={`Editar pedido ${o.orderName}`}
                               title={
                                 String(o.internal_status || '').toLowerCase() === 'motico'
                                   ? 'Edita desde el módulo Motico.'
-                                  : HARD_LOCKED_INTERNAL_STATUSES.has(String(o.internal_status || '').toLowerCase() as InternalStatusValue)
-                                    ? 'Pedido despachado/cancelado: edición bloqueada'
+                                  : String(o.internal_status || '').toLowerCase() === 'despachado'
+                                    ? 'Responde motivo y desbloquea para editar'
+                                    : String(o.internal_status || '').toLowerCase() === 'cancelado'
+                                      ? 'Pedido cancelado: edición bloqueada'
                                   : 'Abrir editor'
                               }
                               style={{
@@ -1597,10 +1632,10 @@ export default function PedidosPage() {
                                 cursor:
                                   String(o.internal_status || '').toLowerCase() === 'motico'
                                     ? 'pointer'
-                                    : HARD_LOCKED_INTERNAL_STATUSES.has(String(o.internal_status || '').toLowerCase() as InternalStatusValue)
+                                    : String(o.internal_status || '').toLowerCase() === 'cancelado'
                                       ? 'not-allowed'
                                       : 'pointer',
-                                opacity: HARD_LOCKED_INTERNAL_STATUSES.has(String(o.internal_status || '').toLowerCase() as InternalStatusValue) ? 0.5 : 1,
+                                opacity: String(o.internal_status || '').toLowerCase() === 'cancelado' ? 0.5 : 1,
                               }}
                             >
                               <IconPencil size={14} />
@@ -1650,6 +1685,98 @@ export default function PedidosPage() {
           <div style={{ padding: 16, fontSize: 13, color: ds.textMuted }}>No hay pedidos en este filtro.</div>
         ) : null}
       </DataTable>
+      {unlockOrder ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.18)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(560px, calc(100vw - 28px))',
+              maxHeight: 'calc(100vh - 36px)',
+              overflowY: 'auto',
+              background: ds.bgCard,
+              border: `1px solid ${ds.borderCard}`,
+              borderRadius: 14,
+              boxShadow: '0 16px 44px rgba(15,23,42,0.16)',
+              padding: 18,
+            }}
+          >
+            <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>Desbloquear pedido despachado</h3>
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.4 }}>
+              Pedido <strong>{unlockOrder.orderName}</strong>. Para editarlo debes responder el motivo de desbloqueo.
+            </p>
+            <label style={{ display: 'block', fontSize: 12, color: ds.textSecondary, fontWeight: 600 }}>
+              Motivo de desbloqueo *
+              <textarea
+                value={unlockReason}
+                onChange={(e) => setUnlockReason(e.target.value)}
+                placeholder="Escribe el motivo del desbloqueo..."
+                style={{
+                  marginTop: 6,
+                  width: '100%',
+                  minHeight: 94,
+                  borderRadius: 10,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgSubtle,
+                  color: ds.textPrimary,
+                  padding: '10px 11px',
+                  fontSize: 13,
+                  resize: 'vertical',
+                }}
+              />
+            </label>
+            <div style={{ display: 'flex', gap: 10, marginTop: 14, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (unlocking) return;
+                  setUnlockOrder(null);
+                  setUnlockReason('');
+                }}
+                disabled={unlocking}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textSecondary,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: unlocking ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitUnlockDespachado()}
+                disabled={unlocking}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: ds.brand,
+                  color: '#fff',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: unlocking ? 'wait' : 'pointer',
+                  opacity: unlocking ? 0.85 : 1,
+                }}
+              >
+                {unlocking ? 'Desbloqueando…' : 'Desbloquear'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {phoneCopyToastVisible ? (
         <div
           role="status"

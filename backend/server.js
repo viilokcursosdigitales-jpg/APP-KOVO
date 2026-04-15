@@ -4400,8 +4400,17 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       cur.internal_status != null && String(cur.internal_status) !== ''
         ? String(cur.internal_status)
         : 'sin_revisar';
-    if (LOCKED_INTERNAL_STATUSES.has(currentInternalStatus)) {
-      return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
+    const unlockReason = String(body.unlock_reason || '').trim();
+    const requestedInternalStatus = body.internal_status !== undefined ? String(body.internal_status) : '';
+    const unlockFromDespachadoRequested =
+      String(currentInternalStatus).toLowerCase() === 'despachado' &&
+      requestedInternalStatus === 'sin_revisar' &&
+      unlockReason.length >= 5;
+    if (String(currentInternalStatus).toLowerCase() === 'cancelado') {
+      return res.status(409).json({ error: 'El pedido está bloqueado (cancelado) y no se puede modificar.' });
+    }
+    if (String(currentInternalStatus).toLowerCase() === 'despachado' && !unlockFromDespachadoRequested) {
+      return res.status(409).json({ error: 'Pedido despachado: responde el motivo y desbloquea antes de editar.' });
     }
     const currentPaymentStatus = normalizeMoticoPaymentStatus(cur.payment_status_override);
     if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate) {
