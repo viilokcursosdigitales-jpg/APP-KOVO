@@ -1330,6 +1330,7 @@ export default function PedidosPage() {
                   ) : null}
                   <Th style={orderListTheadStickyCell}>Precio</Th>
                   <Th style={orderListTheadStickyCell}>Cant.</Th>
+                  <Th style={orderListTheadStickyCell}>Productos</Th>
                   <Th style={orderListTheadStickyCell}>Pago (Shopify)</Th>
                   {useLive ? <Th style={pedidosEditColTh}>Editar</Th> : null}
                   {useLive ? <Th style={orderListTheadStickyCell} /> : null}
@@ -1511,6 +1512,14 @@ export default function PedidosPage() {
                             </div>
                           </Td>
                           <Td isLast={i === arr.length - 1}>
+                            <div style={{ fontSize: 11, lineHeight: 1.35, color: ds.textSecondary }}>
+                              {Array.isArray(o.productIds) && o.productIds.length
+                                ? o.productIds.slice(0, 4).map((pid) => `#${pid}`).join(', ') +
+                                  (o.productIds.length > 4 ? ` +${o.productIds.length - 4}` : '')
+                                : '—'}
+                            </div>
+                          </Td>
+                          <Td isLast={i === arr.length - 1}>
                             <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
                           </Td>
                           <Td isLast={i === arr.length - 1} style={pedidosEditColTd}>
@@ -1524,7 +1533,7 @@ export default function PedidosPage() {
                                   ? 'Edita desde el módulo Motico.'
                                   : HARD_LOCKED_INTERNAL_STATUSES.has(String(o.internal_status || '').toLowerCase() as InternalStatusValue)
                                     ? 'Pedido despachado/cancelado: edición bloqueada'
-                                  : 'Abrir editor en pestaña nueva'
+                                  : 'Abrir editor'
                               }
                               style={{
                                 width: 32,
@@ -1576,6 +1585,7 @@ export default function PedidosPage() {
                         <Td isLast={i === arr.length - 1}>{o.date}</Td>
                         <Td isLast={i === arr.length - 1}>{highlightText(o.client, searchTerm)}</Td>
                         <Td isLast={i === arr.length - 1}>{o.total}</Td>
+                        <Td isLast={i === arr.length - 1}>—</Td>
                         <Td isLast={i === arr.length - 1}>—</Td>
                         <Td isLast={i === arr.length - 1}>
                           <StatusBadge variant={o.st}>{o.lb}</StatusBadge>
