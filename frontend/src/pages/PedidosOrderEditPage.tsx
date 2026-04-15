@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
@@ -110,6 +110,7 @@ function emptyDraft(): EditDraft {
 }
 
 export default function PedidosOrderEditPage() {
+  const navigate = useNavigate();
   const params = useParams();
   const orderId = Number(params.orderId);
   const [loading, setLoading] = useState(true);
@@ -264,12 +265,11 @@ export default function PedidosOrderEditPage() {
         setError(typeof dataLocal.error === 'string' ? dataLocal.error : 'No se pudo guardar el pedido');
         return;
       }
-      setSuccess('Pedido actualizado correctamente.');
-      await loadData();
+      navigate('/pedidos');
     } finally {
       setSaving(false);
     }
-  }, [order, locked, draft, loadData]);
+  }, [order, locked, draft, navigate]);
 
   return (
     <>
@@ -277,8 +277,9 @@ export default function PedidosOrderEditPage() {
         title="Editar pedido Shopify"
         subtitle="Solo se puede editar dirección, precio, producto y cantidad."
         right={
-          <Link
-            to="/pedidos"
+          <button
+            type="button"
+            onClick={() => navigate('/pedidos')}
             style={{
               padding: '8px 12px',
               borderRadius: 8,
@@ -287,11 +288,11 @@ export default function PedidosOrderEditPage() {
               color: ds.textSecondary,
               fontSize: 12,
               fontWeight: 600,
-              textDecoration: 'none',
+              cursor: 'pointer',
             }}
           >
-            Volver a Pedidos
-          </Link>
+            Cancelar
+          </button>
         }
       />
       {loading ? (
@@ -470,6 +471,23 @@ export default function PedidosOrderEditPage() {
           </div>
 
           <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+            <button
+              type="button"
+              onClick={() => navigate('/pedidos')}
+              disabled={saving}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 8,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.bgCard,
+                color: ds.textSecondary,
+                fontWeight: 600,
+                cursor: saving ? 'not-allowed' : 'pointer',
+                opacity: saving ? 0.8 : 1,
+              }}
+            >
+              Cancelar
+            </button>
             <button
               type="button"
               onClick={() => void save()}

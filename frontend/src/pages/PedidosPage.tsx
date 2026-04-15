@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
@@ -343,6 +343,7 @@ const inputStyle: CSSProperties = {
 };
 
 export default function PedidosPage() {
+  const navigate = useNavigate();
   const [filter, setFilter] = useState<'all' | 'active' | 'done'>('all');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
@@ -649,8 +650,8 @@ export default function PedidosPage() {
       return;
     }
     if (HARD_LOCKED_INTERNAL_STATUSES.has(st)) return;
-    window.open(`/pedidos/editar/${row.id}`, '_blank', 'noopener,noreferrer');
-  }, []);
+    navigate(`/pedidos/editar/${row.id}`);
+  }, [navigate]);
 
   useEffect(() => {
     return () => {
