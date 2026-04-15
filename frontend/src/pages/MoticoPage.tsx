@@ -10,9 +10,12 @@ import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBad
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
 import { labelStyle } from './authStyles';
 import {
-  downloadMoticoGuidesLayoutExcel,
+  buildMoticoGuidesExcelPreviewRows,
+  buildMoticoGuidesLayoutExcelBlob,
   mapLineItemToExportLine,
+  MOTICO_GUIAS_EXCEL_COLUMN_HEADERS,
   type MoticoGuideExportLine,
+  type MoticoGuidesExcelPreviewRow,
 } from '../utils/moticoGuidesExcelExport';
 import {
   buildMoticoGuideLabelData,
@@ -577,6 +580,12 @@ export default function MoticoPage() {
   const [error, setError] = useState('');
   const [syncError, setSyncError] = useState('');
   const [guideHint, setGuideHint] = useState('');
+  const [guidesExcelPreview, setGuidesExcelPreview] = useState<{
+    previewRows: MoticoGuidesExcelPreviewRow[];
+    blob: Blob;
+    filename: string;
+  } | null>(null);
+  const [guidesExcelPreviewLoading, setGuidesExcelPreviewLoading] = useState(false);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const headerSelectRef = useRef<HTMLInputElement>(null);
@@ -927,8 +936,9 @@ export default function MoticoPage() {
     }
   }, [logoDataUrl, orders, selectedIds, buildLabelFromOrder]);
 
-  const handleDownloadGuidesExcel = useCallback(async () => {
+  const handleOpenGuidesExcelPreview = useCallback(async () => {
     setGuideHint('');
+    setGuidesExcelPreview(null);
     const set = new Set(selectedIds);
     const list = orders.filter((o) => set.has(o.id));
     if (!list.length) {
@@ -946,8 +956,8 @@ export default function MoticoPage() {
     if (skipped > 0) {
       setGuideHint(
         skipped === 1
-          ? 'Se omitió 1 pedido que no está en «Imprimir guía». El Excel incluye el resto.'
-          : `Se omitieron ${skipped} pedidos que no están en «Imprimir guía». Excel con ${eligible.length} pedidos.`,
+          ? 'Se omitió 1 pedido que no está en «Imprimir guía». La vista previa incluye el resto.'
+          : `Se omitieron ${skipped} pedidos que no están en «Imprimir guía». Vista previa con ${eligible.length} pedidos.`,
       );
     }
     const payload = eligible.map((o, orderIdx) => {
@@ -997,8 +1007,35 @@ export default function MoticoPage() {
         lines,
       };
     });
-    await downloadMoticoGuidesLayoutExcel(payload, undefined, templateCurrency);
+    setGuidesExcelPreviewLoading(true);
+    try {
+      const built = await buildMoticoGuidesLayoutExcelBlob(payload, undefined, templateCurrency);
+      if (!built) {
+        setGuideHint('No hay filas para exportar.');
+        return;
+      }
+      const previewRows = buildMoticoGuidesExcelPreviewRows(payload, templateCurrency);
+      setGuidesExcelPreview({
+        previewRows,
+        blob: built.blob,
+        filename: built.filename,
+      });
+    } catch {
+      setGuideHint('No se pudo generar el Excel. Intenta de nuevo.');
+    } finally {
+      setGuidesExcelPreviewLoading(false);
+    }
   }, [orders, selectedIds, summarizeProducts, templateCurrency]);
+
+  const handleDownloadGuidesExcelFromPreview = useCallback(() => {
+    if (!guidesExcelPreview) return;
+    const url = URL.createObjectURL(guidesExcelPreview.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = guidesExcelPreview.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [guidesExcelPreview]);
 
   const onMoticoStatusChange = useCallback(
     async (o: MoticoOrderRow, next: string) => {
@@ -1772,15 +1809,15 @@ export default function MoticoPage() {
             </button>
             <button
               type="button"
-              disabled={!printableSelectedCount}
+              disabled={!printableSelectedCount || guidesExcelPreviewLoading}
               title={
                 !selectedIds.length
                   ? 'Marca pedidos con la casilla de la primera columna'
                   : !printableSelectedCount
                     ? 'Solo se exportan pedidos en estado «Imprimir guía»'
-                    : 'Descargar Excel con la relación de pedidos de estas guías'
+                    : 'Abrir vista previa de la relación Excel; luego puedes descargar el archivo'
               }
-              onClick={handleDownloadGuidesExcel}
+              onClick={() => void handleOpenGuidesExcelPreview()}
               style={{
                 padding: '7px 14px',
                 borderRadius: 8,
@@ -1789,11 +1826,14 @@ export default function MoticoPage() {
                 color: ds.brand,
                 fontSize: 12,
                 fontWeight: 700,
-                cursor: printableSelectedCount ? 'pointer' : 'not-allowed',
-                opacity: printableSelectedCount ? 1 : 0.5,
+                cursor:
+                  printableSelectedCount && !guidesExcelPreviewLoading ? 'pointer' : 'not-allowed',
+                opacity: printableSelectedCount && !guidesExcelPreviewLoading ? 1 : 0.5,
               }}
             >
-              Excel guías ({printableSelectedCount})
+              {guidesExcelPreviewLoading
+                ? 'Generando vista previa…'
+                : `Excel guías (${printableSelectedCount})`}
             </button>
             <button
               type="button"
@@ -1847,6 +1887,220 @@ export default function MoticoPage() {
           }}
         >
           {guideHint}
+        </div>
+      ) : null}
+
+      {guidesExcelPreview ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.22)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+            zIndex: 96,
+          }}
+          role="dialog"
+          aria-modal
+          aria-labelledby="motico-excel-preview-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setGuidesExcelPreview(null);
+          }}
+        >
+          <div
+            style={{
+              background: ds.bgCard,
+              borderRadius: 16,
+              padding: 22,
+              width: '100%',
+              maxWidth: 980,
+              border: `1px solid ${ds.borderCard}`,
+              maxHeight: '92vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 24px 60px rgba(15, 23, 42, 0.14)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: 12,
+                marginBottom: 10,
+              }}
+            >
+              <h2
+                id="motico-excel-preview-title"
+                style={{ margin: 0, fontSize: 17, fontWeight: 700, color: ds.textPrimary }}
+              >
+                Relación Excel · vista previa
+              </h2>
+              <button
+                type="button"
+                aria-label="Cerrar vista previa"
+                onClick={() => setGuidesExcelPreview(null)}
+                style={{
+                  flexShrink: 0,
+                  width: 36,
+                  height: 36,
+                  borderRadius: 10,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgSubtle,
+                  color: ds.textPrimary,
+                  fontSize: 22,
+                  lineHeight: 1,
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.45 }}>
+              Misma información que irá en{' '}
+              <strong style={{ color: ds.textPrimary }}>{guidesExcelPreview.filename}</strong>. Puedes descargar el
+              .xlsx o cerrar cuando termines.
+            </p>
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflow: 'auto',
+                border: `1px solid ${ds.borderCard}`,
+                borderRadius: 10,
+              }}
+            >
+              <table
+                style={{
+                  width: '100%',
+                  borderCollapse: 'collapse',
+                  fontSize: 12,
+                  color: ds.textPrimary,
+                }}
+              >
+                <thead>
+                  <tr>
+                    {MOTICO_GUIAS_EXCEL_COLUMN_HEADERS.map((h) => (
+                      <th
+                        key={h}
+                        scope="col"
+                        style={{
+                          padding: '8px 6px',
+                          textAlign: 'center',
+                          fontWeight: 700,
+                          background: '#1f4e79',
+                          color: '#fff',
+                          borderBottom: '1px solid #0f172a',
+                          whiteSpace: 'nowrap',
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 1,
+                        }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {guidesExcelPreview.previewRows.map((row, idx) => {
+                    const cell: CSSProperties = {
+                      padding: '7px 6px',
+                      borderBottom: `1px solid ${ds.borderCard}`,
+                      verticalAlign: 'top',
+                      wordBreak: 'break-word',
+                    };
+                    const rs = row.lineCount > 1 ? row.lineCount : 1;
+                    return (
+                      <tr
+                        key={`${row.orderIndex}-${row.lineIndex}-${idx}`}
+                        style={{ background: idx % 2 === 0 ? ds.bgCard : ds.bgSubtle }}
+                      >
+                        {row.lineIndex === 0 ? (
+                          <>
+                            <td rowSpan={rs} style={{ ...cell, textAlign: 'center', fontWeight: 600 }}>
+                              {row.orderIndex}
+                            </td>
+                            <td rowSpan={rs} style={cell}>
+                              {row.cliente}
+                            </td>
+                            <td rowSpan={rs} style={cell}>
+                              {row.celular}
+                            </td>
+                            <td rowSpan={rs} style={cell}>
+                              {row.direccion}
+                            </td>
+                            <td rowSpan={rs} style={{ ...cell, textAlign: 'center' }}>
+                              {row.ciudad}
+                            </td>
+                          </>
+                        ) : null}
+                        <td style={cell}>{row.producto}</td>
+                        <td style={cell}>{row.disenoColor}</td>
+                        <td style={{ ...cell, textAlign: 'center' }}>{row.talla}</td>
+                        {row.lineIndex === 0 ? (
+                          <>
+                            <td rowSpan={rs} style={{ ...cell, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                              {row.cobro}
+                            </td>
+                            <td rowSpan={rs} style={cell}>
+                              {row.observacion}
+                            </td>
+                          </>
+                        ) : null}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 10,
+                marginTop: 16,
+                justifyContent: 'flex-end',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setGuidesExcelPreview(null)}
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: 10,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgSubtle,
+                  color: ds.textPrimary,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Cerrar
+              </button>
+              <button
+                type="button"
+                onClick={handleDownloadGuidesExcelFromPreview}
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: 10,
+                  border: 'none',
+                  background: ds.brand,
+                  color: '#fff',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Descargar Excel
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 

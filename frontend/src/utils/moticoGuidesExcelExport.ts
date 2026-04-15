@@ -129,35 +129,69 @@ const THIN_BORDER: Partial<ExcelJS.Borders> = {
   right: { style: 'thin', color: { argb: 'FF000000' } },
 };
 
-/**
- * Excel tipo relación de pedidos: una fila por ítem; #, cliente, dirección, ciudad y COBRO
- * combinados en vertical cuando un pedido tiene varias líneas.
- */
-export async function downloadMoticoGuidesLayoutExcel(
+/** Encabezados de columnas (Excel y vista previa en pantalla). */
+export const MOTICO_GUIAS_EXCEL_COLUMN_HEADERS = [
+  '#',
+  'CLIENTE',
+  'CELULAR',
+  'DIRECCIÓN',
+  'CIUDAD',
+  'PRODUCTO',
+  'DISEÑO/COLOR',
+  'TALLA',
+  'COBRO',
+  'OBSERVACION',
+] as const;
+
+/** Una fila de la relación (para vista previa HTML, alineada al Excel). */
+export type MoticoGuidesExcelPreviewRow = {
+  orderIndex: number;
+  cliente: string;
+  celular: string;
+  direccion: string;
+  ciudad: string;
+  producto: string;
+  disenoColor: string;
+  talla: string;
+  cobro: string;
+  observacion: string;
+  lineIndex: number;
+  lineCount: number;
+};
+
+export function buildMoticoGuidesExcelPreviewRows(
   orders: MoticoGuideExportOrder[],
-  filePrefix = 'motico_guias_pedidos',
-  currency = 'COP',
-): Promise<void> {
-  if (!orders.length) return;
+  currency: string,
+): MoticoGuidesExcelPreviewRow[] {
+  const rows: MoticoGuidesExcelPreviewRow[] = [];
+  for (const ord of orders) {
+    const n = Math.max(1, ord.lines.length);
+    const cobroStr = formatCobroDisplay(ord.cobro, currency);
+    const observacion = ord.observacion || '';
+    for (let i = 0; i < n; i++) {
+      const line = ord.lines[i];
+      const disenoColor = [line.diseño, line.color].filter((x) => String(x || '').trim()).join(' / ');
+      rows.push({
+        orderIndex: ord.orderIndex,
+        cliente: ord.cliente,
+        celular: ord.celular,
+        direccion: ord.direccion,
+        ciudad: ord.ciudad,
+        producto: line.producto,
+        disenoColor,
+        talla: line.talla,
+        cobro: cobroStr,
+        observacion,
+        lineIndex: i,
+        lineCount: n,
+      });
+    }
+  }
+  return rows;
+}
 
-  const wb = new ExcelJS.Workbook();
-  const ws = wb.addWorksheet('Pedidos guías', {
-    views: [{ state: 'normal' }],
-  });
-
-  const headers = [
-    '#',
-    'CLIENTE',
-    'CELULAR',
-    'DIRECCIÓN',
-    'CIUDAD',
-    'PRODUCTO',
-    'DISEÑO/COLOR',
-    'TALLA',
-    'COBRO',
-    'OBSERVACION',
-  ];
-  ws.addRow(headers);
+function fillMoticoGuidesWorksheet(ws: ExcelJS.Worksheet, orders: MoticoGuideExportOrder[], currency: string): void {
+  ws.addRow([...MOTICO_GUIAS_EXCEL_COLUMN_HEADERS]);
   const headerRow = ws.getRow(1);
   headerRow.height = 22;
   headerRow.eachCell((cell, col) => {
@@ -224,16 +258,49 @@ export async function downloadMoticoGuidesLayoutExcel(
       obsCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
     }
   }
+}
 
+function moticoGuidesExcelFilename(filePrefix: string): string {
   const stamp = new Date().toISOString().slice(0, 16).replace('T', '_').replace(/:/g, '');
+  return `${filePrefix}_${stamp}.xlsx`;
+}
+
+/**
+ * Genera el mismo .xlsx que la descarga, sin disparar el navegador (p. ej. vista previa).
+ */
+export async function buildMoticoGuidesLayoutExcelBlob(
+  orders: MoticoGuideExportOrder[],
+  filePrefix = 'motico_guias_pedidos',
+  currency = 'COP',
+): Promise<{ blob: Blob; filename: string } | null> {
+  if (!orders.length) return null;
+  const wb = new ExcelJS.Workbook();
+  const ws = wb.addWorksheet('Pedidos guías', {
+    views: [{ state: 'normal' }],
+  });
+  fillMoticoGuidesWorksheet(ws, orders, currency);
   const buffer = await wb.xlsx.writeBuffer();
   const blob = new Blob([buffer], {
     type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
   });
-  const url = URL.createObjectURL(blob);
+  return { blob, filename: moticoGuidesExcelFilename(filePrefix) };
+}
+
+/**
+ * Excel tipo relación de pedidos: una fila por ítem; #, cliente, dirección, ciudad y COBRO
+ * combinados en vertical cuando un pedido tiene varias líneas.
+ */
+export async function downloadMoticoGuidesLayoutExcel(
+  orders: MoticoGuideExportOrder[],
+  filePrefix = 'motico_guias_pedidos',
+  currency = 'COP',
+): Promise<void> {
+  const built = await buildMoticoGuidesLayoutExcelBlob(orders, filePrefix, currency);
+  if (!built) return;
+  const url = URL.createObjectURL(built.blob);
   const a = document.createElement('a');
   a.href = url;
-  a.download = `${filePrefix}_${stamp}.xlsx`;
+  a.download = built.filename;
   a.click();
   URL.revokeObjectURL(url);
 }
