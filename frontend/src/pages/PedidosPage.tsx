@@ -753,19 +753,11 @@ export default function PedidosPage() {
     const pedidosMotico = filteredShopify.filter((o) => String(o.internal_status || '') === 'motico').length;
     const pedidosDespachados = filteredShopify.filter((o) => String(o.internal_status || '') === 'despachado').length;
     const pedidosCancelados = filteredShopify.filter((o) => String(o.internal_status || '') === 'cancelado').length;
-    const pedidosNoConfirmados = filteredShopify.filter((o) => String(o.internal_status || '') === 'sin_confirmar').length;
     const pedidosSinDespachar = filteredShopify.filter((o) => {
       const st = String(o.internal_status || '');
       return st === 'sin_revisar' || st === 'confirmado';
     }).length;
-    return {
-      totalPedidos,
-      pedidosMotico,
-      pedidosDespachados,
-      pedidosCancelados,
-      pedidosNoConfirmados,
-      pedidosSinDespachar,
-    };
+    return { totalPedidos, pedidosMotico, pedidosDespachados, pedidosCancelados, pedidosSinDespachar };
   }, [filteredShopify]);
 
   const filteredShopifyIds = useMemo(
@@ -1181,7 +1173,6 @@ export default function PedidosPage() {
           <KpiCard variant="conversion" label="Pedidos Motico" value={pedidosKpis.pedidosMotico} icon={<IconTruck />} />
           <KpiCard variant="sales" label="Total pedidos despachados" value={pedidosKpis.pedidosDespachados} icon={<IconTruck />} />
           <KpiCard variant="alert" label="Pedidos cancelados" value={pedidosKpis.pedidosCancelados} icon={<IconTruck />} />
-          <KpiCard variant="warning" label="Pedidos no confirmados" value={pedidosKpis.pedidosNoConfirmados} icon={<IconTruck />} />
           <KpiCard variant="stock" label="Pedidos sin despachar" value={pedidosKpis.pedidosSinDespachar} icon={<IconTruck />} />
         </div>
       ) : null}
