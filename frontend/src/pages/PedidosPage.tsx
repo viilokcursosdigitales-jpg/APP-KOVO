@@ -39,6 +39,12 @@ const INTERNAL_OPTIONS = [
 const ESTADO_SELECT_MIN_WIDTH_CH = Math.max(...INTERNAL_OPTIONS.map((o) => o.label.length), 1) + 3;
 
 type InternalStatusValue = (typeof INTERNAL_OPTIONS)[number]['value'];
+const LOCKED_INTERNAL_STATUSES = new Set<InternalStatusValue>(['despachado', 'cancelado']);
+
+function isOrderLockedByInternalStatus(internalStatus: string) {
+  const s = String(internalStatus || '').toLowerCase() as InternalStatusValue;
+  return LOCKED_INTERNAL_STATUSES.has(s);
+}
 
 const MENSAJERO_OPTIONS = [
   { value: '', label: '—' },
@@ -521,7 +527,11 @@ export default function PedidosPage() {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     });
-    if (!res.ok) return false;
+    if (!res.ok) {
+      const err = (await res.json().catch(() => ({}))) as { error?: string };
+      setShopifyError(typeof err.error === 'string' ? err.error : 'No se pudo guardar el pedido');
+      return false;
+    }
     const data = (await res.json().catch(() => ({}))) as {
       internal_status?: string;
       price_override?: number | null;
@@ -529,6 +539,7 @@ export default function PedidosPage() {
       mensajero?: string | null;
       motico_status?: string;
     };
+    setShopifyError('');
     setShopifyOrders((prev) =>
       prev.map((o) =>
         o.id === orderId
@@ -559,7 +570,10 @@ export default function PedidosPage() {
   }, []);
 
   const applyBulkInternalStatus = useCallback(async () => {
-    const ids = [...selectedOrderIds];
+    const ids = [...selectedOrderIds].filter((id) => {
+      const row = shopifyOrders.find((o) => o.id === id);
+      return row ? !isOrderLockedByInternalStatus(row.internal_status) : false;
+    });
     if (ids.length === 0) return;
     setBulkStatusApplying(true);
     setBulkStatusFeedback('');
@@ -577,10 +591,13 @@ export default function PedidosPage() {
     } finally {
       setBulkStatusApplying(false);
     }
-  }, [selectedOrderIds, bulkInternalStatus, patchLocalFields]);
+  }, [selectedOrderIds, shopifyOrders, bulkInternalStatus, patchLocalFields]);
 
   const applyBulkMensajero = useCallback(async () => {
-    const ids = [...selectedOrderIds];
+    const ids = [...selectedOrderIds].filter((id) => {
+      const row = shopifyOrders.find((o) => o.id === id);
+      return row ? !isOrderLockedByInternalStatus(row.internal_status) : false;
+    });
     if (ids.length === 0) return;
     setBulkMensajeroApplying(true);
     setBulkMensajeroFeedback('');
@@ -602,7 +619,7 @@ export default function PedidosPage() {
     } finally {
       setBulkMensajeroApplying(false);
     }
-  }, [selectedOrderIds, bulkMensajero, patchLocalFields]);
+  }, [selectedOrderIds, shopifyOrders, bulkMensajero, patchLocalFields]);
 
   const schedulePriceSave = useCallback(
     (orderId: number, raw: string) => {
@@ -738,12 +755,26 @@ export default function PedidosPage() {
     [shopifyOrders, filter, selectedCityKeySet, normalizedSearchTerm],
   );
 
-  const filteredShopifyIds = useMemo(() => filteredShopify.map((r) => r.id), [filteredShopify]);
+  const filteredShopifyIds = useMemo(
+    () => filteredShopify.filter((r) => !isOrderLockedByInternalStatus(r.internal_status)).map((r) => r.id),
+    [filteredShopify],
+  );
 
   useEffect(() => {
     const valid = new Set(shopifyOrders.map((o) => o.id));
     setSelectedOrderIds((prev) => {
       const next = new Set([...prev].filter((id) => valid.has(id)));
+      if (next.size === prev.size && [...prev].every((id) => next.has(id))) return prev;
+      return next;
+    });
+  }, [shopifyOrders]);
+
+  useEffect(() => {
+    const selectable = new Set(
+      shopifyOrders.filter((o) => !isOrderLockedByInternalStatus(o.internal_status)).map((o) => o.id),
+    );
+    setSelectedOrderIds((prev) => {
+      const next = new Set([...prev].filter((id) => selectable.has(id)));
       if (next.size === prev.size && [...prev].every((id) => next.has(id))) return prev;
       return next;
     });
@@ -1368,6 +1399,7 @@ export default function PedidosPage() {
               <tbody>
                 {useLive
                   ? filteredShopify.map((o, i, arr) => {
+                      const isLocked = isOrderLockedByInternalStatus(o.internal_status);
                       return (
                         <tr key={o.id}>
                           <Td
@@ -1383,7 +1415,14 @@ export default function PedidosPage() {
                               checked={selectedOrderIds.has(o.id)}
                               onChange={() => toggleOrderSelected(o.id)}
                               aria-label={`Seleccionar pedido ${o.orderName}`}
-                              style={{ accentColor: ds.brand, width: 16, height: 16, cursor: 'pointer' }}
+                              disabled={isLocked}
+                              style={{
+                                accentColor: ds.brand,
+                                width: 16,
+                                height: 16,
+                                cursor: isLocked ? 'not-allowed' : 'pointer',
+                                opacity: isLocked ? 0.5 : 1,
+                              }}
                             />
                           </Td>
                           <Td
@@ -1399,9 +1438,13 @@ export default function PedidosPage() {
                               style={{
                                 ...estadoSelectInTableStyle,
                                 ...estadoSelectStyle(o.internal_status),
+                                cursor: isLocked ? 'not-allowed' : 'pointer',
+                                opacity: isLocked ? 0.72 : 1,
                               }}
                               value={o.internal_status}
                               onChange={(e) => void patchLocalFields(o.id, { internal_status: e.target.value })}
+                              disabled={isLocked}
+                              title={isLocked ? 'Pedido despachado/cancelado: estado bloqueado' : 'Cambiar estado'}
                             >
                               {INTERNAL_OPTIONS.map((opt) => (
                                 <option
@@ -1483,7 +1526,11 @@ export default function PedidosPage() {
                             <input
                               type="text"
                               inputMode="decimal"
-                              style={inputStyle}
+                              style={{
+                                ...inputStyle,
+                                cursor: isLocked ? 'not-allowed' : 'text',
+                                opacity: isLocked ? 0.72 : 1,
+                              }}
                               value={displayPrice(o)}
                               onChange={(e) => {
                                 const v = e.target.value;
@@ -1491,6 +1538,8 @@ export default function PedidosPage() {
                                 schedulePriceSave(o.id, v);
                               }}
                               aria-label="Precio manual"
+                              disabled={isLocked}
+                              title={isLocked ? 'Pedido despachado/cancelado: precio bloqueado' : 'Editar precio'}
                             />
                             <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
                               Shopify: {formatMoneyFromString(o.shopifyTotal, o.currency)}
@@ -1500,7 +1549,11 @@ export default function PedidosPage() {
                             <input
                               type="text"
                               inputMode="numeric"
-                              style={inputStyle}
+                              style={{
+                                ...inputStyle,
+                                cursor: isLocked ? 'not-allowed' : 'text',
+                                opacity: isLocked ? 0.72 : 1,
+                              }}
                               value={displayQty(o)}
                               onChange={(e) => {
                                 const v = e.target.value;
@@ -1508,6 +1561,8 @@ export default function PedidosPage() {
                                 scheduleQtySave(o.id, v);
                               }}
                               aria-label="Cantidad manual"
+                              disabled={isLocked}
+                              title={isLocked ? 'Pedido despachado/cancelado: cantidad bloqueada' : 'Editar cantidad'}
                             />
                             <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
                               Shopify: {o.shopifyQuantity}
@@ -1518,13 +1573,20 @@ export default function PedidosPage() {
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <select
-                              style={{ ...selectStyle, ...mensajeroSelectStyle(o.mensajero) }}
+                              style={{
+                                ...selectStyle,
+                                ...mensajeroSelectStyle(o.mensajero),
+                                cursor: isLocked ? 'not-allowed' : 'pointer',
+                                opacity: isLocked ? 0.72 : 1,
+                              }}
                               value={o.mensajero || ''}
                               onChange={(e) =>
                                 void patchLocalFields(o.id, {
                                   mensajero: e.target.value === '' ? null : e.target.value,
                                 })
                               }
+                              disabled={isLocked}
+                              title={isLocked ? 'Pedido despachado/cancelado: mensajero bloqueado' : 'Cambiar mensajero'}
                             >
                               {MENSAJERO_OPTIONS.map((opt) => (
                                 <option

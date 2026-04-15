@@ -2344,6 +2344,8 @@ const SHOPIFY_MOTICO_STATUSES = new Set([
   'pendiente_pago',
   'devolucion',
 ]);
+const LOCKED_MOTICO_STATUSES = new Set(['despachado', 'cancelado']);
+const LOCKED_INTERNAL_STATUSES = new Set(['despachado', 'cancelado']);
 
 const SHOPIFY_ORDER_LIST_FIELDS =
   'id,name,phone,email,created_at,total_price,total_outstanding,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address,billing_address,landing_site,referring_site,source_name,note_attributes';
@@ -3987,6 +3989,11 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         return res.status(404).json({ error: 'Pedido manual no encontrado' });
       }
       const cur = mrows[0];
+      const currentMoticoStatus =
+        cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : 'confirmado';
+      if (LOCKED_MOTICO_STATUSES.has(currentMoticoStatus)) {
+        return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
+      }
       let price_override = cur.price_override != null ? Number(cur.price_override) : null;
       if (body.price_override !== undefined) {
         if (body.price_override === null) price_override = null;
@@ -4134,6 +4141,18 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       [req.organizationId, orderId],
     );
     const cur = existing[0] || {};
+    const currentMoticoStatus =
+      cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : 'confirmado';
+    if (LOCKED_MOTICO_STATUSES.has(currentMoticoStatus)) {
+      return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
+    }
+    const currentInternalStatus =
+      cur.internal_status != null && String(cur.internal_status) !== ''
+        ? String(cur.internal_status)
+        : 'sin_confirmar';
+    if (LOCKED_INTERNAL_STATUSES.has(currentInternalStatus)) {
+      return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
+    }
     let internal_status = cur.internal_status || 'sin_confirmar';
     if (body.internal_status !== undefined) {
       const s = String(body.internal_status);
@@ -4304,11 +4323,18 @@ app.put(
       if (orderId < 0) {
         const manualId = -orderId;
         const { rows } = await pool.query(
-          `SELECT shipping_json, client_name FROM motico_manual_orders WHERE id = $1 AND organization_id = $2`,
+          `SELECT shipping_json, client_name, motico_status FROM motico_manual_orders WHERE id = $1 AND organization_id = $2`,
           [manualId, req.organizationId],
         );
         if (!rows.length) {
           return res.status(404).json({ error: 'Pedido manual no encontrado' });
+        }
+        const manualStatus =
+          rows[0].motico_status != null && String(rows[0].motico_status) !== ''
+            ? String(rows[0].motico_status)
+            : 'confirmado';
+        if (LOCKED_MOTICO_STATUSES.has(manualStatus)) {
+          return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
         }
         let ship = rows[0].shipping_json;
         if (typeof ship === 'string') {
@@ -4354,6 +4380,34 @@ app.put(
       const conn = await getActiveShopifyConnection(req.organizationId);
       if (!conn) {
         return res.status(400).json({ error: 'No hay tienda conectada', code: 'not_connected' });
+      }
+      const { rows: lockRows } = await pool.query(
+        `SELECT motico_status
+         FROM shopify_order_local_fields
+         WHERE organization_id = $1 AND shopify_order_id = $2
+         LIMIT 1`,
+        [req.organizationId, orderId],
+      );
+      const lockedStatus =
+        lockRows[0]?.motico_status != null && String(lockRows[0].motico_status) !== ''
+          ? String(lockRows[0].motico_status)
+          : 'confirmado';
+      if (LOCKED_MOTICO_STATUSES.has(lockedStatus)) {
+        return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
+      }
+      const { rows: internalLockRows } = await pool.query(
+        `SELECT internal_status
+         FROM shopify_order_local_fields
+         WHERE organization_id = $1 AND shopify_order_id = $2
+         LIMIT 1`,
+        [req.organizationId, orderId],
+      );
+      const internalLockedStatus =
+        internalLockRows[0]?.internal_status != null && String(internalLockRows[0].internal_status) !== ''
+          ? String(internalLockRows[0].internal_status)
+          : 'sin_confirmar';
+      if (LOCKED_INTERNAL_STATUSES.has(internalLockedStatus)) {
+        return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
       }
       const r = await shopifyUpdateOrderShippingAddress(conn.shop_domain, conn.access_token, orderId, updates);
       if (!r.ok) {

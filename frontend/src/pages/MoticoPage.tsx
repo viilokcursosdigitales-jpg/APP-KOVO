@@ -86,6 +86,11 @@ const MOTICO_ESTADO_LONGEST_LABEL_LEN = Math.max(...MOTICO_STATUS_OPTIONS.map((o
 
 /** Solo pedidos en este estado pueden generar guías (vista previa / impresión). */
 const MOTICO_STATUS_FOR_GUIDE_PRINT = 'imprimir_guia';
+const MOTICO_LOCKED_STATUSES = new Set(['despachado', 'cancelado']);
+
+function isMoticoStatusLocked(status: string) {
+  return MOTICO_LOCKED_STATUSES.has(String(status || '').toLowerCase());
+}
 
 const STATUS_META = Object.fromEntries(MOTICO_STATUS_OPTIONS.map((o) => [o.value, o])) as Record<
   string,
@@ -1070,6 +1075,10 @@ export default function MoticoPage() {
 
   const onMoticoStatusChange = useCallback(
     async (o: MoticoOrderRow, next: string) => {
+      if (isMoticoStatusLocked(o.motico_status)) {
+        setSyncError('El pedido está bloqueado (despachado/cancelado) y no se puede modificar.');
+        return;
+      }
       setGuideHint('');
       await patchLocalFields(o.id, { motico_status: next });
     },
@@ -1077,6 +1086,10 @@ export default function MoticoPage() {
   );
 
   const openOrderEditor = useCallback((o: MoticoOrderRow) => {
+    if (isMoticoStatusLocked(o.motico_status)) {
+      setSyncError('El pedido está bloqueado (despachado/cancelado) y no se puede editar.');
+      return;
+    }
     setSyncError('');
     setEditorDraft(draftFromOrder(o));
     setEditorOrder(o);
@@ -1084,6 +1097,10 @@ export default function MoticoPage() {
 
   const saveOrderEditor = useCallback(async () => {
     if (!editorOrder) return;
+    if (isMoticoStatusLocked(editorOrder.motico_status)) {
+      setSyncError('El pedido está bloqueado (despachado/cancelado) y no se puede guardar.');
+      return;
+    }
     setEditorSaving(true);
     setSyncError('');
     try {
@@ -2336,10 +2353,18 @@ export default function MoticoPage() {
                                 background: meta.chipBg,
                                 color: meta.chipFg,
                                 borderColor: meta.chipBorder,
+                                cursor: isMoticoStatusLocked(o.motico_status) ? 'not-allowed' : 'pointer',
+                                opacity: isMoticoStatusLocked(o.motico_status) ? 0.72 : 1,
                               }}
                               value={o.motico_status}
                               onChange={(e) => void onMoticoStatusChange(o, e.target.value)}
                               aria-label="Estado Motico"
+                              disabled={isMoticoStatusLocked(o.motico_status)}
+                              title={
+                                isMoticoStatusLocked(o.motico_status)
+                                  ? 'Pedido despachado/cancelado: estado bloqueado'
+                                  : 'Cambiar estado'
+                              }
                             >
                               {MOTICO_STATUS_OPTIONS.map((opt) => (
                                 <option key={opt.value} value={opt.value}>
@@ -2446,7 +2471,11 @@ export default function MoticoPage() {
                         <input
                           type="text"
                           inputMode="decimal"
-                          style={moticoTotalAPagarInputStyle}
+                          style={{
+                            ...moticoTotalAPagarInputStyle,
+                            cursor: isMoticoStatusLocked(o.motico_status) ? 'not-allowed' : 'text',
+                            opacity: isMoticoStatusLocked(o.motico_status) ? 0.72 : 1,
+                          }}
                           value={
                             totalAPagarDraft[o.id] !== undefined
                               ? totalAPagarDraft[o.id]!
@@ -2458,6 +2487,12 @@ export default function MoticoPage() {
                             scheduleTotalAPagarSave(o.id, v);
                           }}
                           aria-label={`Total a pagar pedido ${o.orderName}`}
+                          disabled={isMoticoStatusLocked(o.motico_status)}
+                          title={
+                            isMoticoStatusLocked(o.motico_status)
+                              ? 'Pedido despachado/cancelado: total a pagar bloqueado'
+                              : 'Editar total a pagar'
+                          }
                         />
                         <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4, lineHeight: 1.3 }}>
                           Calculado Shopify: {formatMoneyAmount(o.total_a_pagar_default, o.currency)}
@@ -2473,7 +2508,17 @@ export default function MoticoPage() {
                           type="button"
                           aria-label={`Editar pedido ${o.orderName}: dirección, precio y cantidad`}
                           onClick={() => openOrderEditor(o)}
-                          style={moticoOrderEditIconBtn}
+                          style={{
+                            ...moticoOrderEditIconBtn,
+                            cursor: isMoticoStatusLocked(o.motico_status) ? 'not-allowed' : 'pointer',
+                            opacity: isMoticoStatusLocked(o.motico_status) ? 0.5 : 1,
+                          }}
+                          disabled={isMoticoStatusLocked(o.motico_status)}
+                          title={
+                            isMoticoStatusLocked(o.motico_status)
+                              ? 'Pedido despachado/cancelado: edición bloqueada'
+                              : 'Editar pedido'
+                          }
                         >
                           <IconPencil size={16} />
                         </button>
