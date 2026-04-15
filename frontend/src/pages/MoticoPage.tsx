@@ -364,6 +364,7 @@ type MoticoEditorDraft = {
   phone: string;
   price: string;
   quantity: string;
+  anticipo: string;
   line_items: {
     product_id: string;
     variant_id: string;
@@ -381,6 +382,7 @@ function emptyEditorDraft(): MoticoEditorDraft {
     phone: '',
     price: '',
     quantity: '',
+    anticipo: '0',
     line_items: [emptyManualLine()],
   };
 }
@@ -521,6 +523,7 @@ function draftFromOrder(o: MoticoOrderRow): MoticoEditorDraft {
     phone: sa?.phone || '',
     price: String(o.price_override ?? o.shopifyTotal ?? ''),
     quantity: String(o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity ?? 0),
+    anticipo: String(computeAnticipoAmountFromRow(o)),
     line_items: line_items.length ? line_items : [emptyManualLine()],
   };
 }
@@ -563,6 +566,29 @@ function formatDate(iso: string) {
   } catch {
     return iso;
   }
+}
+
+function effectiveOrderTotalAmount(o: {
+  price_override?: number | null;
+  shopifyTotal?: string;
+  total?: string;
+}): number {
+  const n =
+    o.price_override != null
+      ? Number(o.price_override)
+      : Number.parseFloat(String(o.shopifyTotal ?? o.total ?? '0'));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function computeAnticipoAmountFromRow(o: MoticoOrderRow): number {
+  const total = effectiveOrderTotalAmount(o);
+  if (o.total_a_pagar_override != null && Number.isFinite(Number(o.total_a_pagar_override))) {
+    const pending = Math.max(0, Number(o.total_a_pagar_override));
+    return Math.max(0, total - pending);
+  }
+  const fin = String(o.financialStatus || '').toLowerCase();
+  if (fin === 'paid') return total;
+  return 0;
 }
 
 function normalizeSearchText(v: string) {
@@ -1288,7 +1314,12 @@ export default function MoticoPage() {
 
       const pt = editorDraft.price.trim();
       const qt = editorDraft.quantity.trim();
+      const at = editorDraft.anticipo.trim();
       const patchBody: Record<string, unknown> = { sync_to_shopify: false };
+      const effectiveTotalForAnticipo =
+        pt !== ''
+          ? Number.parseFloat(pt.replace(',', '.'))
+          : effectiveOrderTotalAmount(editorOrder);
 
       if (pt === '') {
         patchBody.price_override = null;
@@ -1315,6 +1346,20 @@ export default function MoticoPage() {
       if (pt !== '' && qt !== '') {
         patchBody.sync_to_shopify = true;
       }
+      const anticipoNum = at === '' ? 0 : Number.parseFloat(at.replace(',', '.'));
+      if (!Number.isFinite(anticipoNum) || anticipoNum < 0) {
+        setSyncError('Anticipo no válido');
+        return;
+      }
+      if (!Number.isFinite(effectiveTotalForAnticipo) || effectiveTotalForAnticipo < 0) {
+        setSyncError('Total del pedido no válido para calcular anticipo');
+        return;
+      }
+      if (anticipoNum > effectiveTotalForAnticipo) {
+        setSyncError('El anticipo no puede ser mayor al total del pedido');
+        return;
+      }
+      patchBody.total_a_pagar_override = Math.max(0, effectiveTotalForAnticipo - anticipoNum);
       if (editorOrder.id < 0 || editorOrder.is_motico_manual) {
         patchBody.sync_to_shopify = false;
         const normalizedItems = editorDraft.line_items
@@ -2464,6 +2509,7 @@ export default function MoticoPage() {
                   </Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pendiente de pago</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Anticipo</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Productos</Th>
                   <Th style={{ ...moticoEditColTh, ...orderListTheadStickyCell }} title="Editar pedido">
                     <IconPencil size={14} style={{ opacity: 0.4, display: 'block' }} aria-hidden />
@@ -2690,6 +2736,11 @@ export default function MoticoPage() {
                         </div>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
+                          {formatMoneyAmount(computeAnticipoAmountFromRow(o), o.currency)}
+                        </div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div style={{ fontSize: 11, color: ds.textSecondary, lineHeight: 1.35 }}>
                           {summarizeProducts(o.productIds)}
                         </div>
@@ -2868,6 +2919,16 @@ export default function MoticoPage() {
                 inputMode="numeric"
                 value={editorDraft.quantity}
                 onChange={(e) => setEditorDraft((d) => ({ ...d, quantity: e.target.value }))}
+                style={modalFieldStyle}
+              />
+            </label>
+            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+              Anticipo pagado
+              <input
+                type="text"
+                inputMode="decimal"
+                value={editorDraft.anticipo}
+                onChange={(e) => setEditorDraft((d) => ({ ...d, anticipo: e.target.value }))}
                 style={modalFieldStyle}
               />
             </label>
