@@ -3477,15 +3477,13 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         shopifyQuantity: o.defaultQuantity,
       };
     });
-    if (mensajeroFilter === 'motico') {
-      try {
-        const minIso = min && String(min).trim() ? String(min).trim() : null;
-        const maxIso = max && String(max).trim() ? String(max).trim() : null;
-        const manualRows = await loadMoticoManualOrdersForOrg(req.organizationId, minIso, maxIso);
-        orders = [...manualRows, ...orders];
-      } catch (me) {
-        if (!(me && me.code === '42P01')) throw me;
-      }
+    try {
+      const minIso = min && String(min).trim() ? String(min).trim() : null;
+      const maxIso = max && String(max).trim() ? String(max).trim() : null;
+      const manualRows = await loadMoticoManualOrdersForOrg(req.organizationId, minIso, maxIso);
+      orders = [...manualRows, ...orders];
+    } catch (me) {
+      if (!(me && me.code === '42P01')) throw me;
     }
     if (mensajeroFilter === 'motico') {
       orders = orders.filter((o) => o.mensajero === 'motico' || String(o.internal_status || '') === 'motico');

@@ -673,6 +673,10 @@ export default function PedidosPage() {
 
   const handleOpenOrderEdit = useCallback((row: ShopifyOrderRow) => {
     const st = String(row.internal_status || '').toLowerCase() as InternalStatusValue;
+    if (row.id < 0) {
+      setShopifyError('Edita desde el módulo Motico.');
+      return;
+    }
     if (st === 'motico') {
       setShopifyError('Edita desde el módulo Motico.');
       return;
@@ -1512,6 +1516,24 @@ export default function PedidosPage() {
                             <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>
                               {highlightText(o.orderName, searchTerm)}
                             </div>
+                            {o.id < 0 ? (
+                              <div
+                                style={{
+                                  display: 'inline-flex',
+                                  marginTop: 4,
+                                  padding: '2px 7px',
+                                  borderRadius: 999,
+                                  background: '#ede9fe',
+                                  color: '#5b21b6',
+                                  border: '1px solid #c4b5fd',
+                                  fontSize: 10,
+                                  fontWeight: 700,
+                                  letterSpacing: '0.02em',
+                                }}
+                              >
+                                Manual
+                              </div>
+                            ) : null}
                           </Td>
                           <Td isLast={i === arr.length - 1}>{formatDate(o.createdAt)}</Td>
                           <Td isLast={i === arr.length - 1}>{highlightText(o.client, searchTerm)}</Td>
@@ -1658,7 +1680,7 @@ export default function PedidosPage() {
                               disabled={String(o.internal_status || '').toLowerCase() === 'cancelado'}
                               aria-label={`Editar pedido ${o.orderName}`}
                               title={
-                                String(o.internal_status || '').toLowerCase() === 'motico'
+                                o.id < 0 || String(o.internal_status || '').toLowerCase() === 'motico'
                                   ? 'Edita desde el módulo Motico.'
                                   : String(o.internal_status || '').toLowerCase() === 'despachado'
                                     ? 'Responde motivo y desbloquea para editar'
@@ -1677,7 +1699,7 @@ export default function PedidosPage() {
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 cursor:
-                                  String(o.internal_status || '').toLowerCase() === 'motico'
+                                  o.id < 0 || String(o.internal_status || '').toLowerCase() === 'motico'
                                     ? 'pointer'
                                     : String(o.internal_status || '').toLowerCase() === 'cancelado'
                                       ? 'not-allowed'
