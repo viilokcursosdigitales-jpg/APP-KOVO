@@ -40,7 +40,7 @@ const INTERNAL_OPTIONS = [
 ] as const;
 const MENSAJERO_OPTIONS = [
   { value: 'motico', label: 'Motico' },
-  { value: 'effix', label: 'Efiix' },
+  { value: 'effix', label: 'Effix' },
   { value: 'dropi', label: 'Dropi' },
 ] as const;
 
@@ -1513,6 +1513,27 @@ export default function PedidosPage() {
                             </select>
                           </Td>
                           <Td isLast={i === arr.length - 1}>
+                            <select
+                              style={{
+                                ...selectStyle,
+                                ...mensajeroSelectStyle(o.mensajero),
+                                cursor: isLocked ? 'not-allowed' : 'pointer',
+                                opacity: isLocked ? 0.72 : 1,
+                              }}
+                              value={String(o.mensajero || '')}
+                              onChange={(e) => void handleMensajeroChange(o, e.target.value)}
+                              disabled={isLocked}
+                              title={isLocked ? 'Pedido bloqueado: mensajero no editable' : 'Cambiar mensajero'}
+                            >
+                              <option value="">Sin asignar</option>
+                              {MENSAJERO_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value} style={mensajeroOptionStyle(opt.value)}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
+                          </Td>
+                          <Td isLast={i === arr.length - 1}>
                             <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>
                               {highlightText(o.orderName, searchTerm)}
                             </div>
@@ -1594,27 +1615,6 @@ export default function PedidosPage() {
                             >
                               {highlightText(o.shippingAddressLine?.trim() || '—', searchTerm)}
                             </div>
-                          </Td>
-                          <Td isLast={i === arr.length - 1}>
-                            <select
-                              style={{
-                                ...selectStyle,
-                                ...mensajeroSelectStyle(o.mensajero),
-                                cursor: isLocked ? 'not-allowed' : 'pointer',
-                                opacity: isLocked ? 0.72 : 1,
-                              }}
-                              value={String(o.mensajero || '')}
-                              onChange={(e) => void handleMensajeroChange(o, e.target.value)}
-                              disabled={isLocked}
-                              title={isLocked ? 'Pedido bloqueado: mensajero no editable' : 'Cambiar mensajero'}
-                            >
-                              <option value="">Sin asignar</option>
-                              {MENSAJERO_OPTIONS.map((opt) => (
-                                <option key={opt.value} value={opt.value} style={mensajeroOptionStyle(opt.value)}>
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <input
