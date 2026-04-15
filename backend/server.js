@@ -4205,21 +4205,20 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       const requestedMoticoStatus = body.motico_status !== undefined ? String(body.motico_status) : '';
       const requestedInternalManual = body.internal_status !== undefined ? String(body.internal_status) : '';
       const requestedEstadoUnlock = requestedInternalManual || requestedMoticoStatus;
-      const unlockFromMoticoDespachadoRequested =
-        currentMoticoStatusNormalized === 'despachado' &&
+      const unlockFromMoticoLockedRequested =
+        (currentMoticoStatusNormalized === 'despachado' || currentMoticoStatusNormalized === 'cancelado') &&
         requestedEstadoUnlock === 'sin_revisar' &&
         unlockReason.length >= 5;
-      if (currentMoticoStatusNormalized === 'cancelado') {
-        return res.status(409).json({ error: 'El pedido está bloqueado (cancelado) y no se puede modificar.' });
-      }
       if (
-        currentMoticoStatusNormalized === 'despachado' &&
+        (currentMoticoStatusNormalized === 'despachado' || currentMoticoStatusNormalized === 'cancelado') &&
         !onlyPaymentStatusUpdate &&
-        !unlockFromMoticoDespachadoRequested
+        !unlockFromMoticoLockedRequested
       ) {
-        return res
-          .status(409)
-          .json({ error: 'Pedido despachado: responde el motivo y desbloquea antes de editar.' });
+        const msg =
+          currentMoticoStatusNormalized === 'cancelado'
+            ? 'Pedido cancelado: responde el motivo y desbloquea antes de editar.'
+            : 'Pedido despachado: responde el motivo y desbloquea antes de editar.';
+        return res.status(409).json({ error: msg });
       }
       const currentPaymentStatus = normalizeMoticoPaymentStatus(cur.financial_status);
       if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate) {
@@ -4429,15 +4428,16 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
     const requestedMoticoStatus = body.motico_status !== undefined ? String(body.motico_status) : '';
     const requestedInternalStatus = body.internal_status !== undefined ? String(body.internal_status) : '';
     const requestedEstadoUnlock = requestedInternalStatus || requestedMoticoStatus;
-    const unlockFromDespachadoCombined =
-      curEstado === 'despachado' &&
+    const unlockFromLockedCombined =
+      (curEstado === 'despachado' || curEstado === 'cancelado') &&
       requestedEstadoUnlock === 'sin_revisar' &&
       unlockReasonCombined.length >= 5;
-    if (curEstado === 'cancelado') {
-      return res.status(409).json({ error: 'El pedido está bloqueado (cancelado) y no se puede modificar.' });
-    }
-    if (curEstado === 'despachado' && !onlyPaymentStatusUpdate && !unlockFromDespachadoCombined) {
-      return res.status(409).json({ error: 'Pedido despachado: responde el motivo y desbloquea antes de editar.' });
+    if ((curEstado === 'despachado' || curEstado === 'cancelado') && !onlyPaymentStatusUpdate && !unlockFromLockedCombined) {
+      const msg =
+        curEstado === 'cancelado'
+          ? 'Pedido cancelado: responde el motivo y desbloquea antes de editar.'
+          : 'Pedido despachado: responde el motivo y desbloquea antes de editar.';
+      return res.status(409).json({ error: msg });
     }
     const currentPaymentStatus = normalizeMoticoPaymentStatus(cur.payment_status_override);
     if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate) {

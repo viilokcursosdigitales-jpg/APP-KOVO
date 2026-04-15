@@ -684,15 +684,11 @@ export default function PedidosPage() {
       setShopifyError('Edita desde el módulo Motico.');
       return;
     }
-    if (st === 'cancelado') {
-      setShopifyError('Pedido cancelado: edición bloqueada.');
-      return;
-    }
     if (isOrderManagedByMotico(row)) {
       setShopifyError('Edita desde el módulo Motico.');
       return;
     }
-    if (st === 'despachado') {
+    if (st === 'despachado' || st === 'cancelado') {
       setUnlockOrder(row);
       setUnlockReason('');
       setShopifyError('');
@@ -1464,8 +1460,7 @@ export default function PedidosPage() {
                   ? filteredShopify.map((o, i, arr) => {
                       const isLocked = isOrderLockedInPedidos(o);
                       const stLower = String(o.internal_status || '').toLowerCase();
-                      const editDisabledFromPedidos =
-                        o.id < 0 || stLower === 'cancelado' || isOrderManagedByMotico(o);
+                      const editDisabledFromPedidos = o.id < 0 || isOrderManagedByMotico(o);
                       return (
                         <tr key={o.id}>
                           <Td
@@ -1694,13 +1689,11 @@ export default function PedidosPage() {
                               disabled={editDisabledFromPedidos}
                               aria-label={`Editar pedido ${o.orderName}`}
                               title={
-                                stLower === 'cancelado'
-                                  ? 'Pedido cancelado: edición bloqueada'
-                                  : o.id < 0 || isOrderManagedByMotico(o)
-                                    ? 'Edita desde el módulo Motico.'
-                                    : stLower === 'despachado'
-                                      ? 'Responde motivo y desbloquea para editar'
-                                      : 'Abrir editor'
+                                o.id < 0 || isOrderManagedByMotico(o)
+                                  ? 'Edita desde el módulo Motico.'
+                                  : stLower === 'despachado' || stLower === 'cancelado'
+                                    ? 'Responde motivo y desbloquea para editar'
+                                    : 'Abrir editor'
                               }
                               style={{
                                 width: 32,
@@ -1713,7 +1706,7 @@ export default function PedidosPage() {
                                 alignItems: 'center',
                                 justifyContent: 'center',
                                 cursor: editDisabledFromPedidos ? 'not-allowed' : 'pointer',
-                                opacity: stLower === 'cancelado' ? 0.5 : editDisabledFromPedidos ? 0.72 : 1,
+                                opacity: editDisabledFromPedidos ? 0.72 : 1,
                               }}
                             >
                               <IconPencil size={14} />
@@ -1786,9 +1779,14 @@ export default function PedidosPage() {
               padding: 18,
             }}
           >
-            <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>Desbloquear pedido despachado</h3>
+            <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>
+              {String(unlockOrder.internal_status || '').toLowerCase() === 'cancelado'
+                ? 'Desbloquear pedido cancelado'
+                : 'Desbloquear pedido despachado'}
+            </h3>
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.4 }}>
-              Pedido <strong>{unlockOrder.orderName}</strong>. Para editarlo debes responder el motivo de desbloqueo.
+              Pedido <strong>{unlockOrder.orderName}</strong>. Para editarlo debes responder el motivo de desbloqueo
+              (mínimo 5 caracteres).
             </p>
             <label style={{ display: 'block', fontSize: 12, color: ds.textSecondary, fontWeight: 600 }}>
               Motivo de desbloqueo *

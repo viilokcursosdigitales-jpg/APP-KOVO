@@ -1322,7 +1322,8 @@ export default function MoticoPage() {
   );
 
   const openOrderEditor = useCallback((o: MoticoOrderRow) => {
-    if (String(o.motico_status || '').toLowerCase() === 'despachado') {
+    const st = String(o.motico_status || '').toLowerCase();
+    if (st === 'despachado' || st === 'cancelado') {
       setUnlockOrder(o);
       setUnlockReason('');
       setSyncError('');
@@ -2668,9 +2669,12 @@ export default function MoticoPage() {
                   const paymentStatus = normalizeMoticoPaymentStatus(o.financialStatus);
                   const paymentMeta = MOTICO_PAYMENT_META[paymentStatus];
                   const editLocked = isMoticoOrderEditLocked(o);
-                  const isDespachadoMotico = String(o.motico_status || '').toLowerCase() === 'despachado';
-                  const editButtonDisabled = editLocked && !isDespachadoMotico;
-                  const paymentStatusLocked = String(o.motico_status || '').toLowerCase() === 'cancelado';
+                  const stMot = String(o.motico_status || '').toLowerCase();
+                  const isDespachadoMotico = stMot === 'despachado';
+                  const isCanceladoMotico = stMot === 'cancelado';
+                  const canUnlockFromLockedEstado = isDespachadoMotico || isCanceladoMotico;
+                  const editButtonDisabled = editLocked && !canUnlockFromLockedEstado;
+                  const paymentStatusLocked = isCanceladoMotico;
                   const sa = o.shippingAddress;
                   const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
                   const showPrice = formatMoneyFromString(
@@ -2943,11 +2947,11 @@ export default function MoticoPage() {
                           }}
                           disabled={editButtonDisabled}
                           title={
-                            isDespachadoMotico
-                              ? 'Pedido despachado: responde motivo y desbloquea para editar'
+                            isDespachadoMotico || isCanceladoMotico
+                              ? 'Responde motivo y desbloquea para editar'
                               : editLocked
-                                ? 'Pedido cancelado/pagado: edición bloqueada'
-                              : 'Editar pedido'
+                                ? 'Pedido pagado: edición bloqueada'
+                                : 'Editar pedido'
                           }
                         >
                           <IconPencil size={16} />
@@ -2996,9 +3000,14 @@ export default function MoticoPage() {
               padding: 18,
             }}
           >
-            <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>Desbloquear pedido despachado</h3>
+            <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>
+              {String(unlockOrder.motico_status || '').toLowerCase() === 'cancelado'
+                ? 'Desbloquear pedido cancelado'
+                : 'Desbloquear pedido despachado'}
+            </h3>
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.4 }}>
-              Pedido <strong>{unlockOrder.orderName}</strong>. Para editarlo debes responder el motivo de desbloqueo.
+              Pedido <strong>{unlockOrder.orderName}</strong>. Para editarlo debes responder el motivo de desbloqueo
+              (mínimo 5 caracteres).
             </p>
             <label style={{ display: 'block', fontSize: 12, color: ds.textSecondary, fontWeight: 600 }}>
               Motivo de desbloqueo *
