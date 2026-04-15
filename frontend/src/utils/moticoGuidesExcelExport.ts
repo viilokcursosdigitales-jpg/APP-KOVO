@@ -348,10 +348,8 @@ function fillMoticoGuidesWorksheet(ws: ExcelJS.Worksheet, orders: MoticoGuideExp
       );
       row.eachCell((cell, col) => {
         cell.border = THIN_BORDER;
-        if (col === 1 || col === 5) {
+        if (col === 1 || col === 5 || col === 7 || col === 8 || col === 9) {
           cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-        } else if (col === 9) {
-          cell.alignment = { vertical: 'middle', horizontal: 'right', wrapText: true };
         } else {
           cell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
         }
@@ -368,13 +366,13 @@ function fillMoticoGuidesWorksheet(ws: ExcelJS.Worksheet, orders: MoticoGuideExp
         cell.alignment = {
           ...cell.alignment,
           vertical: 'middle',
-          horizontal: col === 1 || col === 5 ? 'center' : col === 9 ? 'right' : 'left',
+          horizontal: col === 1 || col === 5 || col === 9 ? 'center' : 'left',
           wrapText: true,
         };
       }
     } else {
       const cell = ws.getCell(startRow, 9);
-      cell.alignment = { vertical: 'middle', horizontal: 'right', wrapText: true };
+      cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
       const obsCell = ws.getCell(startRow, 10);
       obsCell.alignment = { vertical: 'middle', horizontal: 'left', wrapText: true };
     }

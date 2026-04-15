@@ -121,10 +121,14 @@ export function buildObservacionLine(
   if (lineItems.length) {
     const lines = lineItems.map((li) => {
       const m = mapLineItemToExportLine(li);
+      const qty = Math.max(1, Math.floor(Number(li.quantity) || 0));
       const producto =
         String(m.producto || '').trim() || String(li.title || li.name || '').trim() || 'Producto';
       const variableCompleta = moticoGuideVariableFromLineSource(li);
-      return `${producto} · ${variableCompleta}`.trim();
+      const variable = variableCompleta && variableCompleta.trim().toUpperCase() !== 'NO APLICA' ? variableCompleta : '';
+      const talla = String(m.talla || '').trim();
+      const extras = [variable, talla].filter((x) => String(x || '').trim()).join(' · ').trim();
+      return `${qty} x ${producto}${extras ? ` · ${extras}` : ''}`.trim();
     });
     return lines.join(', ').toUpperCase();
   }
