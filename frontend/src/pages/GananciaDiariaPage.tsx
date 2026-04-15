@@ -4,18 +4,6 @@ import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
 
-type DayProductSlice = {
-  label: string;
-  product_id: number | null;
-  ventas_despachadas_total: number;
-  ventas_entregadas_total: number;
-  ventas_despachadas_pedidos: number;
-  cantidad_producto_total: number;
-  costo_producto_total: number;
-  costo_producto_entregado_total: number;
-  costo_flete_promedio_total: number;
-};
-
 type SeriesDayRow = {
   date: string;
   ventas_despachadas_total: number;
@@ -28,10 +16,7 @@ type SeriesDayRow = {
   gasto_publicitario_total: number;
   ganancia: number | null;
   utilidad: number | null;
-  by_product?: Record<string, DayProductSlice>;
 };
-
-type ProductOption = { key: string; label: string; product_id: number | null };
 
 type SeriesPayload = {
   shop_calendar_timezone?: string;
@@ -43,7 +28,6 @@ type SeriesPayload = {
   available_months?: string[];
   months_applied?: string[];
   days?: SeriesDayRow[];
-  product_options?: ProductOption[];
   error?: string;
   code?: string;
 };
@@ -102,21 +86,6 @@ function utilidadMostradaPorDia(
   if (!comparable || row.utilidad == null || !Number.isFinite(row.utilidad)) return null;
   const ve = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
   return (row.utilidad as number) - ve * (adminPercent / 100);
-}
-
-function metaAllocForProductDay(row: SeriesDayRow, productKey: string): number {
-  const slice = row.by_product?.[productKey];
-  if (!slice) return 0;
-  const veSlice = slice.ventas_entregadas_total || 0;
-  const veDay = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
-  if (veDay <= 0) return 0;
-  return row.gasto_publicitario_total * (veSlice / veDay);
-}
-
-function barColorForProductKey(key: string, index: number): string {
-  let h = index * 41;
-  for (let i = 0; i < key.length; i += 1) h = (h + key.charCodeAt(i) * 17) % 360;
-  return `hsl(${h}, 58%, 48%)`;
 }
 
 const cardBase: CSSProperties = {
@@ -283,6 +252,8 @@ export default function GananciaDiariaPage() {
       return '0';
     }
   });
+  const [rangeFrom, setRangeFrom] = useState('');
+  const [rangeTo, setRangeTo] = useState('');
   const skipSeriesEffectOnce = useRef(false);
   const appliedDefaultMonthsOnce = useRef(false);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
@@ -369,42 +340,24 @@ export default function GananciaDiariaPage() {
   };
 
   const days = seriesData?.days ?? [];
-  const productOptions = seriesData?.product_options ?? [];
   const seriesVentasCur = seriesData?.ventas_currency;
   const seriesMetaCur = seriesData?.meta_currency;
   const comparable = seriesData?.ganancia_comparable;
   const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
 
-  const productColorMap = useMemo(() => {
-    const m = new Map<string, string>();
-    productOptions.forEach((o, i) => m.set(o.key, barColorForProductKey(o.key, i)));
-    return m;
-  }, [productOptions]);
-
-  const productUtilidadChart = useMemo(() => {
-    if (!comparable || !days.length || !productOptions.length) return [];
-    const rows: { key: string; label: string; utilidad: number }[] = [];
-    for (const opt of productOptions) {
-      let u = 0;
-      for (const row of days) {
-        const slice = row.by_product?.[opt.key];
-        if (!slice) continue;
-        const ve = slice.ventas_entregadas_total || 0;
-        const metaP = metaAllocForProductDay(row, opt.key);
-        const cpe = slice.costo_producto_entregado_total || slice.costo_producto_total || 0;
-        const fl = slice.costo_flete_promedio_total || 0;
-        u += ve - metaP - cpe - fl - ve * (adminPercent / 100);
-      }
-      rows.push({ key: opt.key, label: opt.label, utilidad: Math.round(u * 100) / 100 });
-    }
-    return rows.sort((a, b) => b.utilidad - a.utilidad);
-  }, [days, productOptions, comparable, adminPercent]);
-
-  const chartMaxAbs = useMemo(() => {
-    let m = 1;
-    for (const r of productUtilidadChart) m = Math.max(m, Math.abs(r.utilidad));
-    return m;
-  }, [productUtilidadChart]);
+  const daysInRange = useMemo(() => {
+    const from = rangeFrom.trim();
+    const to = rangeTo.trim();
+    if (!from && !to) return days;
+    const lo = from && to && from > to ? to : from;
+    const hi = from && to && from > to ? from : to;
+    return days.filter((row) => {
+      const d = row.date;
+      if (lo && d < lo) return false;
+      if (hi && d > hi) return false;
+      return true;
+    });
+  }, [days, rangeFrom, rangeTo]);
 
   const totals = useMemo(() => {
     let v = 0;
@@ -418,7 +371,7 @@ export default function GananciaDiariaPage() {
     let g = 0;
     let ganSum = 0;
     let utiDisplayedSum = 0;
-    for (const row of days) {
+    for (const row of daysInRange) {
       v += row.ventas_despachadas_total;
       ve += row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
       p += row.ventas_despachadas_pedidos;
@@ -447,7 +400,7 @@ export default function GananciaDiariaPage() {
       utilidad: utilidadAgregada,
       utilidadNeta: utilidadAgregada,
     };
-  }, [days, comparable, adminPercent]);
+  }, [daysInRange, comparable, adminPercent]);
 
   const utilidadKpiValue =
     totals.utilidadNeta != null && Number.isFinite(totals.utilidadNeta) ? totals.utilidadNeta : null;
@@ -477,8 +430,13 @@ export default function GananciaDiariaPage() {
                 · Zona tienda: <code style={{ fontSize: 11 }}>{seriesData.shop_calendar_timezone}</code>
               </>
             ) : null}
-            . Los KPI se calculan con el/los mes(es) seleccionados.
+            . Los KPI y la tabla usan el/los mes(es) seleccionados; el rango de fechas acota los días mostrados.
           </p>
+          {(rangeFrom || rangeTo) && daysInRange.length !== days.length ? (
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textHint }}>
+              Mostrando {daysInRange.length} de {days.length} día{days.length === 1 ? '' : 's'} según el rango de fechas.
+            </p>
+          ) : null}
 
           <div
             style={{
@@ -528,6 +486,68 @@ export default function GananciaDiariaPage() {
                 }}
               />
             </label>
+            <div
+              style={{
+                display: 'inline-flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12,
+                color: ds.textSecondary,
+                fontWeight: 600,
+              }}
+            >
+              <span>Rango</span>
+              <input
+                type="date"
+                value={rangeFrom}
+                onChange={(e) => setRangeFrom(e.target.value)}
+                aria-label="Fecha desde"
+                style={{
+                  padding: '7px 9px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textPrimary,
+                  fontSize: 12,
+                }}
+              />
+              <span style={{ fontWeight: 500, color: ds.textMuted }}>a</span>
+              <input
+                type="date"
+                value={rangeTo}
+                onChange={(e) => setRangeTo(e.target.value)}
+                aria-label="Fecha hasta"
+                style={{
+                  padding: '7px 9px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textPrimary,
+                  fontSize: 12,
+                }}
+              />
+              <button
+                type="button"
+                disabled={!rangeFrom && !rangeTo}
+                onClick={() => {
+                  setRangeFrom('');
+                  setRangeTo('');
+                }}
+                style={{
+                  padding: '6px 10px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgSubtle,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: !rangeFrom && !rangeTo ? 'not-allowed' : 'pointer',
+                  opacity: !rangeFrom && !rangeTo ? 0.5 : 1,
+                }}
+              >
+                Quitar rango
+              </button>
+            </div>
             <div ref={monthDropdownRef} style={{ position: 'relative' }}>
               <button
                 type="button"
@@ -659,81 +679,6 @@ export default function GananciaDiariaPage() {
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textHint }}>Meta (tabla): {seriesMetaNote}</p>
           ) : null}
 
-          {!seriesLoading && comparable && productUtilidadChart.length > 0 ? (
-            <div style={{ ...cardBase, marginBottom: 16, border: `1px solid ${ds.borderCard}` }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: ds.textPrimary, marginBottom: 6 }}>
-                Utilidad por producto (período)
-              </div>
-              <p style={{ margin: '0 0 14px', fontSize: 11, color: ds.textMuted, lineHeight: 1.45 }}>
-                Reparto por líneas de pedido despachados; Meta del día se asigna a cada producto según su participación
-                en ventas entregadas ese día. Misma lógica que la tabla y el % administrativo aplicado.
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-                {productUtilidadChart.map((r) => {
-                  const w = chartMaxAbs > 0 ? (Math.abs(r.utilidad) / chartMaxAbs) * 100 : 0;
-                  const col = productColorMap.get(r.key) || '#6c47ff';
-                  return (
-                    <div
-                      key={r.key}
-                      style={{
-                        display: 'grid',
-                        gridTemplateColumns: 'minmax(120px, 1fr) minmax(80px, 3fr) auto',
-                        alignItems: 'center',
-                        gap: 12,
-                      }}
-                    >
-                      <div
-                        style={{
-                          fontSize: 12,
-                          color: ds.textSecondary,
-                          overflow: 'hidden',
-                          textOverflow: 'ellipsis',
-                          whiteSpace: 'nowrap',
-                        }}
-                        title={r.label}
-                      >
-                        {r.label}
-                      </div>
-                      <div
-                        style={{
-                          height: 24,
-                          background: ds.bgSubtle,
-                          borderRadius: 8,
-                          overflow: 'hidden',
-                          border: `1px solid ${ds.borderRow}`,
-                        }}
-                      >
-                        <div
-                          style={{
-                            height: '100%',
-                            width: `${w}%`,
-                            minWidth: r.utilidad !== 0 ? 4 : 0,
-                            background: col,
-                            borderRadius: 8,
-                            opacity: r.utilidad < 0 ? 0.75 : 1,
-                            boxShadow: r.utilidad < 0 ? 'inset 0 0 0 1px rgba(220,38,38,0.35)' : undefined,
-                          }}
-                        />
-                      </div>
-                      <div
-                        style={{
-                          fontSize: 12,
-                          fontWeight: 700,
-                          fontVariantNumeric: 'tabular-nums',
-                          color: r.utilidad < 0 ? ds.dangerText : ds.textPrimary,
-                          textAlign: 'right',
-                          whiteSpace: 'nowrap',
-                        }}
-                      >
-                        {formatMoney(r.utilidad, seriesVentasCur)}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          ) : null}
-
           <div
             style={{
               ...cardBase,
@@ -746,7 +691,7 @@ export default function GananciaDiariaPage() {
               <div style={{ padding: 24, textAlign: 'center', color: ds.textMuted, fontSize: 14 }}>
                 Cargando tabla…
               </div>
-            ) : days.length === 0 ? (
+            ) : daysInRange.length === 0 ? (
               <div style={{ padding: 24, textAlign: 'center', color: ds.textMuted, fontSize: 14 }}>
                 No hay días en el rango seleccionado.
               </div>
@@ -799,7 +744,7 @@ export default function GananciaDiariaPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {days.map((row) => {
+                    {daysInRange.map((row) => {
                       const ventasEntregadasRow = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
                       const costoProductoEntregadoRow =
                         row.costo_producto_entregado_total || row.costo_producto_total || 0;
