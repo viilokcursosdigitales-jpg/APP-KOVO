@@ -55,6 +55,27 @@ function isOrderLockedByInternalStatus(internalStatus: string) {
   return LOCKED_INTERNAL_STATUSES.has(s);
 }
 
+function isOrderManagedByMotico(row: Pick<ShopifyOrderRow, 'internal_status' | 'mensajero'>) {
+  const st = String(row.internal_status || '').toLowerCase();
+  const mensajero = String(row.mensajero || '').toLowerCase();
+  return st === 'motico' || mensajero === 'motico';
+}
+
+function isOrderLockedInPedidos(row: Pick<ShopifyOrderRow, 'internal_status' | 'mensajero'>) {
+  return isOrderLockedByInternalStatus(row.internal_status) || isOrderManagedByMotico(row);
+}
+
+/** Tooltip cuando la fila no es editable desde Pedidos (incluye gestión Motico por mensajero). */
+function pedidosRowLockTitle(row: ShopifyOrderRow, kind: 'estado' | 'mensajero' | 'precio' | 'cantidad'): string {
+  if (isOrderManagedByMotico(row)) {
+    return 'Gestionado por Motico: no editable desde Pedidos';
+  }
+  if (kind === 'precio' || kind === 'cantidad') {
+    return 'Pedido despachado/cancelado: edición bloqueada';
+  }
+  return kind === 'estado' ? 'Pedido bloqueado: estado no editable' : 'Pedido bloqueado: mensajero no editable';
+}
+
 type ShopifyOrderRow = {
   id: number;
   orderName: string;
@@ -580,7 +601,7 @@ export default function PedidosPage() {
   const applyBulkInternalStatus = useCallback(async () => {
     const editableIds = [...selectedOrderIds].filter((id) => {
       const row = shopifyOrders.find((o) => o.id === id);
-      return row ? !isOrderLockedByInternalStatus(row.internal_status) : false;
+      return row ? !isOrderLockedInPedidos(row) : false;
     });
     if (editableIds.length === 0) return;
     let ids = editableIds;
@@ -655,6 +676,10 @@ export default function PedidosPage() {
 
   const handleInternalStatusChange = useCallback(
     async (row: ShopifyOrderRow, nextStatus: string) => {
+      if (isOrderLockedInPedidos(row)) {
+        setShopifyError('Este pedido no se puede editar desde Pedidos.');
+        return;
+      }
       if (nextStatus === 'motico' && !isMoticoEligibleCity(row.shippingCity)) {
         setShopifyError('Solo se puede para pedidos de Bogotá o Soacha.');
         return;
@@ -666,6 +691,10 @@ export default function PedidosPage() {
 
   const handleMensajeroChange = useCallback(
     async (row: ShopifyOrderRow, nextMensajero: string) => {
+      if (isOrderLockedInPedidos(row)) {
+        setShopifyError('Este pedido no se puede editar desde Pedidos.');
+        return;
+      }
       await patchLocalFields(row.id, { mensajero: nextMensajero || null });
     },
     [patchLocalFields],
@@ -677,12 +706,12 @@ export default function PedidosPage() {
       setShopifyError('Edita desde el módulo Motico.');
       return;
     }
-    if (st === 'motico') {
-      setShopifyError('Edita desde el módulo Motico.');
-      return;
-    }
     if (st === 'cancelado') {
       setShopifyError('Pedido cancelado: edición bloqueada.');
+      return;
+    }
+    if (isOrderManagedByMotico(row)) {
+      setShopifyError('Edita desde el módulo Motico.');
       return;
     }
     if (st === 'despachado') {
@@ -696,6 +725,10 @@ export default function PedidosPage() {
 
   const submitUnlockDespachado = useCallback(async () => {
     if (!unlockOrder) return;
+    if (isOrderManagedByMotico(unlockOrder)) {
+      setShopifyError('Este pedido está gestionado por Motico; desbloquea o edita desde el módulo Motico.');
+      return;
+    }
     const reason = unlockReason.trim();
     if (reason.length < 5) {
       setShopifyError('Escribe un motivo de desbloqueo (mínimo 5 caracteres).');
@@ -823,7 +856,7 @@ export default function PedidosPage() {
   }, [filteredShopify]);
 
   const filteredShopifyIds = useMemo(
-    () => filteredShopify.filter((r) => !isOrderLockedByInternalStatus(r.internal_status)).map((r) => r.id),
+    () => filteredShopify.filter((r) => !isOrderLockedInPedidos(r)).map((r) => r.id),
     [filteredShopify],
   );
 
@@ -838,7 +871,7 @@ export default function PedidosPage() {
 
   useEffect(() => {
     const selectable = new Set(
-      shopifyOrders.filter((o) => !isOrderLockedByInternalStatus(o.internal_status)).map((o) => o.id),
+      shopifyOrders.filter((o) => !isOrderLockedInPedidos(o)).map((o) => o.id),
     );
     setSelectedOrderIds((prev) => {
       const next = new Set([...prev].filter((id) => selectable.has(id)));
@@ -1451,7 +1484,10 @@ export default function PedidosPage() {
               <tbody>
                 {useLive
                   ? filteredShopify.map((o, i, arr) => {
-                      const isLocked = isOrderLockedByInternalStatus(o.internal_status);
+                      const isLocked = isOrderLockedInPedidos(o);
+                      const stLower = String(o.internal_status || '').toLowerCase();
+                      const editDisabledFromPedidos =
+                        o.id < 0 || stLower === 'cancelado' || isOrderManagedByMotico(o);
                       return (
                         <tr key={o.id}>
                           <Td
@@ -1499,7 +1535,7 @@ export default function PedidosPage() {
                               value={o.internal_status}
                               onChange={(e) => void handleInternalStatusChange(o, e.target.value)}
                               disabled={isLocked}
-                              title={isLocked ? 'Pedido bloqueado: estado no editable' : 'Cambiar estado'}
+                              title={isLocked ? pedidosRowLockTitle(o, 'estado') : 'Cambiar estado'}
                             >
                               {INTERNAL_OPTIONS.map((opt) => (
                                 <option
@@ -1523,7 +1559,7 @@ export default function PedidosPage() {
                               value={String(o.mensajero || '')}
                               onChange={(e) => void handleMensajeroChange(o, e.target.value)}
                               disabled={isLocked}
-                              title={isLocked ? 'Pedido bloqueado: mensajero no editable' : 'Cambiar mensajero'}
+                              title={isLocked ? pedidosRowLockTitle(o, 'mensajero') : 'Cambiar mensajero'}
                             >
                               <option value="">Sin asignar</option>
                               {MENSAJERO_OPTIONS.map((opt) => (
@@ -1633,7 +1669,7 @@ export default function PedidosPage() {
                               }}
                               aria-label="Precio manual"
                               disabled={isLocked}
-                              title={isLocked ? 'Pedido despachado/cancelado: precio bloqueado' : 'Editar precio'}
+                              title={isLocked ? pedidosRowLockTitle(o, 'precio') : 'Editar precio'}
                             />
                             <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
                               Shopify: {formatMoneyFromString(o.shopifyTotal, o.currency)}
@@ -1656,7 +1692,7 @@ export default function PedidosPage() {
                               }}
                               aria-label="Cantidad manual"
                               disabled={isLocked}
-                              title={isLocked ? 'Pedido despachado/cancelado: cantidad bloqueada' : 'Editar cantidad'}
+                              title={isLocked ? pedidosRowLockTitle(o, 'cantidad') : 'Editar cantidad'}
                             />
                             <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
                               Shopify: {o.shopifyQuantity}
@@ -1677,16 +1713,16 @@ export default function PedidosPage() {
                             <button
                               type="button"
                               onClick={() => handleOpenOrderEdit(o)}
-                              disabled={String(o.internal_status || '').toLowerCase() === 'cancelado'}
+                              disabled={editDisabledFromPedidos}
                               aria-label={`Editar pedido ${o.orderName}`}
                               title={
-                                o.id < 0 || String(o.internal_status || '').toLowerCase() === 'motico'
-                                  ? 'Edita desde el módulo Motico.'
-                                  : String(o.internal_status || '').toLowerCase() === 'despachado'
-                                    ? 'Responde motivo y desbloquea para editar'
-                                    : String(o.internal_status || '').toLowerCase() === 'cancelado'
-                                      ? 'Pedido cancelado: edición bloqueada'
-                                  : 'Abrir editor'
+                                stLower === 'cancelado'
+                                  ? 'Pedido cancelado: edición bloqueada'
+                                  : o.id < 0 || isOrderManagedByMotico(o)
+                                    ? 'Edita desde el módulo Motico.'
+                                    : stLower === 'despachado'
+                                      ? 'Responde motivo y desbloquea para editar'
+                                      : 'Abrir editor'
                               }
                               style={{
                                 width: 32,
@@ -1698,13 +1734,8 @@ export default function PedidosPage() {
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                cursor:
-                                  o.id < 0 || String(o.internal_status || '').toLowerCase() === 'motico'
-                                    ? 'pointer'
-                                    : String(o.internal_status || '').toLowerCase() === 'cancelado'
-                                      ? 'not-allowed'
-                                      : 'pointer',
-                                opacity: String(o.internal_status || '').toLowerCase() === 'cancelado' ? 0.5 : 1,
+                                cursor: editDisabledFromPedidos ? 'not-allowed' : 'pointer',
+                                opacity: stLower === 'cancelado' ? 0.5 : editDisabledFromPedidos ? 0.72 : 1,
                               }}
                             >
                               <IconPencil size={14} />
