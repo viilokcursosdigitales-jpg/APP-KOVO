@@ -2456,14 +2456,14 @@ export default function MoticoPage() {
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Departamento</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Ciudad</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Dirección</Th>
-                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Precio</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Total del pedido</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>
                     Cantidad
                     <br />
                     final
                   </Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago</Th>
-                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Total a pagar</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pendiente de pago</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Productos</Th>
                   <Th style={{ ...moticoEditColTh, ...orderListTheadStickyCell }} title="Editar pedido">
                     <IconPencil size={14} style={{ opacity: 0.4, display: 'block' }} aria-hidden />
