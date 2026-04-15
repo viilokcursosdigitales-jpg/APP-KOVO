@@ -29,7 +29,8 @@ const DEMO = [
 ];
 
 const INTERNAL_OPTIONS = [
-  { value: 'sin_confirmar', label: 'Sin confirmar' },
+  { value: 'sin_revisar', label: 'Sin revisar' },
+  { value: 'sin_confirmar', label: 'No confirmó' },
   { value: 'confirmado', label: 'Confirmado' },
   { value: 'despachado', label: 'Despachado' },
   { value: 'prueba', label: 'Prueba' },
@@ -280,6 +281,12 @@ const pedidosEditColTd: CSSProperties = {
 /** Colores del desplegable Estado (valor seleccionado). */
 function estadoSelectStyle(internalStatus: string): CSSProperties {
   switch (internalStatus) {
+    case 'sin_revisar':
+      return {
+        background: '#f3f4f6',
+        color: '#4b5563',
+        borderColor: '#d1d5db',
+      };
     case 'sin_confirmar':
       return {
         background: '#ffedd5',
@@ -387,7 +394,7 @@ export default function PedidosPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [selectedCityKeys, setSelectedCityKeys] = useState<string[]>([]);
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<number>>(() => new Set());
-  const [bulkInternalStatus, setBulkInternalStatus] = useState<InternalStatusValue>('sin_confirmar');
+  const [bulkInternalStatus, setBulkInternalStatus] = useState<InternalStatusValue>('sin_revisar');
   const [bulkStatusApplying, setBulkStatusApplying] = useState(false);
   const [bulkStatusFeedback, setBulkStatusFeedback] = useState('');
   const [bulkMensajero, setBulkMensajero] = useState<MensajeroOptionValue>('');
@@ -424,7 +431,7 @@ export default function PedidosPage() {
       badgeVariant: safeBv,
       defaultQuantity: Number(o.defaultQuantity) || 0,
       shopifyQuantity: Number(o.shopifyQuantity ?? o.defaultQuantity) || 0,
-      internal_status: o.internal_status || 'sin_confirmar',
+      internal_status: o.internal_status || 'sin_revisar',
       price_override: o.price_override != null ? Number(o.price_override) : null,
       quantity_override: o.quantity_override != null ? Number(o.quantity_override) : null,
       mensajero: o.mensajero || null,

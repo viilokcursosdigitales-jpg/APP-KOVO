@@ -2329,6 +2329,7 @@ async function getActiveShopifyConnection(organizationId) {
 }
 
 const SHOPIFY_INTERNAL_STATUSES = new Set([
+  'sin_revisar',
   'sin_confirmar',
   'confirmado',
   'despachado',
@@ -2498,7 +2499,7 @@ function mapMoticoManualOrderRowFromDb(r) {
     referringSite: '',
     sourceName: 'motico_manual',
     utm: {},
-    internal_status: 'sin_confirmar',
+    internal_status: 'sin_revisar',
     mensajero: 'motico',
     motico_status,
     price_override: po != null && Number.isFinite(po) ? po : null,
@@ -3358,7 +3359,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
           : total_a_pagar_default;
       return {
         ...o,
-        internal_status: lf?.internal_status || 'sin_confirmar',
+        internal_status: lf?.internal_status || 'sin_revisar',
         price_override:
           lf?.price_override != null && lf.price_override !== '' ? Number(lf.price_override) : null,
         quantity_override:
@@ -3454,7 +3455,7 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
         : total_a_pagar_default;
     const enriched = {
       ...o,
-      internal_status: lf?.internal_status || 'sin_confirmar',
+      internal_status: lf?.internal_status || 'sin_revisar',
       price_override: lf?.price_override != null && lf.price_override !== '' ? Number(lf.price_override) : null,
       quantity_override:
         lf?.quantity_override != null && lf.quantity_override !== '' ? Number(lf.quantity_override) : null,
@@ -4192,7 +4193,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       );
       return res.json({
         ok: true,
-        internal_status: 'sin_confirmar',
+        internal_status: 'sin_revisar',
         price_override,
         quantity_override,
         mensajero: 'motico',
@@ -4220,11 +4221,11 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
     const currentInternalStatus =
       cur.internal_status != null && String(cur.internal_status) !== ''
         ? String(cur.internal_status)
-        : 'sin_confirmar';
+        : 'sin_revisar';
     if (LOCKED_INTERNAL_STATUSES.has(currentInternalStatus)) {
       return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
     }
-    let internal_status = cur.internal_status || 'sin_confirmar';
+    let internal_status = cur.internal_status || 'sin_revisar';
     if (body.internal_status !== undefined) {
       const s = String(body.internal_status);
       if (!SHOPIFY_INTERNAL_STATUSES.has(s)) {
@@ -4494,7 +4495,7 @@ app.put(
       const internalLockedStatus =
         internalLockRows[0]?.internal_status != null && String(internalLockRows[0].internal_status) !== ''
           ? String(internalLockRows[0].internal_status)
-          : 'sin_confirmar';
+          : 'sin_revisar';
       if (LOCKED_INTERNAL_STATUSES.has(internalLockedStatus)) {
         return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
       }
@@ -4887,7 +4888,7 @@ app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, 
 
     for (const o of orders) {
       const lf = localMap.get(Number(o.id)) || {};
-      const internal = String(lf.internal_status || 'sin_confirmar');
+      const internal = String(lf.internal_status || 'sin_revisar');
       const price = Number.parseFloat(String(o.total_price ?? 0)) || 0;
       const dayKey = String(o.created_at || '').slice(0, 10);
       const fin = String(o.financial_status || '').toLowerCase();

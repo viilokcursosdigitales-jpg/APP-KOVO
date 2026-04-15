@@ -41,7 +41,7 @@ const MOTICO_STATUS_OPTIONS = [
   },
   {
     value: 'sin_confirmar',
-    label: 'Sin confirmar',
+    label: 'No confirmó',
     rowColor: '#fb923c',
     chipBg: '#ffedd5',
     chipFg: '#9a3412',

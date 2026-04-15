@@ -90,7 +90,7 @@ CREATE TABLE IF NOT EXISTS shopify_order_local_fields (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
   shopify_order_id BIGINT NOT NULL,
-  internal_status VARCHAR(32) NOT NULL DEFAULT 'sin_confirmar',
+  internal_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
   price_override NUMERIC(14, 4),
   quantity_override INTEGER,
   mensajero VARCHAR(32),

@@ -106,7 +106,7 @@ async function initDb(pool) {
       id SERIAL PRIMARY KEY,
       organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
       shopify_order_id BIGINT NOT NULL,
-      internal_status VARCHAR(32) NOT NULL DEFAULT 'sin_confirmar',
+      internal_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
       price_override NUMERIC(14, 4),
       quantity_override INTEGER,
       mensajero VARCHAR(32),
@@ -117,6 +117,9 @@ async function initDb(pool) {
   `);
   await pool.query(
     `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS motico_status VARCHAR(32) DEFAULT 'sin_revisar'`,
+  );
+  await pool.query(
+    `ALTER TABLE shopify_order_local_fields ALTER COLUMN internal_status SET DEFAULT 'sin_revisar'`,
   );
   await pool.query(
     `UPDATE shopify_order_local_fields SET motico_status = 'sin_revisar' WHERE motico_status IS NULL`,
