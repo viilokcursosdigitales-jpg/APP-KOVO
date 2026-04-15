@@ -110,8 +110,8 @@ export function formatValorCobrarDisplay(amount: number, currency: string): stri
 }
 
 /**
- * Observación de guía: por línea → solo nombre de producto y variable (sin talla ni cantidad).
- * En mayúsculas; varias líneas separadas por ", ".
+ * Observación de guía: por línea → nombre de producto y **variable completa** (sin truncar en «/»;
+ * sin talla ni cantidad). En mayúsculas; varias líneas separadas por ", ".
  */
 export function buildObservacionLine(
   lineItems: MoticoGuideLineSource[],
@@ -123,8 +123,8 @@ export function buildObservacionLine(
       const m = mapLineItemToExportLine(li);
       const producto =
         String(m.producto || '').trim() || String(li.title || li.name || '').trim() || 'Producto';
-      const variable = moticoGuideVariableFromLineSource(li);
-      return `${producto} · ${variable}`.trim();
+      const variableCompleta = moticoGuideVariableFromLineSource(li);
+      return `${producto} · ${variableCompleta}`.trim();
     });
     return lines.join(', ').toUpperCase();
   }

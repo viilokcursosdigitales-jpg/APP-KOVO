@@ -95,17 +95,43 @@ function variantTitleIsOnlySizeLike(raw: string): boolean {
 }
 
 /**
+ * En líneas Shopify, `name` suele ser «Título producto + variante»; si `variant_title` falta o es genérico,
+ * extrae la parte variable quitando el título base.
+ */
+function shopifyNameVariantExcerpt(name: string, title: string): string {
+  const n = String(name || '').trim();
+  const t = String(title || '').trim();
+  if (!n) return '';
+  if (t) {
+    const tNorm = t.toLowerCase();
+    const nLow = n.toLowerCase();
+    if (nLow.startsWith(tNorm) && n.length > t.length) {
+      return n.slice(t.length).replace(/^[\s\-–—:]+/, '').trim();
+    }
+  }
+  if (t && n.toLowerCase() === t.toLowerCase()) return '';
+  return n;
+}
+
+/** Texto fuente para variante (API o nombre compuesto Shopify). */
+function lineVariantSourceForParse(li: MoticoGuideLineSource): string {
+  const raw = String(li.variant_title || '').trim();
+  if (raw && !isGenericVariantTitle(raw)) return raw;
+  return shopifyNameVariantExcerpt(String(li.name || ''), String(li.title || ''));
+}
+
+/**
  * Texto para la columna VARIABLE: variante u opciones (diseño/color) si aplica; si no hay, «NO APLICA» (nunca vacío).
  */
 export function moticoGuideVariableFromLineSource(li: MoticoGuideLineSource): string {
   const m = mapLineItemToExportLineCore(li);
   const tallaNorm = String(m.talla || '').trim().toLowerCase();
 
-  const vt = String(li.variant_title || '').trim();
-  if (vt && !isGenericVariantTitle(vt) && !variantTitleIsOnlySizeLike(vt)) {
-    const vNorm = vt.toLowerCase();
+  const variantPick = lineVariantSourceForParse(li).trim();
+  if (variantPick && !isGenericVariantTitle(variantPick) && !variantTitleIsOnlySizeLike(variantPick)) {
+    const vNorm = variantPick.toLowerCase();
     if (!tallaNorm || vNorm !== tallaNorm) {
-      return vt;
+      return variantPick;
     }
   }
 
@@ -118,9 +144,16 @@ export function moticoGuideVariableFromLineSource(li: MoticoGuideLineSource): st
   return 'NO APLICA';
 }
 
-function moticoGuideVariableCellDisplay(raw: string | undefined | null): string {
-  const s = String(raw ?? '').trim();
-  return s || 'NO APLICA';
+/**
+ * Columna VARIABLE en la relación Excel (y vista previa): solo texto **antes** del primer «/»;
+ * lo que va después del slash no se muestra. Vacío → «NO APLICA».
+ */
+export function moticoGuideVariableForExcelCell(raw: string | null | undefined): string {
+  const full = String(raw ?? '').trim();
+  if (!full) return 'NO APLICA';
+  const idx = full.indexOf('/');
+  const head = (idx === -1 ? full : full.slice(0, idx)).trim();
+  return head || 'NO APLICA';
 }
 
 function mapLineItemToExportLineCore(li: MoticoGuideLineSource): Omit<MoticoGuideExportLine, 'numero' | 'variable'> {
@@ -130,7 +163,8 @@ function mapLineItemToExportLineCore(li: MoticoGuideLineSource): Omit<MoticoGuid
   const nombre = propByName(props, 'Nombre', 'Name', 'Personalizado', 'Texto');
   let diseño = propByName(props, 'Diseño', 'Design', 'Estilo');
 
-  const vt = parseVariant(li.variant_title || '');
+  const variantSrc = lineVariantSourceForParse(li);
+  const vt = parseVariant(variantSrc);
   if (!color) color = vt.color;
   if (!talla) talla = vt.talla;
 
@@ -234,7 +268,7 @@ export function buildMoticoGuidesExcelPreviewRows(
         direccion: ord.direccion,
         ciudad: ord.ciudad,
         producto: line.producto,
-        variable: moticoGuideVariableCellDisplay(line.variable),
+        variable: moticoGuideVariableForExcelCell(line.variable),
         talla: line.talla,
         cobro: cobroStr,
         observacion,
@@ -275,7 +309,7 @@ function fillMoticoGuidesWorksheet(ws: ExcelJS.Worksheet, orders: MoticoGuideExp
         ord.direccion,
         ord.ciudad,
         line.producto,
-        moticoGuideVariableCellDisplay(line.variable),
+        moticoGuideVariableForExcelCell(line.variable),
         line.talla,
         cobroStr,
         ord.observacion || '',

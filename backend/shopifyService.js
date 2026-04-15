@@ -456,6 +456,34 @@ function extractUtmParamsFromUrl(rawUrl) {
   }
 }
 
+function variantTitleLooksGeneric(v) {
+  const s = String(v || '').trim();
+  if (!s) return true;
+  if (/^default(\s+title)?$/i.test(s)) return true;
+  if (s.toLowerCase() === 'default') return true;
+  return false;
+}
+
+/**
+ * Si `variant_title` viene vacío o genérico (p. ej. Default Title), deriva la variante del `name` de la línea Shopify.
+ */
+function deriveShopifyLineVariantTitle(li, title, name) {
+  const raw = li.variant_title != null ? String(li.variant_title).trim() : '';
+  if (raw && !variantTitleLooksGeneric(raw)) return raw;
+  const t = String(title || '').trim();
+  const n = String(name || '').trim();
+  if (!n) return raw;
+  if (t) {
+    const tNorm = t.toLowerCase();
+    const nLow = n.toLowerCase();
+    if (nLow.startsWith(tNorm) && n.length > t.length) {
+      return n.slice(t.length).replace(/^[\s\-–—:]+/, '').trim();
+    }
+  }
+  if (t && n.toLowerCase() === t.toLowerCase()) return '';
+  return n;
+}
+
 /**
  * Mapea pedidos REST Admin a filas listas para el front (Pedidos KOVO).
  * @param {object|null} apiData cuerpo JSON de orders.json
@@ -482,12 +510,16 @@ function normalizeShopifyOrdersForApp(apiData) {
           .filter((n) => Number.isFinite(n)),
       ),
     ];
-    const lineItemsDetail = lineItems.map((li) => ({
+    const lineItemsDetail = lineItems.map((li) => {
+      const title = String(li.title || li.name || '').trim() || 'Producto';
+      const name = String(li.name || '').trim();
+      const variant_title = deriveShopifyLineVariantTitle(li, title, name);
+      return {
       id: li.id,
       product_id: li.product_id != null ? Number(li.product_id) : null,
-      title: String(li.title || li.name || '').trim() || 'Producto',
-      name: String(li.name || '').trim(),
-      variant_title: li.variant_title != null ? String(li.variant_title).trim() : '',
+      title,
+      name,
+      variant_title,
       quantity: parseInt(String(li.quantity), 10) || 0,
       price: li.price != null ? String(li.price) : '',
       sku: li.sku != null ? String(li.sku).trim() : '',
@@ -497,7 +529,8 @@ function normalizeShopifyOrdersForApp(apiData) {
             value: String(p.value != null ? p.value : '').trim(),
           }))
         : [],
-    }));
+    };
+    });
     const shippingAddress = pickShippingAddress(o);
     const shippingCity = (shippingAddress && shippingAddress.city) || '';
     const shippingProvince = (shippingAddress && shippingAddress.province) || '';
