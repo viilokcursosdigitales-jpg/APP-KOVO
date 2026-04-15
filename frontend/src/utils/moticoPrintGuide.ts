@@ -93,7 +93,7 @@ function oneStripHtml(logoDataUrl: string | null, row: MoticoGuideLabelData): st
 function cutSeparatorHtml(): string {
   return `
   <div class="guide-cut-sep" aria-hidden="true">
-    <span class="guide-cut-sep-text">✂ Cortar por aquí</span>
+    <span class="guide-cut-sep-icon">✂</span>
   </div>`;
 }
 
@@ -213,7 +213,7 @@ function buildBatchPrintDocument(
   const previewCss = options?.screenPreviewToolbar
     ? `
     @media screen {
-      body { padding-top: 52px; }
+      body { padding-top: 52px !important; }
     }
     .motico-preview-toolbar {
       position: fixed;
@@ -316,6 +316,7 @@ function buildBatchPrintDocument(
       flex-direction: row;
       align-items: stretch;
       border: 1px solid #000;
+      overflow: hidden;
       page-break-inside: avoid;
     }
     .guide-cut-sep {
@@ -329,9 +330,9 @@ function buildBatchPrintDocument(
       line-height: 1;
       user-select: none;
     }
-    .guide-cut-sep-text {
+    .guide-cut-sep-icon {
       position: relative;
-      padding: 0 10px;
+      padding: 0 8px;
       background: #fff;
     }
     .guide-cut-sep::before,
@@ -342,6 +343,28 @@ function buildBatchPrintDocument(
     }
     .guide-cut-sep::before { margin-right: 10px; }
     .guide-cut-sep::after { margin-left: 10px; }
+    @media screen {
+      body {
+        background: #e5e7eb;
+        padding: 16px 0 28px;
+      }
+      .print-page {
+        width: 8.5in;
+        min-height: 11in;
+        margin: 0 auto 14px;
+        padding: ${GUIDE_PAGE_MARGIN_PT}pt;
+        background: #fff;
+        border: 1px solid #cbd5e1; /* borde de hoja en vista preliminar */
+        box-shadow: 0 2px 14px rgba(15, 23, 42, 0.12);
+      }
+    }
+    @media print {
+      .print-page {
+        border: none;
+        box-shadow: none;
+        padding: 0;
+      }
+    }
     /* Celda izquierda = ~18% del ancho útil de carta; altura = franja (1.88in). Sin tope estrecho para que el logo use todo el hueco. */
     .guide-logo-cell {
       flex: 0 0 18%;
