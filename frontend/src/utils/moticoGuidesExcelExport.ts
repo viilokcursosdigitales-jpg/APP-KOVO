@@ -19,6 +19,8 @@ export type MoticoGuideExportLine = {
   numero: number;
   talla: string;
   nombre: string;
+  /** Variante / opción del producto para la columna VARIABLE; «NO APLICA» si no hay. */
+  variable: string;
 };
 
 export type MoticoGuideExportOrder = {
@@ -71,8 +73,28 @@ function diseñoFromTitle(title: string): string {
   return '';
 }
 
-/** Mapea una línea de Shopify a columnas PRODUCTO…NOMBRE del Excel relación. */
-export function mapLineItemToExportLine(li: MoticoGuideLineSource): Omit<MoticoGuideExportLine, 'numero'> {
+/** Título de variante genérico de Shopify (no es una opción real). */
+function isGenericVariantTitle(raw: string): boolean {
+  const s = raw.trim();
+  if (!s) return true;
+  if (/^default(\s+title)?$/i.test(s)) return true;
+  if (s.toLowerCase() === 'default') return true;
+  return false;
+}
+
+/**
+ * Texto para la columna VARIABLE: variante Shopify si aplica; si no, diseño/color de props; si no, «NO APLICA».
+ */
+export function moticoGuideVariableFromLineSource(li: MoticoGuideLineSource): string {
+  const vt = String(li.variant_title || '').trim();
+  if (vt && !isGenericVariantTitle(vt)) return vt;
+  const m = mapLineItemToExportLineCore(li);
+  const fromOpts = [m.diseño, m.color].filter((x) => String(x || '').trim()).join(' / ').trim();
+  if (fromOpts) return fromOpts;
+  return 'NO APLICA';
+}
+
+function mapLineItemToExportLineCore(li: MoticoGuideLineSource): Omit<MoticoGuideExportLine, 'numero' | 'variable'> {
   const props = li.properties || [];
   let color = propByName(props, 'Color', 'Colour', 'color');
   let talla = propByName(props, 'Talla', 'Size', 'Tamaño');
@@ -94,6 +116,12 @@ export function mapLineItemToExportLine(li: MoticoGuideLineSource): Omit<MoticoG
     talla,
     nombre,
   };
+}
+
+/** Mapea una línea de Shopify a columnas PRODUCTO…NOMBRE del Excel relación. */
+export function mapLineItemToExportLine(li: MoticoGuideLineSource): Omit<MoticoGuideExportLine, 'numero'> {
+  const base = mapLineItemToExportLineCore(li);
+  return { ...base, variable: moticoGuideVariableFromLineSource(li) };
 }
 
 function formatCobroDisplay(value: number, currency: string): string {
@@ -121,7 +149,7 @@ function formatCobroDisplay(value: number, currency: string): string {
   }
 }
 
-const HEADER_FILL = 'FF1F4E79';
+const HEADER_FILL = 'FF6C47FF';
 const THIN_BORDER: Partial<ExcelJS.Borders> = {
   top: { style: 'thin', color: { argb: 'FF000000' } },
   left: { style: 'thin', color: { argb: 'FF000000' } },
@@ -137,7 +165,7 @@ export const MOTICO_GUIAS_EXCEL_COLUMN_HEADERS = [
   'DIRECCIÓN',
   'CIUDAD',
   'PRODUCTO',
-  'DISEÑO/COLOR',
+  'VARIABLE',
   'TALLA',
   'COBRO',
   'OBSERVACION',
@@ -151,7 +179,7 @@ export type MoticoGuidesExcelPreviewRow = {
   direccion: string;
   ciudad: string;
   producto: string;
-  disenoColor: string;
+  variable: string;
   talla: string;
   cobro: string;
   observacion: string;
@@ -170,7 +198,6 @@ export function buildMoticoGuidesExcelPreviewRows(
     const observacion = ord.observacion || '';
     for (let i = 0; i < n; i++) {
       const line = ord.lines[i];
-      const disenoColor = [line.diseño, line.color].filter((x) => String(x || '').trim()).join(' / ');
       rows.push({
         orderIndex: ord.orderIndex,
         cliente: ord.cliente,
@@ -178,7 +205,7 @@ export function buildMoticoGuidesExcelPreviewRows(
         direccion: ord.direccion,
         ciudad: ord.ciudad,
         producto: line.producto,
-        disenoColor,
+        variable: line.variable,
         talla: line.talla,
         cobro: cobroStr,
         observacion,
@@ -212,7 +239,6 @@ function fillMoticoGuidesWorksheet(ws: ExcelJS.Worksheet, orders: MoticoGuideExp
 
     for (let i = 0; i < n; i++) {
       const line = ord.lines[i];
-      const disenoColor = [line.diseño, line.color].filter((x) => String(x || '').trim()).join(' / ');
       const row = ws.addRow([
         ord.orderIndex,
         ord.cliente,
@@ -220,7 +246,7 @@ function fillMoticoGuidesWorksheet(ws: ExcelJS.Worksheet, orders: MoticoGuideExp
         ord.direccion,
         ord.ciudad,
         line.producto,
-        disenoColor,
+        line.variable,
         line.talla,
         cobroStr,
         ord.observacion || '',

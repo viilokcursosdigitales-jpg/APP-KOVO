@@ -993,6 +993,7 @@ export default function MoticoPage() {
             numero,
             talla: '',
             nombre: '',
+            variable: 'NO APLICA',
           },
         ];
       }
@@ -1992,9 +1993,9 @@ export default function MoticoPage() {
                           padding: '8px 6px',
                           textAlign: 'center',
                           fontWeight: 700,
-                          background: '#1f4e79',
+                          background: '#6c47ff',
                           color: '#fff',
-                          borderBottom: '1px solid #0f172a',
+                          borderBottom: '1px solid #4f29d6',
                           whiteSpace: 'nowrap',
                           position: 'sticky',
                           top: 0,
@@ -2040,7 +2041,7 @@ export default function MoticoPage() {
                           </>
                         ) : null}
                         <td style={cell}>{row.producto}</td>
-                        <td style={cell}>{row.disenoColor}</td>
+                        <td style={cell}>{row.variable}</td>
                         <td style={{ ...cell, textAlign: 'center' }}>{row.talla}</td>
                         {row.lineIndex === 0 ? (
                           <>
