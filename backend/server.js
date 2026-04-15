@@ -2367,31 +2367,57 @@ async function getActiveShopifyConnection(organizationId) {
   return rows[0] || null;
 }
 
-const SHOPIFY_INTERNAL_STATUSES = new Set([
+/** Estados operativos unificados (Pedidos + Motico). */
+const UNIFIED_ORDER_ESTADO_LIST = [
   'sin_revisar',
   'sin_confirmar',
-  'motico',
   'confirmado',
   'despachado',
   'prueba',
   'cancelado',
-]);
+];
+const SHOPIFY_INTERNAL_STATUSES = new Set(UNIFIED_ORDER_ESTADO_LIST);
+const SHOPIFY_MOTICO_STATUSES = SHOPIFY_INTERNAL_STATUSES;
 const SHOPIFY_MENSAJEROS = new Set(['motico', 'dropi', 'effix']);
 const MOTICO_STATUS_DEFAULT = 'sin_revisar';
 const MOTICO_PAYMENT_STATUSES = new Set(['pending', 'paid', 'refunded']);
-const SHOPIFY_MOTICO_STATUSES = new Set([
-  MOTICO_STATUS_DEFAULT,
-  'sin_confirmar',
-  'confirmado',
-  'imprimir_guia',
-  'despachado',
-  'cancelado',
-  'pagado',
-  'pendiente_pago',
-  'devolucion',
-]);
 const LOCKED_MOTICO_STATUSES = new Set(['despachado', 'cancelado']);
 const LOCKED_INTERNAL_STATUSES = new Set(['despachado', 'cancelado']);
+
+const UNIFIED_ESTADO_RANK = {
+  sin_revisar: 10,
+  sin_confirmar: 20,
+  confirmado: 30,
+  prueba: 35,
+  despachado: 50,
+  cancelado: 60,
+};
+
+/** Mapea valores antiguos (motico_status / internal) al conjunto unificado actual. */
+function normalizeLegacyMoticoEstadoToUnified(raw) {
+  const s = String(raw || 'sin_revisar')
+    .trim()
+    .toLowerCase();
+  if (SHOPIFY_INTERNAL_STATUSES.has(s)) return s;
+  const legacy = {
+    imprimir_guia: 'confirmado',
+    pagado: 'despachado',
+    pendiente_pago: 'sin_confirmar',
+    devolucion: 'cancelado',
+    motico: 'confirmado',
+  };
+  const m = legacy[s];
+  return m && SHOPIFY_INTERNAL_STATUSES.has(m) ? m : MOTICO_STATUS_DEFAULT;
+}
+
+/** Unifica internal_status y motico_status para la respuesta API (mayor “avance” gana). */
+function mergeDisplayedOrderEstado(internalRaw, moticoRaw) {
+  const a = normalizeLegacyMoticoEstadoToUnified(internalRaw);
+  const b = normalizeLegacyMoticoEstadoToUnified(moticoRaw);
+  const ra = UNIFIED_ESTADO_RANK[a] || 0;
+  const rb = UNIFIED_ESTADO_RANK[b] || 0;
+  return ra >= rb ? a : b;
+}
 
 function normalizeMoticoPaymentStatus(raw) {
   const v = String(raw || '').trim().toLowerCase();
@@ -2545,8 +2571,7 @@ function mapMoticoManualOrderRowFromDb(r) {
   const rawPhone = (sa.phone || '').trim();
   const phoneLocal = moticoPhoneDigitsLocal(rawPhone);
   const moticoRaw = r.motico_status;
-  const motico_status =
-    typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : MOTICO_STATUS_DEFAULT;
+  const motico_status = normalizeLegacyMoticoEstadoToUnified(moticoRaw);
   const assignedDateRaw =
     ship && typeof ship === 'object'
       ? String(ship.assigned_date || ship.fecha_asignada || ship.assignedDate || '').trim()
@@ -2578,7 +2603,7 @@ function mapMoticoManualOrderRowFromDb(r) {
     referringSite: '',
     sourceName: 'motico_manual',
     utm: {},
-    internal_status: 'sin_revisar',
+    internal_status: motico_status,
     mensajero: 'motico',
     motico_status,
     price_override: po != null && Number.isFinite(po) ? po : null,
@@ -3439,9 +3464,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         ? payment_status_override
         : String(o.financialStatus || '').toLowerCase();
       const paymentBadge = mapFinancialToBadge(financialStatus);
-      const moticoRaw = lf?.motico_status;
-      const motico_status =
-        typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : MOTICO_STATUS_DEFAULT;
+      const unifiedEstado = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
       const total_a_pagar_default = shopifyDefaultTotalAPagar(o);
       const total_a_pagar_override =
         lf?.total_a_pagar_override != null && lf.total_a_pagar_override !== ''
@@ -3460,13 +3483,13 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         financialStatus,
         label: paymentBadge.label,
         badgeVariant: paymentBadge.variant,
-        internal_status: lf?.internal_status || 'sin_revisar',
+        internal_status: unifiedEstado,
         price_override:
           lf?.price_override != null && lf.price_override !== '' ? Number(lf.price_override) : null,
         quantity_override:
           lf?.quantity_override != null && lf.quantity_override !== '' ? Number(lf.quantity_override) : null,
         mensajero: lf?.mensajero || null,
-        motico_status,
+        motico_status: unifiedEstado,
         total_a_pagar_default,
         total_a_pagar_override: total_a_pagar_override != null && Number.isFinite(total_a_pagar_override)
           ? total_a_pagar_override
@@ -3486,7 +3509,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       if (!(me && me.code === '42P01')) throw me;
     }
     if (mensajeroFilter === 'motico') {
-      orders = orders.filter((o) => o.mensajero === 'motico' || String(o.internal_status || '') === 'motico');
+      orders = orders.filter((o) => o.mensajero === 'motico');
     }
     const productIdQ = typeof req.query.product_id === 'string' ? req.query.product_id.trim() : '';
     if (productIdQ) {
@@ -3547,9 +3570,7 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
       ? payment_status_override
       : String(o.financialStatus || '').toLowerCase();
     const paymentBadge = mapFinancialToBadge(financialStatus);
-    const moticoRaw = lf?.motico_status;
-    const motico_status =
-      typeof moticoRaw === 'string' && SHOPIFY_MOTICO_STATUSES.has(moticoRaw) ? moticoRaw : MOTICO_STATUS_DEFAULT;
+    const unifiedEstado = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
     const total_a_pagar_default = shopifyDefaultTotalAPagar(o);
     const total_a_pagar_override =
       lf?.total_a_pagar_override != null && lf.total_a_pagar_override !== ''
@@ -3568,12 +3589,12 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
       financialStatus,
       label: paymentBadge.label,
       badgeVariant: paymentBadge.variant,
-      internal_status: lf?.internal_status || 'sin_revisar',
+      internal_status: unifiedEstado,
       price_override: lf?.price_override != null && lf.price_override !== '' ? Number(lf.price_override) : null,
       quantity_override:
         lf?.quantity_override != null && lf.quantity_override !== '' ? Number(lf.quantity_override) : null,
       mensajero: lf?.mensajero || null,
-      motico_status,
+      motico_status: unifiedEstado,
       total_a_pagar_default,
       total_a_pagar_override:
         total_a_pagar_override != null && Number.isFinite(total_a_pagar_override) ? total_a_pagar_override : null,
@@ -4182,9 +4203,11 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       const currentMoticoStatusNormalized = String(currentMoticoStatus || '').toLowerCase();
       const unlockReason = String(body.unlock_reason || '').trim();
       const requestedMoticoStatus = body.motico_status !== undefined ? String(body.motico_status) : '';
+      const requestedInternalManual = body.internal_status !== undefined ? String(body.internal_status) : '';
+      const requestedEstadoUnlock = requestedInternalManual || requestedMoticoStatus;
       const unlockFromMoticoDespachadoRequested =
         currentMoticoStatusNormalized === 'despachado' &&
-        requestedMoticoStatus === 'sin_revisar' &&
+        requestedEstadoUnlock === 'sin_revisar' &&
         unlockReason.length >= 5;
       if (currentMoticoStatusNormalized === 'cancelado') {
         return res.status(409).json({ error: 'El pedido está bloqueado (cancelado) y no se puede modificar.' });
@@ -4224,12 +4247,18 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           quantity_override = q;
         }
       }
-      let motico_status =
-        cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : MOTICO_STATUS_DEFAULT;
-      if (!SHOPIFY_MOTICO_STATUSES.has(motico_status)) motico_status = MOTICO_STATUS_DEFAULT;
-      if (body.motico_status !== undefined) {
+      let motico_status = normalizeLegacyMoticoEstadoToUnified(
+        cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : MOTICO_STATUS_DEFAULT,
+      );
+      if (body.internal_status !== undefined) {
+        const s = String(body.internal_status);
+        if (!SHOPIFY_INTERNAL_STATUSES.has(s)) {
+          return res.status(400).json({ error: 'Estado interno no válido' });
+        }
+        motico_status = s;
+      } else if (body.motico_status !== undefined) {
         const ms = String(body.motico_status);
-        if (!SHOPIFY_MOTICO_STATUSES.has(ms)) {
+        if (!SHOPIFY_INTERNAL_STATUSES.has(ms)) {
           return res.status(400).json({ error: 'Estado Motico no válido' });
         }
         motico_status = ms;
@@ -4370,7 +4399,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       const paymentBadge = mapFinancialToBadge(financial_status);
       return res.json({
         ok: true,
-        internal_status: 'sin_revisar',
+        internal_status: motico_status,
         price_override,
         quantity_override,
         mensajero: 'motico',
@@ -4395,71 +4424,30 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
     );
     const cur = existing[0] || {};
     const onlyPaymentStatusUpdate = isOnlyPaymentStatusMutation(bodyKeys);
-    const currentMoticoStatus =
-      cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : MOTICO_STATUS_DEFAULT;
-    const currentMoticoStatusNormalized = String(currentMoticoStatus || '').toLowerCase();
-    const unlockReason = String(body.unlock_reason || '').trim();
+    const curEstado = mergeDisplayedOrderEstado(cur.internal_status, cur.motico_status);
+    const unlockReasonCombined = String(body.unlock_reason || '').trim();
     const requestedMoticoStatus = body.motico_status !== undefined ? String(body.motico_status) : '';
-    const unlockFromMoticoDespachadoRequested =
-      currentMoticoStatusNormalized === 'despachado' &&
-      requestedMoticoStatus === 'sin_revisar' &&
-      unlockReason.length >= 5;
-    if (currentMoticoStatusNormalized === 'cancelado') {
-      return res.status(409).json({ error: 'El pedido está bloqueado (cancelado) y no se puede modificar.' });
-    }
-    if (
-      currentMoticoStatusNormalized === 'despachado' &&
-      !onlyPaymentStatusUpdate &&
-      !unlockFromMoticoDespachadoRequested
-    ) {
-      return res.status(409).json({ error: 'Pedido despachado: responde el motivo y desbloquea antes de editar.' });
-    }
-    const currentInternalStatus =
-      cur.internal_status != null && String(cur.internal_status) !== ''
-        ? String(cur.internal_status)
-        : 'sin_revisar';
-    const unlockReasonInternal = String(body.unlock_reason || '').trim();
     const requestedInternalStatus = body.internal_status !== undefined ? String(body.internal_status) : '';
-    const unlockFromDespachadoRequested =
-      String(currentInternalStatus).toLowerCase() === 'despachado' &&
-      requestedInternalStatus === 'sin_revisar' &&
-      unlockReasonInternal.length >= 5;
-    if (String(currentInternalStatus).toLowerCase() === 'cancelado') {
+    const requestedEstadoUnlock = requestedInternalStatus || requestedMoticoStatus;
+    const unlockFromDespachadoCombined =
+      curEstado === 'despachado' &&
+      requestedEstadoUnlock === 'sin_revisar' &&
+      unlockReasonCombined.length >= 5;
+    if (curEstado === 'cancelado') {
       return res.status(409).json({ error: 'El pedido está bloqueado (cancelado) y no se puede modificar.' });
     }
-    if (String(currentInternalStatus).toLowerCase() === 'despachado' && !unlockFromDespachadoRequested) {
+    if (curEstado === 'despachado' && !onlyPaymentStatusUpdate && !unlockFromDespachadoCombined) {
       return res.status(409).json({ error: 'Pedido despachado: responde el motivo y desbloquea antes de editar.' });
     }
     const currentPaymentStatus = normalizeMoticoPaymentStatus(cur.payment_status_override);
     if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate) {
       return res.status(409).json({ error: 'El pedido está bloqueado (pagado) y no se puede modificar.' });
     }
-    let internal_status = cur.internal_status || 'sin_revisar';
+    let internal_status = curEstado;
     if (body.internal_status !== undefined) {
       const s = String(body.internal_status);
       if (!SHOPIFY_INTERNAL_STATUSES.has(s)) {
         return res.status(400).json({ error: 'Estado interno no válido' });
-      }
-      if (s === 'motico') {
-        const ordRes = await shopifyRequest(
-          conn.shop_domain,
-          conn.access_token,
-          `orders/${orderId}.json?fields=shipping_address,billing_address`,
-        );
-        if (!ordRes.ok) {
-          return res.status(422).json({ error: ordRes.error || 'No se pudo validar la ciudad del pedido' });
-        }
-        const ord = ordRes.data && ordRes.data.order && typeof ordRes.data.order === 'object' ? ordRes.data.order : {};
-        const sa =
-          ord && ord.shipping_address && typeof ord.shipping_address === 'object'
-            ? ord.shipping_address
-            : ord && ord.billing_address && typeof ord.billing_address === 'object'
-              ? ord.billing_address
-              : {};
-        const city = sa && sa.city != null ? String(sa.city) : '';
-        if (!isMoticoEligibleCityName(city)) {
-          return res.status(400).json({ error: 'Solo se puede para pedidos de Bogotá o Soacha.' });
-        }
       }
       internal_status = s;
     }
@@ -4496,22 +4484,18 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         mensajero = m;
       }
     }
-    if (internal_status === 'motico') {
-      mensajero = 'motico';
-    } else if (body.mensajero === undefined && mensajero === 'motico') {
-      mensajero = null;
-    }
-    let motico_status =
-      cur.motico_status != null && String(cur.motico_status) !== ''
-        ? String(cur.motico_status)
-        : MOTICO_STATUS_DEFAULT;
-    if (!SHOPIFY_MOTICO_STATUSES.has(motico_status)) motico_status = MOTICO_STATUS_DEFAULT;
+    let motico_status = curEstado;
     if (body.motico_status !== undefined) {
       const ms = String(body.motico_status);
-      if (!SHOPIFY_MOTICO_STATUSES.has(ms)) {
+      if (!SHOPIFY_INTERNAL_STATUSES.has(ms)) {
         return res.status(400).json({ error: 'Estado Motico no válido' });
       }
       motico_status = ms;
+    }
+    if (body.internal_status !== undefined) {
+      motico_status = internal_status;
+    } else if (body.motico_status !== undefined) {
+      internal_status = motico_status;
     }
     let payment_status_override =
       cur.payment_status_override != null ? String(cur.payment_status_override).toLowerCase() : null;

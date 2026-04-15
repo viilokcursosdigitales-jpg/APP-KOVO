@@ -9,6 +9,14 @@ import { IconCart, IconPencil, IconTruck } from '../design-system/icons';
 import { PageHeader } from '../design-system/PageHeader';
 import { type StatusBadgeVariant } from '../design-system/StatusBadge';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
+import {
+  ORDER_INTERNAL_ESTADO_OPTIONS,
+  ORDER_INTERNAL_ESTADO_ROW_META,
+  ORDER_INTERNAL_LOCKED_STATUSES,
+  ORDER_ESTADO_FOR_GUIA_PRINT,
+  coerceOrderInternalEstadoForSelect,
+  type OrderInternalEstadoValue,
+} from '../constants/orderInternalEstado';
 import { labelStyle } from './authStyles';
 import {
   buildMoticoGuidesExcelPreviewRows,
@@ -31,81 +39,12 @@ const POLL_MS = 25_000;
 const MOTICO_TOTAL_APAGAR_DEBOUNCE_MS = 450;
 const SEARCH_DEBOUNCE_MS = 240;
 const MAX_LOGO_BYTES = 400_000;
-const MOTICO_STATUS_DEFAULT = 'sin_revisar';
-const MOTICO_STATUS_OPTIONS = [
-  {
-    value: MOTICO_STATUS_DEFAULT,
-    label: 'Sin revisar',
-    rowColor: '#9ca3af',
-    chipBg: '#f3f4f6',
-    chipFg: '#374151',
-    chipBorder: '#d1d5db',
-  },
-  {
-    value: 'sin_confirmar',
-    label: 'No confirmó',
-    rowColor: '#fb923c',
-    chipBg: '#ffedd5',
-    chipFg: '#9a3412',
-    chipBorder: '#fdba74',
-  },
-  {
-    value: 'confirmado',
-    label: 'Confirmado',
-    rowColor: '#16a34a',
-    chipBg: '#dcfce7',
-    chipFg: '#14532d',
-    chipBorder: '#86efac',
-  },
-  {
-    value: 'imprimir_guia',
-    label: 'Imprimir guía',
-    rowColor: '#4f46e5',
-    chipBg: '#e0e7ff',
-    chipFg: '#312e81',
-    chipBorder: '#a5b4fc',
-  },
-  {
-    value: 'despachado',
-    label: 'Despachado',
-    rowColor: '#0d9488',
-    chipBg: '#ccfbf1',
-    chipFg: '#134e4a',
-    chipBorder: '#5eead4',
-  },
-  { value: 'cancelado', label: 'Cancelado', rowColor: '#dc2626', chipBg: '#fee2e2', chipFg: '#7f1d1d', chipBorder: '#fca5a5' },
-  {
-    value: 'pagado',
-    label: 'Pagado',
-    rowColor: '#2563eb',
-    chipBg: '#dbeafe',
-    chipFg: '#1e3a8a',
-    chipBorder: '#93c5fd',
-  },
-  {
-    value: 'pendiente_pago',
-    label: 'Pendiente de pago',
-    rowColor: '#ca8a04',
-    chipBg: '#fef9c3',
-    chipFg: '#713f12',
-    chipBorder: '#fde047',
-  },
-  {
-    value: 'devolucion',
-    label: 'Devolución',
-    rowColor: '#d97706',
-    chipBg: '#fef3c7',
-    chipFg: '#78350f',
-    chipBorder: '#fcd34d',
-  },
-] as const;
+const MOTICO_STATUS_DEFAULT: OrderInternalEstadoValue = 'sin_revisar';
 
 /** Caracteres del estado con texto más largo (ancho mínimo del &lt;select&gt; sin dejar hueco extra). */
-const MOTICO_ESTADO_LONGEST_LABEL_LEN = Math.max(...MOTICO_STATUS_OPTIONS.map((o) => o.label.length));
+const MOTICO_ESTADO_LONGEST_LABEL_LEN = Math.max(...ORDER_INTERNAL_ESTADO_OPTIONS.map((o) => o.label.length));
 
-/** Solo pedidos en este estado pueden generar guías (vista previa / impresión). */
-const MOTICO_STATUS_FOR_GUIDE_PRINT = 'imprimir_guia';
-const MOTICO_LOCKED_STATUSES = new Set(['despachado', 'cancelado']);
+const MOTICO_LOCKED_STATUSES = ORDER_INTERNAL_LOCKED_STATUSES;
 const MOTICO_PAYMENT_OPTIONS = [
   { value: 'pending', label: 'Pendiente de pago' },
   { value: 'paid', label: 'Pagado' },
@@ -127,8 +66,12 @@ const COLOMBIA_LOCATIONS_FALLBACK: ColombiaDepartmentCities[] = [
   { departamento: 'Cundinamarca', ciudades: ['Bogotá', 'Soacha'] },
 ];
 
+function etiquetaEstadoPedido(value: string) {
+  return ORDER_INTERNAL_ESTADO_OPTIONS.find((x) => x.value === value)?.label ?? value;
+}
+
 function isMoticoStatusLocked(status: string) {
-  return MOTICO_LOCKED_STATUSES.has(String(status || '').toLowerCase());
+  return MOTICO_LOCKED_STATUSES.has(String(status || '').toLowerCase() as OrderInternalEstadoValue);
 }
 
 function normalizeMoticoPaymentStatus(raw: string | undefined | null): MoticoPaymentStatusValue {
@@ -141,11 +84,6 @@ function normalizeMoticoPaymentStatus(raw: string | undefined | null): MoticoPay
 function isMoticoOrderEditLocked(row: Pick<MoticoOrderRow, 'motico_status' | 'financialStatus'>) {
   return isMoticoStatusLocked(row.motico_status) || normalizeMoticoPaymentStatus(row.financialStatus) === 'paid';
 }
-
-const STATUS_META = Object.fromEntries(MOTICO_STATUS_OPTIONS.map((o) => [o.value, o])) as Record<
-  string,
-  (typeof MOTICO_STATUS_OPTIONS)[number]
->;
 
 type LineItemDetail = {
   id: number;
@@ -201,6 +139,8 @@ type MoticoOrderRow = {
   lineItemsDetail: LineItemDetail[];
   shippingAddress: MoticoShippingAddress | null;
   mensajero: string | null;
+  /** Mismo valor operativo que en Pedidos (`internal_status`). */
+  internal_status?: string;
   motico_status: string;
   price_override: number | null;
   quantity_override: number | null;
@@ -719,7 +659,8 @@ function highlightText(text: string, rawTerm: string) {
 function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
   const bv = o.badgeVariant;
   const safeBv = (['success', 'paused', 'error', 'info', 'warning'].includes(bv) ? bv : 'info') as StatusBadgeVariant;
-  const allowed = new Set(MOTICO_STATUS_OPTIONS.map((x) => x.value));
+  const rawEstado = o.internal_status ?? o.motico_status;
+  const estado = coerceOrderInternalEstadoForSelect(rawEstado);
   const sa = o.shippingAddress;
   return {
     ...o,
@@ -740,7 +681,8 @@ function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
           }
         : null,
     mensajero: o.mensajero || null,
-    motico_status: allowed.has(o.motico_status) ? o.motico_status : MOTICO_STATUS_DEFAULT,
+    internal_status: estado,
+    motico_status: estado,
     price_override: o.price_override != null ? Number(o.price_override) : null,
     quantity_override: o.quantity_override != null ? Number(o.quantity_override) : null,
     shopifyQuantity: Number(o.shopifyQuantity ?? o.defaultQuantity) || 0,
@@ -898,7 +840,7 @@ export default function MoticoPage() {
       if (statusFilter && o.motico_status !== statusFilter) return false;
       if (!normalizedSearchTerm) return true;
       const sa = o.shippingAddress;
-      const statusLabel = STATUS_META[o.motico_status]?.label || o.motico_status;
+      const statusLabel = etiquetaEstadoPedido(o.motico_status);
       const haystack = normalizeSearchText(
         [
           o.orderName,
@@ -960,7 +902,7 @@ export default function MoticoPage() {
   const printableSelectedCount = useMemo(() => {
     let n = 0;
     for (const o of orders) {
-      if (selectedSet.has(o.id) && o.motico_status === MOTICO_STATUS_FOR_GUIDE_PRINT) n += 1;
+      if (selectedSet.has(o.id) && o.motico_status === ORDER_ESTADO_FOR_GUIA_PRINT) n += 1;
     }
     return n;
   }, [orders, selectedSet]);
@@ -1073,6 +1015,7 @@ export default function MoticoPage() {
     });
     const data = (await res.json().catch(() => ({}))) as {
       error?: string;
+      internal_status?: string;
       motico_status?: string;
       financial_status?: string | null;
       label?: string | null;
@@ -1090,6 +1033,12 @@ export default function MoticoPage() {
     setOrders((prev) =>
       prev.map((o) => {
         if (o.id !== orderId) return o;
+        const hasEstadoSync = data.internal_status !== undefined || data.motico_status !== undefined;
+        const nextEstado = hasEstadoSync
+          ? coerceOrderInternalEstadoForSelect(
+              String(data.internal_status ?? data.motico_status ?? o.motico_status),
+            )
+          : null;
         const nextOverride =
           data.total_a_pagar_override !== undefined ? data.total_a_pagar_override : o.total_a_pagar_override;
         const nextTotalAPagar =
@@ -1100,7 +1049,8 @@ export default function MoticoPage() {
             : o.total_a_pagar;
         return {
           ...o,
-          motico_status: data.motico_status !== undefined ? String(data.motico_status) : o.motico_status,
+          internal_status: nextEstado !== null ? nextEstado : o.internal_status,
+          motico_status: nextEstado !== null ? nextEstado : o.motico_status,
           financialStatus:
             data.financial_status !== undefined && data.financial_status !== null
               ? String(data.financial_status)
@@ -1213,10 +1163,10 @@ export default function MoticoPage() {
       setGuideHint('Marca los pedidos a imprimir con la casilla de la primera columna.');
       return;
     }
-    const eligible = list.filter((o) => o.motico_status === MOTICO_STATUS_FOR_GUIDE_PRINT);
+    const eligible = list.filter((o) => o.motico_status === ORDER_ESTADO_FOR_GUIA_PRINT);
     if (!eligible.length) {
       setGuideHint(
-        'Solo se pueden imprimir guías de pedidos en estado «Imprimir guía». Cambia el estado o marca solo esos pedidos.',
+        'Solo se pueden imprimir guías de pedidos en estado «Confirmado». Cambia el estado o marca solo esos pedidos.',
       );
       return;
     }
@@ -1224,8 +1174,8 @@ export default function MoticoPage() {
     if (skipped > 0) {
       setGuideHint(
         skipped === 1
-          ? 'Se omitió 1 pedido que no está en «Imprimir guía». Se abre la vista previa con el resto.'
-          : `Se omitieron ${skipped} pedidos que no están en «Imprimir guía». Vista previa con ${eligible.length}.`,
+          ? 'Se omitió 1 pedido que no está en «Confirmado». Se abre la vista previa con el resto.'
+          : `Se omitieron ${skipped} pedidos que no están en «Confirmado». Vista previa con ${eligible.length}.`,
       );
     }
     const labels = eligible.map(buildLabelFromOrder);
@@ -1244,10 +1194,10 @@ export default function MoticoPage() {
       setGuideHint('Marca los pedidos con la casilla de la primera columna.');
       return;
     }
-    const eligible = list.filter((o) => o.motico_status === MOTICO_STATUS_FOR_GUIDE_PRINT);
+    const eligible = list.filter((o) => o.motico_status === ORDER_ESTADO_FOR_GUIA_PRINT);
     if (!eligible.length) {
       setGuideHint(
-        'Solo se exportan pedidos en estado «Imprimir guía». Cambia el estado o marca solo esos pedidos.',
+        'Solo se exportan pedidos en estado «Confirmado». Cambia el estado o marca solo esos pedidos.',
       );
       return;
     }
@@ -1255,8 +1205,8 @@ export default function MoticoPage() {
     if (skipped > 0) {
       setGuideHint(
         skipped === 1
-          ? 'Se omitió 1 pedido que no está en «Imprimir guía». La vista previa incluye el resto.'
-          : `Se omitieron ${skipped} pedidos que no están en «Imprimir guía». Vista previa con ${eligible.length} pedidos.`,
+          ? 'Se omitió 1 pedido que no está en «Confirmado». La vista previa incluye el resto.'
+          : `Se omitieron ${skipped} pedidos que no están en «Confirmado». Vista previa con ${eligible.length} pedidos.`,
       );
     }
     const payload = eligible.map((o, orderIdx) => {
@@ -1348,7 +1298,7 @@ export default function MoticoPage() {
         return;
       }
       setGuideHint('');
-      await patchLocalFields(o.id, { motico_status: next });
+      await patchLocalFields(o.id, { internal_status: next });
     },
     [patchLocalFields],
   );
@@ -1397,11 +1347,11 @@ export default function MoticoPage() {
     setUnlocking(true);
     try {
       const ok = await patchLocalFields(unlockOrder.id, {
-        motico_status: 'sin_revisar',
+        internal_status: 'sin_revisar',
         unlock_reason: reason,
       });
       if (!ok) return;
-      const unlockedShadow = normalizeRow({ ...unlockOrder, motico_status: 'sin_revisar' });
+      const unlockedShadow = normalizeRow({ ...unlockOrder, internal_status: 'sin_revisar', motico_status: 'sin_revisar' });
       setUnlockOrder(null);
       setUnlockReason('');
       setEditorDraft(draftFromOrder(unlockedShadow));
@@ -2240,7 +2190,7 @@ export default function MoticoPage() {
           style={{ ...filterCtl, minWidth: 180, maxWidth: 240, fontWeight: 600 }}
         >
           <option value="">Todos</option>
-          {MOTICO_STATUS_OPTIONS.map((s) => (
+          {ORDER_INTERNAL_ESTADO_OPTIONS.map((s) => (
             <option key={s.value} value={s.value}>
               {s.label}
             </option>
@@ -2265,7 +2215,7 @@ export default function MoticoPage() {
                 !selectedIds.length
                   ? 'Marca pedidos con la casilla de la primera columna'
                   : !printableSelectedCount
-                    ? 'Solo se imprimen pedidos en estado «Imprimir guía»'
+                    ? 'Solo se imprimen pedidos en estado «Confirmado»'
                     : 'Abrir vista previa para imprimir guías'
               }
               onClick={handlePrintSelected}
@@ -2290,7 +2240,7 @@ export default function MoticoPage() {
                 !selectedIds.length
                   ? 'Marca pedidos con la casilla de la primera columna'
                   : !printableSelectedCount
-                    ? 'Solo se exportan pedidos en estado «Imprimir guía»'
+                    ? 'Solo se exportan pedidos en estado «Confirmado»'
                     : 'Abrir vista previa de la relación Excel; luego puedes descargar el archivo'
               }
               onClick={() => void handleOpenGuidesExcelPreview()}
@@ -2713,7 +2663,8 @@ export default function MoticoPage() {
               </thead>
               <tbody>
                 {filteredOrders.map((o, i, arr) => {
-                  const meta = STATUS_META[o.motico_status] || STATUS_META[MOTICO_STATUS_DEFAULT];
+                  const estadoKey = coerceOrderInternalEstadoForSelect(o.motico_status);
+                  const meta = ORDER_INTERNAL_ESTADO_ROW_META[estadoKey] ?? ORDER_INTERNAL_ESTADO_ROW_META.sin_revisar;
                   const paymentStatus = normalizeMoticoPaymentStatus(o.financialStatus);
                   const paymentMeta = MOTICO_PAYMENT_META[paymentStatus];
                   const editLocked = isMoticoOrderEditLocked(o);
@@ -2794,7 +2745,7 @@ export default function MoticoPage() {
                               }}
                               value={o.motico_status}
                               onChange={(e) => void onMoticoStatusChange(o, e.target.value)}
-                              aria-label="Estado Motico"
+                              aria-label="Estado del pedido"
                               disabled={isMoticoStatusLocked(o.motico_status)}
                               title={
                                 isMoticoStatusLocked(o.motico_status)
@@ -2802,7 +2753,7 @@ export default function MoticoPage() {
                                   : 'Cambiar estado'
                               }
                             >
-                              {MOTICO_STATUS_OPTIONS.map((opt) => (
+                              {ORDER_INTERNAL_ESTADO_OPTIONS.map((opt) => (
                                 <option key={opt.value} value={opt.value}>
                                   {opt.label}
                                 </option>

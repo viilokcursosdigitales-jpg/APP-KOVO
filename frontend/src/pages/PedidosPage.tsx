@@ -16,6 +16,12 @@ import {
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
+import {
+  ORDER_INTERNAL_ESTADO_OPTIONS as INTERNAL_OPTIONS,
+  type OrderInternalEstadoValue as InternalStatusValue,
+  ORDER_INTERNAL_LOCKED_STATUSES,
+  coerceOrderInternalEstadoForSelect,
+} from '../constants/orderInternalEstado';
 
 const POLL_MS = 25_000;
 const SAVE_DEBOUNCE_MS = 450;
@@ -29,15 +35,6 @@ const DEMO = [
   { id: '#4817', client: 'Elena S.', email: 'elena@mail.com', date: '09 abr 2026', total: '€ 312,00', st: 'error' as const, lb: 'Cancelado' },
 ];
 
-const INTERNAL_OPTIONS = [
-  { value: 'sin_revisar', label: 'Sin revisar' },
-  { value: 'sin_confirmar', label: 'No confirmó' },
-  { value: 'motico', label: 'Motico' },
-  { value: 'confirmado', label: 'Confirmado' },
-  { value: 'despachado', label: 'Despachado' },
-  { value: 'prueba', label: 'Prueba' },
-  { value: 'cancelado', label: 'Cancelado' },
-] as const;
 const MENSAJERO_OPTIONS = [
   { value: 'motico', label: 'Motico' },
   { value: 'effix', label: 'Effix' },
@@ -47,8 +44,7 @@ const MENSAJERO_OPTIONS = [
 /** Ancho mínimo del desplegable Estado según la etiqueta más larga (+ flecha). */
 const ESTADO_SELECT_MIN_WIDTH_CH = Math.max(...INTERNAL_OPTIONS.map((o) => o.label.length), 1) + 3;
 
-type InternalStatusValue = (typeof INTERNAL_OPTIONS)[number]['value'];
-const LOCKED_INTERNAL_STATUSES = new Set<InternalStatusValue>(['despachado', 'cancelado', 'motico']);
+const LOCKED_INTERNAL_STATUSES = ORDER_INTERNAL_LOCKED_STATUSES;
 
 function isOrderLockedByInternalStatus(internalStatus: string) {
   const s = String(internalStatus || '').toLowerCase() as InternalStatusValue;
@@ -151,11 +147,6 @@ function orderMatchesCityFilter(row: ShopifyOrderRow, selectedKeys: ReadonlySet<
   const k = cityKeyFromRow(row);
   if (!k) return false;
   return selectedKeys.has(k);
-}
-
-function isMoticoEligibleCity(city: string | null | undefined) {
-  const c = normalizeSearchText(city || '');
-  return c === 'bogota' || c === 'soacha';
 }
 
 function normalizeSearchText(v: string) {
@@ -436,11 +427,11 @@ export default function PedidosPage() {
       badgeVariant: safeBv,
       defaultQuantity: Number(o.defaultQuantity) || 0,
       shopifyQuantity: Number(o.shopifyQuantity ?? o.defaultQuantity) || 0,
-      internal_status: o.internal_status || 'sin_revisar',
+      internal_status: coerceOrderInternalEstadoForSelect(o.internal_status),
       price_override: o.price_override != null ? Number(o.price_override) : null,
       quantity_override: o.quantity_override != null ? Number(o.quantity_override) : null,
       mensajero: o.mensajero || null,
-      motico_status: o.motico_status || 'sin_revisar',
+      motico_status: coerceOrderInternalEstadoForSelect(o.motico_status ?? o.internal_status),
       productIds: Array.isArray(o.productIds) ? o.productIds : [],
       shippingCity: o.shippingCity || '',
       shippingProvince: o.shippingProvince || '',
@@ -570,20 +561,23 @@ export default function PedidosPage() {
     };
     setShopifyError('');
     setShopifyOrders((prev) =>
-      prev.map((o) =>
-        o.id === orderId
-          ? {
-              ...o,
-              internal_status: data.internal_status ?? o.internal_status,
-              price_override:
-                data.price_override !== undefined ? data.price_override : o.price_override,
-              quantity_override:
-                data.quantity_override !== undefined ? data.quantity_override : o.quantity_override,
-              mensajero: data.mensajero !== undefined ? data.mensajero : o.mensajero,
-              motico_status: data.motico_status !== undefined ? data.motico_status : o.motico_status,
-            }
-          : o,
-      ),
+      prev.map((o) => {
+        if (o.id !== orderId) return o;
+        const hasEstadoSync = data.internal_status !== undefined || data.motico_status !== undefined;
+        const nextEstado = hasEstadoSync
+          ? coerceOrderInternalEstadoForSelect(
+              String(data.internal_status ?? data.motico_status ?? o.internal_status),
+            )
+          : null;
+        return {
+          ...o,
+          internal_status: nextEstado !== null ? nextEstado : o.internal_status,
+          price_override: data.price_override !== undefined ? data.price_override : o.price_override,
+          quantity_override: data.quantity_override !== undefined ? data.quantity_override : o.quantity_override,
+          mensajero: data.mensajero !== undefined ? data.mensajero : o.mensajero,
+          motico_status: nextEstado !== null ? nextEstado : o.motico_status,
+        };
+      }),
     );
     setPriceDraft((d) => {
       const n = { ...d };
@@ -604,19 +598,7 @@ export default function PedidosPage() {
       return row ? !isOrderLockedInPedidos(row) : false;
     });
     if (editableIds.length === 0) return;
-    let ids = editableIds;
-    if (bulkInternalStatus === 'motico') {
-      const eligible = editableIds.filter((id) => {
-        const row = shopifyOrders.find((o) => o.id === id);
-        return row ? isMoticoEligibleCity(row.shippingCity) : false;
-      });
-      if (eligible.length === 0) {
-        setBulkStatusFeedback('Solo se puede pasar a Motico pedidos de Bogotá o Soacha.');
-        window.setTimeout(() => setBulkStatusFeedback(''), 6000);
-        return;
-      }
-      ids = eligible;
-    }
+    const ids = editableIds;
     setBulkStatusApplying(true);
     setBulkStatusFeedback('');
     try {
@@ -678,10 +660,6 @@ export default function PedidosPage() {
     async (row: ShopifyOrderRow, nextStatus: string) => {
       if (isOrderLockedInPedidos(row)) {
         setShopifyError('Este pedido no se puede editar desde Pedidos.');
-        return;
-      }
-      if (nextStatus === 'motico' && !isMoticoEligibleCity(row.shippingCity)) {
-        setShopifyError('Solo se puede para pedidos de Bogotá o Soacha.');
         return;
       }
       await patchLocalFields(row.id, { internal_status: nextStatus });
@@ -845,7 +823,7 @@ export default function PedidosPage() {
 
   const pedidosKpis = useMemo(() => {
     const totalPedidos = filteredShopify.length;
-    const pedidosMotico = filteredShopify.filter((o) => String(o.internal_status || '') === 'motico').length;
+    const pedidosMotico = filteredShopify.filter((o) => o.mensajero === 'motico').length;
     const pedidosDespachados = filteredShopify.filter((o) => String(o.internal_status || '') === 'despachado').length;
     const pedidosCancelados = filteredShopify.filter((o) => String(o.internal_status || '') === 'cancelado').length;
     const pedidosSinDespachar = filteredShopify.filter((o) => {
