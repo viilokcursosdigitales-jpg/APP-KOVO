@@ -179,6 +179,8 @@ async function initDb(pool) {
       shopify_product_id BIGINT NOT NULL,
       manual_product_price NUMERIC(14, 4),
       manual_avg_freight_price NUMERIC(14, 4),
+      manual_product_price_motico NUMERIC(14, 4),
+      manual_avg_freight_price_motico NUMERIC(14, 4),
       delivery_effectiveness_pct NUMERIC(7, 4),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (organization_id, shopify_product_id)
@@ -186,6 +188,12 @@ async function initDb(pool) {
   `);
   await pool.query(
     `ALTER TABLE shopify_product_manual_pricing ADD COLUMN IF NOT EXISTS delivery_effectiveness_pct NUMERIC(7, 4)`,
+  );
+  await pool.query(
+    `ALTER TABLE shopify_product_manual_pricing ADD COLUMN IF NOT EXISTS manual_product_price_motico NUMERIC(14, 4)`,
+  );
+  await pool.query(
+    `ALTER TABLE shopify_product_manual_pricing ADD COLUMN IF NOT EXISTS manual_avg_freight_price_motico NUMERIC(14, 4)`,
   );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_shopify_manual_pricing_org ON shopify_product_manual_pricing (organization_id)`,

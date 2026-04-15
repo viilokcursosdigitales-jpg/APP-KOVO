@@ -2165,14 +2165,30 @@ app.put('/api/shopify/product-manual-pricing', verifyToken, scopeToOrganization,
     if (!freightPriceParsed.ok) {
       return res.status(400).json({ error: 'manual_avg_freight_price inválido' });
     }
+    const productPriceMoticoParsed = parseManualPricingNum(req.body?.manual_product_price_motico);
+    if (!productPriceMoticoParsed.ok) {
+      return res.status(400).json({ error: 'manual_product_price_motico inválido' });
+    }
+    const freightPriceMoticoParsed = parseManualPricingNum(req.body?.manual_avg_freight_price_motico);
+    if (!freightPriceMoticoParsed.ok) {
+      return res.status(400).json({ error: 'manual_avg_freight_price_motico inválido' });
+    }
     const deliveryEffectivenessParsed = parseDeliveryEffectivenessPct(req.body?.delivery_effectiveness_pct);
     if (!deliveryEffectivenessParsed.ok) {
       return res.status(400).json({ error: 'delivery_effectiveness_pct inválido (0-100)' });
     }
     const manualProductPrice = productPriceParsed.value;
     const manualAvgFreightPrice = freightPriceParsed.value;
+    const manualProductPriceMotico = productPriceMoticoParsed.value;
+    const manualAvgFreightPriceMotico = freightPriceMoticoParsed.value;
     const deliveryEffectivenessPct = deliveryEffectivenessParsed.value;
-    if (manualProductPrice == null && manualAvgFreightPrice == null && deliveryEffectivenessPct == null) {
+    if (
+      manualProductPrice == null &&
+      manualAvgFreightPrice == null &&
+      manualProductPriceMotico == null &&
+      manualAvgFreightPriceMotico == null &&
+      deliveryEffectivenessPct == null
+    ) {
       await pool.query(
         `DELETE FROM shopify_product_manual_pricing
          WHERE organization_id = $1 AND shopify_product_id = $2`,
@@ -2183,25 +2199,48 @@ app.put('/api/shopify/product-manual-pricing', verifyToken, scopeToOrganization,
         product_id: pid,
         manual_product_price: null,
         manual_avg_freight_price: null,
+        manual_product_price_motico: null,
+        manual_avg_freight_price_motico: null,
         delivery_effectiveness_pct: null,
       });
     }
     await pool.query(
       `INSERT INTO shopify_product_manual_pricing
-        (organization_id, shopify_product_id, manual_product_price, manual_avg_freight_price, delivery_effectiveness_pct, updated_at)
-       VALUES ($1, $2, $3, $4, $5, now())
+        (
+          organization_id,
+          shopify_product_id,
+          manual_product_price,
+          manual_avg_freight_price,
+          manual_product_price_motico,
+          manual_avg_freight_price_motico,
+          delivery_effectiveness_pct,
+          updated_at
+        )
+       VALUES ($1, $2, $3, $4, $5, $6, $7, now())
        ON CONFLICT (organization_id, shopify_product_id) DO UPDATE SET
          manual_product_price = EXCLUDED.manual_product_price,
          manual_avg_freight_price = EXCLUDED.manual_avg_freight_price,
+         manual_product_price_motico = EXCLUDED.manual_product_price_motico,
+         manual_avg_freight_price_motico = EXCLUDED.manual_avg_freight_price_motico,
          delivery_effectiveness_pct = EXCLUDED.delivery_effectiveness_pct,
          updated_at = now()`,
-      [req.organizationId, pid, manualProductPrice, manualAvgFreightPrice, deliveryEffectivenessPct],
+      [
+        req.organizationId,
+        pid,
+        manualProductPrice,
+        manualAvgFreightPrice,
+        manualProductPriceMotico,
+        manualAvgFreightPriceMotico,
+        deliveryEffectivenessPct,
+      ],
     );
     return res.json({
       ok: true,
       product_id: pid,
       manual_product_price: manualProductPrice,
       manual_avg_freight_price: manualAvgFreightPrice,
+      manual_product_price_motico: manualProductPriceMotico,
+      manual_avg_freight_price_motico: manualAvgFreightPriceMotico,
       delivery_effectiveness_pct: deliveryEffectivenessPct,
     });
   } catch (e) {
@@ -2702,7 +2741,7 @@ async function loadProductManualPricingMap(organizationId, productIds) {
   for (let i = 0; i < productIds.length; i += CHUNK) {
     const slice = productIds.slice(i, i + CHUNK);
     const { rows } = await pool.query(
-      `SELECT shopify_product_id, manual_product_price, manual_avg_freight_price, delivery_effectiveness_pct
+      `SELECT shopify_product_id, manual_product_price, manual_avg_freight_price, manual_product_price_motico, manual_avg_freight_price_motico, delivery_effectiveness_pct
        FROM shopify_product_manual_pricing
        WHERE organization_id = $1 AND shopify_product_id = ANY($2::bigint[])`,
       [organizationId, slice],
@@ -2716,6 +2755,14 @@ async function loadProductManualPricingMap(organizationId, productIds) {
         manual_avg_freight_price:
           r.manual_avg_freight_price != null && Number.isFinite(Number(r.manual_avg_freight_price))
             ? Number(r.manual_avg_freight_price)
+            : null,
+        manual_product_price_motico:
+          r.manual_product_price_motico != null && Number.isFinite(Number(r.manual_product_price_motico))
+            ? Number(r.manual_product_price_motico)
+            : null,
+        manual_avg_freight_price_motico:
+          r.manual_avg_freight_price_motico != null && Number.isFinite(Number(r.manual_avg_freight_price_motico))
+            ? Number(r.manual_avg_freight_price_motico)
             : null,
         delivery_effectiveness_pct:
           r.delivery_effectiveness_pct != null && Number.isFinite(Number(r.delivery_effectiveness_pct))
@@ -5260,7 +5307,7 @@ app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, r
     const pricingByProductId = new Map();
     try {
       const pricingRes = await pool.query(
-        `SELECT shopify_product_id, manual_product_price, manual_avg_freight_price, delivery_effectiveness_pct
+        `SELECT shopify_product_id, manual_product_price, manual_avg_freight_price, manual_product_price_motico, manual_avg_freight_price_motico, delivery_effectiveness_pct
          FROM shopify_product_manual_pricing
          WHERE organization_id = $1`,
         [req.organizationId],
@@ -5271,6 +5318,10 @@ app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, r
             rowPricing.manual_product_price != null ? Number(rowPricing.manual_product_price) : null,
           manual_avg_freight_price:
             rowPricing.manual_avg_freight_price != null ? Number(rowPricing.manual_avg_freight_price) : null,
+          manual_product_price_motico:
+            rowPricing.manual_product_price_motico != null ? Number(rowPricing.manual_product_price_motico) : null,
+          manual_avg_freight_price_motico:
+            rowPricing.manual_avg_freight_price_motico != null ? Number(rowPricing.manual_avg_freight_price_motico) : null,
           delivery_effectiveness_pct:
             rowPricing.delivery_effectiveness_pct != null ? Number(rowPricing.delivery_effectiveness_pct) : null,
         });
@@ -5288,12 +5339,16 @@ app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, r
       const manual = pricingByProductId.get(productId) || {
         manual_product_price: null,
         manual_avg_freight_price: null,
+        manual_product_price_motico: null,
+        manual_avg_freight_price_motico: null,
         delivery_effectiveness_pct: null,
       };
       return {
         ...product,
         manual_product_price: manual.manual_product_price,
         manual_avg_freight_price: manual.manual_avg_freight_price,
+        manual_product_price_motico: manual.manual_product_price_motico,
+        manual_avg_freight_price_motico: manual.manual_avg_freight_price_motico,
         delivery_effectiveness_pct: manual.delivery_effectiveness_pct,
       };
     });

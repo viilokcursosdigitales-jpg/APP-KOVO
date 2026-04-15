@@ -159,6 +159,8 @@ CREATE TABLE IF NOT EXISTS shopify_product_manual_pricing (
   shopify_product_id BIGINT NOT NULL,
   manual_product_price NUMERIC(14, 4),
   manual_avg_freight_price NUMERIC(14, 4),
+  manual_product_price_motico NUMERIC(14, 4),
+  manual_avg_freight_price_motico NUMERIC(14, 4),
   delivery_effectiveness_pct NUMERIC(7, 4),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (organization_id, shopify_product_id)

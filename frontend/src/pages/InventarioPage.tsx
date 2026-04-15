@@ -29,6 +29,8 @@ type ShopifyProduct = {
   variants?: ShopifyVariant[];
   manual_product_price?: number | null;
   manual_avg_freight_price?: number | null;
+  manual_product_price_motico?: number | null;
+  manual_avg_freight_price_motico?: number | null;
   delivery_effectiveness_pct?: number | null;
 };
 
@@ -95,6 +97,18 @@ function normalizeProducts(raw: unknown): ShopifyProduct[] {
           : Number.isFinite(Number(row.manual_avg_freight_price))
             ? Number(row.manual_avg_freight_price)
             : null,
+      manual_product_price_motico:
+        row.manual_product_price_motico == null
+          ? null
+          : Number.isFinite(Number(row.manual_product_price_motico))
+            ? Number(row.manual_product_price_motico)
+            : null,
+      manual_avg_freight_price_motico:
+        row.manual_avg_freight_price_motico == null
+          ? null
+          : Number.isFinite(Number(row.manual_avg_freight_price_motico))
+            ? Number(row.manual_avg_freight_price_motico)
+            : null,
       delivery_effectiveness_pct:
         row.delivery_effectiveness_pct == null
           ? null
@@ -109,6 +123,8 @@ function normalizeProducts(raw: unknown): ShopifyProduct[] {
 type PricingDraft = {
   productPrice: string;
   avgFreightPrice: string;
+  productPriceMotico: string;
+  avgFreightPriceMotico: string;
   deliveryEffectiveness: string;
   dirty: boolean;
 };
@@ -228,6 +244,8 @@ export default function InventarioPage() {
         imageCount: (p.images || []).filter((img) => (img.src || '').trim()).length,
         manualProductPrice: p.manual_product_price ?? null,
         manualAvgFreightPrice: p.manual_avg_freight_price ?? null,
+        manualProductPriceMotico: p.manual_product_price_motico ?? null,
+        manualAvgFreightPriceMotico: p.manual_avg_freight_price_motico ?? null,
         deliveryEffectivenessPct: p.delivery_effectiveness_pct ?? null,
       };
     });
@@ -245,6 +263,8 @@ export default function InventarioPage() {
         next[row.id] = {
           productPrice: toDraftAmount(row.manualProductPrice),
           avgFreightPrice: toDraftAmount(row.manualAvgFreightPrice),
+          productPriceMotico: toDraftAmount(row.manualProductPriceMotico),
+          avgFreightPriceMotico: toDraftAmount(row.manualAvgFreightPriceMotico),
           deliveryEffectiveness: toDraftAmount(row.deliveryEffectivenessPct),
           dirty: false,
         };
@@ -253,9 +273,16 @@ export default function InventarioPage() {
     });
   }, [viewRows]);
 
-  const setPricingDraftField = useCallback((productId: number, field: 'productPrice' | 'avgFreightPrice' | 'deliveryEffectiveness', value: string) => {
+  const setPricingDraftField = useCallback((productId: number, field: 'productPrice' | 'avgFreightPrice' | 'productPriceMotico' | 'avgFreightPriceMotico' | 'deliveryEffectiveness', value: string) => {
     setPricingDrafts((prev) => {
-      const current = prev[productId] || { productPrice: '', avgFreightPrice: '', deliveryEffectiveness: '', dirty: false };
+      const current = prev[productId] || {
+        productPrice: '',
+        avgFreightPrice: '',
+        productPriceMotico: '',
+        avgFreightPriceMotico: '',
+        deliveryEffectiveness: '',
+        dirty: false,
+      };
       return {
         ...prev,
         [productId]: {
@@ -284,20 +311,29 @@ export default function InventarioPage() {
       const draft = pricingDrafts[productId];
       const rawProductPrice = (draft?.productPrice || '').trim();
       const rawAvgFreightPrice = (draft?.avgFreightPrice || '').trim();
+      const rawProductPriceMotico = (draft?.productPriceMotico || '').trim();
+      const rawAvgFreightPriceMotico = (draft?.avgFreightPriceMotico || '').trim();
       const rawDeliveryEffectiveness = (draft?.deliveryEffectiveness || '').trim();
       const productPrice = rawProductPrice === '' ? null : Number.parseFloat(rawProductPrice.replace(',', '.'));
       const avgFreightPrice = rawAvgFreightPrice === '' ? null : Number.parseFloat(rawAvgFreightPrice.replace(',', '.'));
+      const productPriceMotico =
+        rawProductPriceMotico === '' ? null : Number.parseFloat(rawProductPriceMotico.replace(',', '.'));
+      const avgFreightPriceMotico =
+        rawAvgFreightPriceMotico === '' ? null : Number.parseFloat(rawAvgFreightPriceMotico.replace(',', '.'));
       const deliveryEffectiveness =
         rawDeliveryEffectiveness === '' ? null : Number.parseFloat(rawDeliveryEffectiveness.replace(',', '.'));
       if (
         (rawProductPrice !== '' && (!Number.isFinite(productPrice) || productPrice < 0)) ||
         (rawAvgFreightPrice !== '' && (!Number.isFinite(avgFreightPrice) || avgFreightPrice < 0)) ||
+        (rawProductPriceMotico !== '' && (!Number.isFinite(productPriceMotico) || productPriceMotico < 0)) ||
+        (rawAvgFreightPriceMotico !== '' &&
+          (!Number.isFinite(avgFreightPriceMotico) || avgFreightPriceMotico < 0)) ||
         (rawDeliveryEffectiveness !== '' &&
           (!Number.isFinite(deliveryEffectiveness) || deliveryEffectiveness < 0 || deliveryEffectiveness > 100))
       ) {
         setPricingErrors((prev) => ({
           ...prev,
-          [productId]: 'Precios >= 0 y Efectividad entre 0 y 100.',
+          [productId]: 'Costos >= 0 y Efectividad entre 0 y 100.',
         }));
         return;
       }
@@ -315,6 +351,8 @@ export default function InventarioPage() {
             product_id: productId,
             manual_product_price: productPrice,
             manual_avg_freight_price: avgFreightPrice,
+            manual_product_price_motico: productPriceMotico,
+            manual_avg_freight_price_motico: avgFreightPriceMotico,
             delivery_effectiveness_pct: deliveryEffectiveness,
           }),
         });
@@ -322,6 +360,8 @@ export default function InventarioPage() {
           error?: string;
           manual_product_price?: number | null;
           manual_avg_freight_price?: number | null;
+          manual_product_price_motico?: number | null;
+          manual_avg_freight_price_motico?: number | null;
           delivery_effectiveness_pct?: number | null;
         };
         if (!res.ok) {
@@ -333,6 +373,10 @@ export default function InventarioPage() {
         }
         const savedProductPrice = data.manual_product_price == null ? null : Number(data.manual_product_price);
         const savedAvgFreightPrice = data.manual_avg_freight_price == null ? null : Number(data.manual_avg_freight_price);
+        const savedProductPriceMotico =
+          data.manual_product_price_motico == null ? null : Number(data.manual_product_price_motico);
+        const savedAvgFreightPriceMotico =
+          data.manual_avg_freight_price_motico == null ? null : Number(data.manual_avg_freight_price_motico);
         const savedDeliveryEffectiveness =
           data.delivery_effectiveness_pct == null ? null : Number(data.delivery_effectiveness_pct);
         setProducts((prev) =>
@@ -342,6 +386,8 @@ export default function InventarioPage() {
                   ...p,
                   manual_product_price: savedProductPrice,
                   manual_avg_freight_price: savedAvgFreightPrice,
+                  manual_product_price_motico: savedProductPriceMotico,
+                  manual_avg_freight_price_motico: savedAvgFreightPriceMotico,
                   delivery_effectiveness_pct: savedDeliveryEffectiveness,
                 }
               : p,
@@ -352,6 +398,8 @@ export default function InventarioPage() {
           [productId]: {
             productPrice: toDraftAmount(savedProductPrice),
             avgFreightPrice: toDraftAmount(savedAvgFreightPrice),
+            productPriceMotico: toDraftAmount(savedProductPriceMotico),
+            avgFreightPriceMotico: toDraftAmount(savedAvgFreightPriceMotico),
             deliveryEffectiveness: toDraftAmount(savedDeliveryEffectiveness),
             dirty: false,
           },
@@ -478,6 +526,35 @@ export default function InventarioPage() {
             <div style={{ marginTop: 10 }}>
               <StatusBadge variant={stockVariant(p.stock)}>{stockLabel(p.stock)}</StatusBadge>
             </div>
+            <div
+              style={{
+                marginTop: 8,
+                borderRadius: 8,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.bgSubtle,
+                padding: '7px 8px',
+                fontSize: 10.5,
+                color: ds.textSecondary,
+                lineHeight: 1.35,
+              }}
+            >
+              <div>
+                Costo producto Motico:{' '}
+                <span style={{ fontWeight: 700, color: ds.textPrimary }}>
+                  {p.manualProductPriceMotico != null
+                    ? `${currencyPrefix}${Number(p.manualProductPriceMotico).toFixed(2)}`
+                    : '—'}
+                </span>
+              </div>
+              <div style={{ marginTop: 2 }}>
+                Costo flete Motico:{' '}
+                <span style={{ fontWeight: 700, color: ds.textPrimary }}>
+                  {p.manualAvgFreightPriceMotico != null
+                    ? `${currencyPrefix}${Number(p.manualAvgFreightPriceMotico).toFixed(2)}`
+                    : '—'}
+                </span>
+              </div>
+            </div>
             {p.variants.length ? (
               <div
                 style={{
@@ -512,7 +589,7 @@ export default function InventarioPage() {
               }}
             >
               <div style={{ fontSize: 11, fontWeight: 600, color: ds.textPrimary, marginBottom: 8 }}>
-                Configuración manual de costos Motico
+                Configuración manual de costos
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
                 <label style={{ fontSize: 10.5, color: ds.textMuted }}>
@@ -588,6 +665,78 @@ export default function InventarioPage() {
                   </div>
                 </label>
                 <label style={{ fontSize: 10.5, color: ds.textMuted }}>
+                  Costo del producto Motico
+                  <div
+                    style={{
+                      marginTop: 4,
+                      width: '100%',
+                      borderRadius: 8,
+                      border: `1px solid ${ds.borderCard}`,
+                      background: ds.bgCard,
+                      color: ds.textPrimary,
+                      fontSize: 12,
+                      padding: '0 9px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ color: ds.textMuted, fontWeight: 600 }}>{currencyPrefix}</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={pricingDrafts[p.id]?.productPriceMotico ?? ''}
+                      onChange={(e) => setPricingDraftField(p.id, 'productPriceMotico', e.target.value)}
+                      placeholder="Ej: 52.00"
+                      style={{
+                        width: '100%',
+                        border: 'none',
+                        outline: 'none',
+                        background: 'transparent',
+                        color: ds.textPrimary,
+                        fontSize: 12,
+                        padding: '7px 0',
+                      }}
+                    />
+                  </div>
+                </label>
+                <label style={{ fontSize: 10.5, color: ds.textMuted }}>
+                  Costo del flete Motico
+                  <div
+                    style={{
+                      marginTop: 4,
+                      width: '100%',
+                      borderRadius: 8,
+                      border: `1px solid ${ds.borderCard}`,
+                      background: ds.bgCard,
+                      color: ds.textPrimary,
+                      fontSize: 12,
+                      padding: '0 9px',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 6,
+                    }}
+                  >
+                    <span style={{ color: ds.textMuted, fontWeight: 600 }}>{currencyPrefix}</span>
+                    <input
+                      type="text"
+                      inputMode="decimal"
+                      value={pricingDrafts[p.id]?.avgFreightPriceMotico ?? ''}
+                      onChange={(e) => setPricingDraftField(p.id, 'avgFreightPriceMotico', e.target.value)}
+                      placeholder="Ej: 9.80"
+                      style={{
+                        width: '100%',
+                        border: 'none',
+                        outline: 'none',
+                        background: 'transparent',
+                        color: ds.textPrimary,
+                        fontSize: 12,
+                        padding: '7px 0',
+                      }}
+                    />
+                  </div>
+                </label>
+                <label style={{ fontSize: 10.5, color: ds.textMuted }}>
                   % Efectividad de entregas
                   <div
                     style={{
@@ -646,7 +795,7 @@ export default function InventarioPage() {
                   cursor: savingPricing[p.id] ? 'wait' : 'pointer',
                 }}
               >
-                {savingPricing[p.id] ? 'Guardando...' : 'Guardar costos Motico'}
+                {savingPricing[p.id] ? 'Guardando...' : 'Guardar configuración'}
               </button>
             </div>
           </div>
