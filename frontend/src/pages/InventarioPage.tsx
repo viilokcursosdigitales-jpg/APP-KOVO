@@ -516,7 +516,7 @@ export default function InventarioPage() {
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
                 <label style={{ fontSize: 10.5, color: ds.textMuted }}>
-                  Costo del producto Motico
+                  Precio del producto
                   <div
                     style={{
                       marginTop: 4,
@@ -552,7 +552,7 @@ export default function InventarioPage() {
                   </div>
                 </label>
                 <label style={{ fontSize: 10.5, color: ds.textMuted }}>
-                  Costo del flete Motico
+                  Precio del flete promedio
                   <div
                     style={{
                       marginTop: 4,
