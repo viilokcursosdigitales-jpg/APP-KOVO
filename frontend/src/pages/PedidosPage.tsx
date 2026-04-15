@@ -2,8 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { Link, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
+import { KpiCard } from '../design-system/KpiCard';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
-import { IconPencil } from '../design-system/icons';
+import { IconCart, IconPencil, IconTruck } from '../design-system/icons';
 import {
   orderListStickyCheckboxTd,
   orderListStickyCheckboxTh,
@@ -747,6 +748,18 @@ export default function PedidosPage() {
     [shopifyOrders, filter, selectedCityKeySet, normalizedSearchTerm],
   );
 
+  const pedidosKpis = useMemo(() => {
+    const totalPedidos = filteredShopify.length;
+    const pedidosMotico = filteredShopify.filter((o) => String(o.internal_status || '') === 'motico').length;
+    const pedidosDespachados = filteredShopify.filter((o) => String(o.internal_status || '') === 'despachado').length;
+    const pedidosCancelados = filteredShopify.filter((o) => String(o.internal_status || '') === 'cancelado').length;
+    const pedidosSinDespachar = filteredShopify.filter((o) => {
+      const st = String(o.internal_status || '');
+      return st === 'sin_revisar' || st === 'confirmado';
+    }).length;
+    return { totalPedidos, pedidosMotico, pedidosDespachados, pedidosCancelados, pedidosSinDespachar };
+  }, [filteredShopify]);
+
   const filteredShopifyIds = useMemo(
     () => filteredShopify.filter((r) => !isOrderLockedByInternalStatus(r.internal_status)).map((r) => r.id),
     [filteredShopify],
@@ -1144,6 +1157,23 @@ export default function PedidosPage() {
             Canales
           </Link>
           {' · '}Vincula tu tienda Shopify para listar pedidos aquí en vivo.
+        </div>
+      ) : null}
+
+      {useLive ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+            gap: 12,
+            marginBottom: 16,
+          }}
+        >
+          <KpiCard variant="traffic" label="Total pedidos (todos los estados)" value={pedidosKpis.totalPedidos} icon={<IconCart />} />
+          <KpiCard variant="conversion" label="Pedidos Motico" value={pedidosKpis.pedidosMotico} icon={<IconTruck />} />
+          <KpiCard variant="sales" label="Total pedidos despachados" value={pedidosKpis.pedidosDespachados} icon={<IconTruck />} />
+          <KpiCard variant="alert" label="Pedidos cancelados" value={pedidosKpis.pedidosCancelados} icon={<IconTruck />} />
+          <KpiCard variant="stock" label="Pedidos sin despachar" value={pedidosKpis.pedidosSinDespachar} icon={<IconTruck />} />
         </div>
       ) : null}
 
