@@ -120,6 +120,12 @@ const MOTICO_PAYMENT_META: Record<
   refunded: { bg: '#fee2e2', fg: '#7f1d1d', border: '#fca5a5' },
   paid: { bg: '#6c47ff', fg: '#ffffff', border: '#6c47ff', fontWeight: 700 },
 };
+const COLOMBIA_LOCATIONS_URL =
+  'https://raw.githubusercontent.com/marcovega/colombia-json/master/colombia.min.json';
+type ColombiaDepartmentCities = { departamento: string; ciudades: string[] };
+const COLOMBIA_LOCATIONS_FALLBACK: ColombiaDepartmentCities[] = [
+  { departamento: 'Cundinamarca', ciudades: ['Bogotá', 'Soacha'] },
+];
 
 function isMoticoStatusLocked(status: string) {
   return MOTICO_LOCKED_STATUSES.has(String(status || '').toLowerCase());
@@ -420,6 +426,7 @@ type ManualCreateDraft = {
   /** Valor input type=date (YYYY-MM-DD); vacío = fecha/hora actual en el servidor. Si hay fecha, hora fija 8:00 local. */
   created_at: string;
   total: string;
+  anticipo: string;
   note: string;
   line_items: {
     product_id: string;
@@ -466,15 +473,37 @@ function emptyManualDraft(): ManualCreateDraft {
     phone: '',
     created_at: `${yyyy}-${mm}-${dd}`,
     total: '',
+    anticipo: '0',
     note: '',
     line_items: [emptyManualLine()],
     financial_status: 'pending',
-    province: 'CUNDINAMARCA',
-    city: 'BOGOTA',
+    province: 'Cundinamarca',
+    city: 'Bogotá',
     address1: '',
     address2: '',
-    country: 'COLOMBIA',
+    country: 'Colombia',
   };
+}
+
+function normalizeColombiaLocations(raw: unknown): ColombiaDepartmentCities[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const out: ColombiaDepartmentCities[] = [];
+  for (const item of list) {
+    if (!item || typeof item !== 'object') continue;
+    const row = item as { departamento?: unknown; ciudades?: unknown };
+    const departamento = String(row.departamento || '').trim();
+    if (!departamento) continue;
+    const ciudades = Array.isArray(row.ciudades)
+      ? row.ciudades
+          .map((c) => String(c || '').trim())
+          .filter(Boolean)
+          .filter((c, i, arr) => arr.indexOf(c) === i)
+          .sort((a, b) => a.localeCompare(b, 'es'))
+      : [];
+    if (!ciudades.length) continue;
+    out.push({ departamento, ciudades });
+  }
+  return out.length ? out : COLOMBIA_LOCATIONS_FALLBACK;
 }
 
 function getNextManualWhatsappOrderNumber(rows: MoticoOrderRow[]): number {
@@ -787,6 +816,7 @@ export default function MoticoPage() {
   const [manualOrderNamePreview, setManualOrderNamePreview] = useState('Whatsapp #1');
   const [manualSaving, setManualSaving] = useState(false);
   const [manualError, setManualError] = useState('');
+  const [colombiaLocations, setColombiaLocations] = useState<ColombiaDepartmentCities[]>(COLOMBIA_LOCATIONS_FALLBACK);
 
   const [phoneCopyToastVisible, setPhoneCopyToastVisible] = useState(false);
   const phoneCopyToastTimerRef = useRef<number | null>(null);
@@ -839,6 +869,14 @@ export default function MoticoPage() {
     for (const p of products) m.set(p.id, p);
     return m;
   }, [products]);
+
+  const citiesByDepartment = useMemo(() => {
+    const m = new Map<string, string[]>();
+    for (const row of colombiaLocations) {
+      m.set(row.departamento, row.ciudades);
+    }
+    return m;
+  }, [colombiaLocations]);
 
   const summarizeProducts = useCallback(
     (ids: number[]) => {
@@ -1586,6 +1624,12 @@ export default function MoticoPage() {
         setManualError('Selecciona al menos un producto del inventario.');
         return;
       }
+      const anticipoRaw = String(manualDraft.anticipo || '').trim().replace(',', '.');
+      const anticipo = anticipoRaw === '' ? 0 : Number.parseFloat(anticipoRaw);
+      if (!Number.isFinite(anticipo) || anticipo < 0) {
+        setManualError('El pago anticipado debe ser un número mayor o igual a 0.');
+        return;
+      }
 
       const payload: Record<string, unknown> = {
         client_name: manualDraft.client_name.trim(),
@@ -1599,6 +1643,7 @@ export default function MoticoPage() {
         line_items: normalizedItems,
         note: manualDraft.note.trim(),
         total: manualDraft.total.trim(),
+        anticipo: anticipo,
         quantity: String(normalizedItems.reduce((sum, x) => sum + x.quantity, 0)),
         financial_status: manualDraft.financial_status,
         province: manualDraft.province.trim(),
@@ -1765,6 +1810,40 @@ export default function MoticoPage() {
     }, POLL_MS);
     return () => window.clearInterval(id);
   }, [shopifyConnected, loadData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(COLOMBIA_LOCATIONS_URL);
+        if (!res.ok) return;
+        const data = (await res.json().catch(() => null)) as unknown;
+        if (cancelled) return;
+        setColombiaLocations(normalizeColombiaLocations(data));
+      } catch {
+        /* fallback local */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!manualModalOpen) return;
+    const depts = colombiaLocations;
+    if (!depts.length) return;
+    setManualDraft((prev) => {
+      const currentDept = prev.province.trim();
+      const deptRow = depts.find((d) => d.departamento === currentDept) || depts[0];
+      const cities = Array.isArray(deptRow?.ciudades) ? deptRow.ciudades : [];
+      const hasCity = cities.includes(prev.city.trim());
+      const nextCity = hasCity ? prev.city : cities[0] || '';
+      const nextDept = deptRow?.departamento || prev.province;
+      if (nextDept === prev.province && nextCity === prev.city) return prev;
+      return { ...prev, province: nextDept, city: nextCity };
+    });
+  }, [manualModalOpen, colombiaLocations]);
 
   useEffect(() => {
     if (!shopifyConnected) return;
@@ -3445,6 +3524,17 @@ export default function MoticoPage() {
                   style={modalFieldStyle}
                 />
               </label>
+              <label style={{ ...labelStyle, display: 'block' }}>
+                Pago anticipado
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={manualDraft.anticipo}
+                  onChange={(e) => setManualDraft((d) => ({ ...d, anticipo: e.target.value }))}
+                  style={modalFieldStyle}
+                  placeholder="0"
+                />
+              </label>
             </div>
             <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
               Estado de pago
@@ -3468,12 +3558,25 @@ export default function MoticoPage() {
             </p>
             <label style={{ ...labelStyle, display: 'block' }}>
               Departamento / provincia
-              <input
-                type="text"
+              <select
                 value={manualDraft.province}
-                onChange={(e) => setManualDraft((d) => ({ ...d, province: e.target.value }))}
-                style={modalFieldStyle}
-              />
+                onChange={(e) => {
+                  const dept = e.target.value;
+                  const row = colombiaLocations.find((d) => d.departamento === dept);
+                  setManualDraft((d) => ({
+                    ...d,
+                    province: dept,
+                    city: row?.ciudades?.[0] || '',
+                  }));
+                }}
+                style={{ ...modalFieldStyle, cursor: 'pointer' }}
+              >
+                {colombiaLocations.map((d) => (
+                  <option key={d.departamento} value={d.departamento}>
+                    {d.departamento}
+                  </option>
+                ))}
+              </select>
             </label>
             <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
               Ciudad
@@ -3482,8 +3585,15 @@ export default function MoticoPage() {
                 onChange={(e) => setManualDraft((d) => ({ ...d, city: e.target.value }))}
                 style={{ ...modalFieldStyle, cursor: 'pointer' }}
               >
-                <option value="BOGOTA">BOGOTA</option>
-                <option value="SOACHA">SOACHA</option>
+                {(
+                  colombiaLocations.find((d) => d.departamento === manualDraft.province)?.ciudades ||
+                  colombiaLocations[0]?.ciudades ||
+                  []
+                ).map((city) => (
+                  <option key={city} value={city}>
+                    {city}
+                  </option>
+                ))}
               </select>
             </label>
             <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>

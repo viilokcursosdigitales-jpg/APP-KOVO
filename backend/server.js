@@ -4893,6 +4893,11 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
     if (!Number.isFinite(total) || total < 0) {
       return res.status(400).json({ error: 'Total no válido' });
     }
+    const anticipoRaw = body.anticipo != null ? String(body.anticipo).replace(',', '.').trim() : '';
+    const anticipo = anticipoRaw === '' ? 0 : Number.parseFloat(anticipoRaw);
+    if (!Number.isFinite(anticipo) || anticipo < 0) {
+      return res.status(400).json({ error: 'Pago anticipado no válido' });
+    }
     const line_items_in = Array.isArray(body.line_items) ? body.line_items : [];
     const note = String(body.note || '').trim().slice(0, 500);
     const parsedLines = [];
@@ -4993,7 +4998,7 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
           .join(' + ')
       : (product_summary_in || 'Producto');
     const product_summary = `${baseSummary}${note ? ` · Observación: ${note}` : ''}`.slice(0, 600);
-    const total_outstanding = financial_status === 'paid' ? 0 : total;
+    const total_outstanding = financial_status === 'paid' ? 0 : Math.max(0, total - anticipo);
 
     let createdAtParam = null;
     if (rawCreated) {
