@@ -2331,6 +2331,7 @@ async function getActiveShopifyConnection(organizationId) {
 const SHOPIFY_INTERNAL_STATUSES = new Set([
   'sin_revisar',
   'sin_confirmar',
+  'motico',
   'confirmado',
   'despachado',
   'prueba',
@@ -2372,6 +2373,19 @@ function moticoPhoneDigitsLocal(raw) {
   let d = String(raw || '').replace(/\D/g, '');
   if (d.startsWith('57') && d.length >= 10) d = d.slice(2);
   return d;
+}
+
+function normalizeCityForMoticoRule(raw) {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+}
+
+function isMoticoEligibleCityName(raw) {
+  const c = normalizeCityForMoticoRule(raw);
+  return c === 'bogota' || c === 'soacha';
 }
 
 /** @param {object} r fila motico_manual_orders */
@@ -3386,7 +3400,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       }
     }
     if (mensajeroFilter === 'motico') {
-      orders = orders.filter((o) => o.mensajero === 'motico');
+      orders = orders.filter((o) => o.mensajero === 'motico' || String(o.internal_status || '') === 'motico');
     }
     const productIdQ = typeof req.query.product_id === 'string' ? req.query.product_id.trim() : '';
     if (productIdQ) {
@@ -4231,6 +4245,27 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       if (!SHOPIFY_INTERNAL_STATUSES.has(s)) {
         return res.status(400).json({ error: 'Estado interno no válido' });
       }
+      if (s === 'motico') {
+        const ordRes = await shopifyRequest(
+          conn.shop_domain,
+          conn.access_token,
+          `orders/${orderId}.json?fields=shipping_address,billing_address`,
+        );
+        if (!ordRes.ok) {
+          return res.status(422).json({ error: ordRes.error || 'No se pudo validar la ciudad del pedido' });
+        }
+        const ord = ordRes.data && ordRes.data.order && typeof ordRes.data.order === 'object' ? ordRes.data.order : {};
+        const sa =
+          ord && ord.shipping_address && typeof ord.shipping_address === 'object'
+            ? ord.shipping_address
+            : ord && ord.billing_address && typeof ord.billing_address === 'object'
+              ? ord.billing_address
+              : {};
+        const city = sa && sa.city != null ? String(sa.city) : '';
+        if (!isMoticoEligibleCityName(city)) {
+          return res.status(400).json({ error: 'Solo se puede para pedidos de Bogotá o Soacha.' });
+        }
+      }
       internal_status = s;
     }
     let price_override = cur.price_override != null ? Number(cur.price_override) : null;
@@ -4265,6 +4300,11 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         }
         mensajero = m;
       }
+    }
+    if (internal_status === 'motico') {
+      mensajero = 'motico';
+    } else if (body.mensajero === undefined && mensajero === 'motico') {
+      mensajero = null;
     }
     let motico_status =
       cur.motico_status != null && String(cur.motico_status) !== ''

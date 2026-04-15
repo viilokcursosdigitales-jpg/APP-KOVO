@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
-import { alpha, ds } from '../design-system/ds';
+import { ds } from '../design-system/ds';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
 import { IconPencil } from '../design-system/icons';
 import {
@@ -31,6 +31,7 @@ const DEMO = [
 const INTERNAL_OPTIONS = [
   { value: 'sin_revisar', label: 'Sin revisar' },
   { value: 'sin_confirmar', label: 'No confirmó' },
+  { value: 'motico', label: 'Motico' },
   { value: 'confirmado', label: 'Confirmado' },
   { value: 'despachado', label: 'Despachado' },
   { value: 'prueba', label: 'Prueba' },
@@ -41,21 +42,13 @@ const INTERNAL_OPTIONS = [
 const ESTADO_SELECT_MIN_WIDTH_CH = Math.max(...INTERNAL_OPTIONS.map((o) => o.label.length), 1) + 3;
 
 type InternalStatusValue = (typeof INTERNAL_OPTIONS)[number]['value'];
-const LOCKED_INTERNAL_STATUSES = new Set<InternalStatusValue>(['despachado', 'cancelado']);
+const LOCKED_INTERNAL_STATUSES = new Set<InternalStatusValue>(['despachado', 'cancelado', 'motico']);
+const HARD_LOCKED_INTERNAL_STATUSES = new Set<InternalStatusValue>(['despachado', 'cancelado']);
 
 function isOrderLockedByInternalStatus(internalStatus: string) {
   const s = String(internalStatus || '').toLowerCase() as InternalStatusValue;
   return LOCKED_INTERNAL_STATUSES.has(s);
 }
-
-const MENSAJERO_OPTIONS = [
-  { value: '', label: '—' },
-  { value: 'motico', label: 'Motico' },
-  { value: 'dropi', label: 'Dropi' },
-  { value: 'effix', label: 'Effix' },
-] as const;
-
-type MensajeroOptionValue = (typeof MENSAJERO_OPTIONS)[number]['value'];
 
 type ShopifyOrderRow = {
   id: number;
@@ -132,6 +125,11 @@ function orderMatchesCityFilter(row: ShopifyOrderRow, selectedKeys: ReadonlySet<
   const k = cityKeyFromRow(row);
   if (!k) return false;
   return selectedKeys.has(k);
+}
+
+function isMoticoEligibleCity(city: string | null | undefined) {
+  const c = normalizeSearchText(city || '');
+  return c === 'bogota' || c === 'soacha';
 }
 
 function normalizeSearchText(v: string) {
@@ -293,6 +291,12 @@ function estadoSelectStyle(internalStatus: string): CSSProperties {
         color: '#9a3412',
         borderColor: '#fdba74',
       };
+    case 'motico':
+      return {
+        background: '#ede9fe',
+        color: '#5b21b6',
+        borderColor: '#c4b5fd',
+      };
     case 'confirmado':
       return {
         background: '#d8f5e4',
@@ -327,45 +331,6 @@ function estadoOptionStyle(value: string): CSSProperties {
   return { backgroundColor: s.background as string, color: s.color as string };
 }
 
-/** Motico = violeta KOVO; Effix = azul claro; Dropi = naranja claro. */
-function mensajeroSelectStyle(value: string | null | undefined): CSSProperties {
-  const v = value || '';
-  if (!v) {
-    return {
-      background: ds.bgSubtle,
-      color: ds.textMuted,
-      borderColor: ds.borderCard,
-    };
-  }
-  switch (v) {
-    case 'motico':
-      return {
-        background: alpha.brand12,
-        color: '#4f36c4',
-        borderColor: alpha.brand35,
-      };
-    case 'effix':
-      return {
-        background: '#dbeafe',
-        color: '#1e3a8a',
-        borderColor: '#93c5fd',
-      };
-    case 'dropi':
-      return {
-        background: '#ffedd5',
-        color: '#c2410c',
-        borderColor: '#fdba74',
-      };
-    default:
-      return {};
-  }
-}
-
-function mensajeroOptionStyle(value: string): CSSProperties {
-  const s = mensajeroSelectStyle(value || null);
-  return { backgroundColor: s.background as string, color: s.color as string };
-}
-
 const inputStyle: CSSProperties = {
   width: '100%',
   maxWidth: 96,
@@ -397,16 +362,13 @@ export default function PedidosPage() {
   const [bulkInternalStatus, setBulkInternalStatus] = useState<InternalStatusValue>('sin_revisar');
   const [bulkStatusApplying, setBulkStatusApplying] = useState(false);
   const [bulkStatusFeedback, setBulkStatusFeedback] = useState('');
-  const [bulkMensajero, setBulkMensajero] = useState<MensajeroOptionValue>('');
-  const [bulkMensajeroApplying, setBulkMensajeroApplying] = useState(false);
-  const [bulkMensajeroFeedback, setBulkMensajeroFeedback] = useState('');
   const [cityMenuOpen, setCityMenuOpen] = useState(false);
   const cityFilterWrapRef = useRef<HTMLDivElement>(null);
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
   const [phoneCopyToastVisible, setPhoneCopyToastVisible] = useState(false);
   const phoneCopyToastTimerRef = useRef<number | null>(null);
 
-  const bulkActionBusy = bulkStatusApplying || bulkMensajeroApplying;
+  const bulkActionBusy = bulkStatusApplying;
 
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
@@ -594,14 +556,26 @@ export default function PedidosPage() {
   }, []);
 
   const applyBulkInternalStatus = useCallback(async () => {
-    const ids = [...selectedOrderIds].filter((id) => {
+    const editableIds = [...selectedOrderIds].filter((id) => {
       const row = shopifyOrders.find((o) => o.id === id);
       return row ? !isOrderLockedByInternalStatus(row.internal_status) : false;
     });
-    if (ids.length === 0) return;
+    if (editableIds.length === 0) return;
+    let ids = editableIds;
+    if (bulkInternalStatus === 'motico') {
+      const eligible = editableIds.filter((id) => {
+        const row = shopifyOrders.find((o) => o.id === id);
+        return row ? isMoticoEligibleCity(row.shippingCity) : false;
+      });
+      if (eligible.length === 0) {
+        setBulkStatusFeedback('Solo se puede pasar a Motico pedidos de Bogotá o Soacha.');
+        window.setTimeout(() => setBulkStatusFeedback(''), 6000);
+        return;
+      }
+      ids = eligible;
+    }
     setBulkStatusApplying(true);
     setBulkStatusFeedback('');
-    setBulkMensajeroFeedback('');
     try {
       const results = await Promise.all(ids.map((id) => patchLocalFields(id, { internal_status: bulkInternalStatus })));
       const ok = results.filter(Boolean).length;
@@ -616,34 +590,6 @@ export default function PedidosPage() {
       setBulkStatusApplying(false);
     }
   }, [selectedOrderIds, shopifyOrders, bulkInternalStatus, patchLocalFields]);
-
-  const applyBulkMensajero = useCallback(async () => {
-    const ids = [...selectedOrderIds].filter((id) => {
-      const row = shopifyOrders.find((o) => o.id === id);
-      return row ? !isOrderLockedByInternalStatus(row.internal_status) : false;
-    });
-    if (ids.length === 0) return;
-    setBulkMensajeroApplying(true);
-    setBulkMensajeroFeedback('');
-    setBulkStatusFeedback('');
-    try {
-      const body = bulkMensajero === '' ? { mensajero: null } : { mensajero: bulkMensajero };
-      const results = await Promise.all(ids.map((id) => patchLocalFields(id, body)));
-      const ok = results.filter(Boolean).length;
-      const fail = ids.length - ok;
-      const label = MENSAJERO_OPTIONS.find((o) => o.value === bulkMensajero)?.label ?? '—';
-      if (fail > 0) {
-        setBulkMensajeroFeedback(`${ok} actualizado(s), ${fail} error(es). Revisa la conexión o vuelve a intentar.`);
-      } else {
-        setBulkMensajeroFeedback(
-          `${ok} pedido${ok === 1 ? '' : 's'} con mensajero ${bulkMensajero === '' ? 'sin asignar' : label}.`,
-        );
-      }
-      window.setTimeout(() => setBulkMensajeroFeedback(''), 6000);
-    } finally {
-      setBulkMensajeroApplying(false);
-    }
-  }, [selectedOrderIds, shopifyOrders, bulkMensajero, patchLocalFields]);
 
   const schedulePriceSave = useCallback(
     (orderId: number, raw: string) => {
@@ -684,6 +630,27 @@ export default function PedidosPage() {
     },
     [patchLocalFields],
   );
+
+  const handleInternalStatusChange = useCallback(
+    async (row: ShopifyOrderRow, nextStatus: string) => {
+      if (nextStatus === 'motico' && !isMoticoEligibleCity(row.shippingCity)) {
+        setShopifyError('Solo se puede para pedidos de Bogotá o Soacha.');
+        return;
+      }
+      await patchLocalFields(row.id, { internal_status: nextStatus });
+    },
+    [patchLocalFields],
+  );
+
+  const handleOpenOrderEdit = useCallback((row: ShopifyOrderRow) => {
+    const st = String(row.internal_status || '').toLowerCase() as InternalStatusValue;
+    if (st === 'motico') {
+      setShopifyError('Edita desde el módulo Motico.');
+      return;
+    }
+    if (HARD_LOCKED_INTERNAL_STATUSES.has(st)) return;
+    window.open(`/pedidos/editar/${row.id}`, '_blank', 'noopener,noreferrer');
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -869,7 +836,7 @@ export default function PedidosPage() {
         title="Pedidos"
         subtitle={
           useLive
-            ? `Tienda Shopify · ${shopDomain}. Sincronización cada ${POLL_MS / 1000} s. Los cambios en estado, precio, cantidad y mensajero se guardan solos.`
+            ? `Tienda Shopify · ${shopDomain}. Sincronización cada ${POLL_MS / 1000} s. Los cambios en estado, precio y cantidad se guardan solos.`
             : 'Conecta Shopify en Canales para ver pedidos reales. Mientras tanto, datos de demostración.'
         }
         right={
@@ -1263,53 +1230,6 @@ export default function PedidosPage() {
                 >
                   {bulkStatusApplying ? 'Aplicando…' : 'Aplicar estado'}
                 </button>
-                <label
-                  style={{
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 8,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    color: ds.textMuted,
-                  }}
-                >
-                  Mensajero
-                  <select
-                    value={bulkMensajero}
-                    onChange={(e) => setBulkMensajero(e.target.value as MensajeroOptionValue)}
-                    disabled={bulkActionBusy}
-                    style={{
-                      ...selectStyle,
-                      ...mensajeroSelectStyle(bulkMensajero || null),
-                      maxWidth: 160,
-                    }}
-                    aria-label="Mensajero a aplicar en masa"
-                  >
-                    {MENSAJERO_OPTIONS.map((opt) => (
-                      <option key={opt.label} value={opt.value} style={mensajeroOptionStyle(opt.value)}>
-                        {opt.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <button
-                  type="button"
-                  disabled={bulkActionBusy}
-                  onClick={() => void applyBulkMensajero()}
-                  style={{
-                    padding: '6px 12px',
-                    borderRadius: 8,
-                    border: `1px solid ${ds.borderCard}`,
-                    background: ds.bgSubtle,
-                    color: ds.textPrimary,
-                    fontSize: 11,
-                    fontWeight: 600,
-                    cursor: bulkMensajeroApplying ? 'wait' : 'pointer',
-                    opacity: bulkActionBusy ? 0.75 : 1,
-                  }}
-                >
-                  {bulkMensajeroApplying ? 'Aplicando…' : 'Aplicar mensajero'}
-                </button>
                 <button
                   type="button"
                   onClick={clearOrderSelection}
@@ -1328,7 +1248,7 @@ export default function PedidosPage() {
                   Quitar selección
                 </button>
               </div>
-              {bulkStatusFeedback || bulkMensajeroFeedback ? (
+              {bulkStatusFeedback ? (
                 <div
                   style={{
                     fontSize: 11,
@@ -1347,15 +1267,6 @@ export default function PedidosPage() {
                       }}
                     >
                       {bulkStatusFeedback}
-                    </div>
-                  ) : null}
-                  {bulkMensajeroFeedback ? (
-                    <div
-                      style={{
-                        color: bulkMensajeroFeedback.includes('error') ? ds.dangerText : ds.textSecondary,
-                      }}
-                    >
-                      {bulkMensajeroFeedback}
                     </div>
                   ) : null}
                 </div>
@@ -1419,7 +1330,6 @@ export default function PedidosPage() {
                   <Th style={orderListTheadStickyCell}>Precio</Th>
                   <Th style={orderListTheadStickyCell}>Cant.</Th>
                   <Th style={orderListTheadStickyCell}>Pago (Shopify)</Th>
-                  <Th style={orderListTheadStickyCell}>Mensajero</Th>
                   {useLive ? <Th style={pedidosEditColTh}>Editar</Th> : null}
                   {useLive ? <Th style={orderListTheadStickyCell} /> : null}
                 </tr>
@@ -1473,9 +1383,9 @@ export default function PedidosPage() {
                                 opacity: isLocked ? 0.72 : 1,
                               }}
                               value={o.internal_status}
-                              onChange={(e) => void patchLocalFields(o.id, { internal_status: e.target.value })}
+                              onChange={(e) => void handleInternalStatusChange(o, e.target.value)}
                               disabled={isLocked}
-                              title={isLocked ? 'Pedido despachado/cancelado: estado bloqueado' : 'Cambiar estado'}
+                              title={isLocked ? 'Pedido bloqueado: estado no editable' : 'Cambiar estado'}
                             >
                               {INTERNAL_OPTIONS.map((opt) => (
                                 <option
@@ -1602,43 +1512,17 @@ export default function PedidosPage() {
                           <Td isLast={i === arr.length - 1}>
                             <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
                           </Td>
-                          <Td isLast={i === arr.length - 1}>
-                            <select
-                              style={{
-                                ...selectStyle,
-                                ...mensajeroSelectStyle(o.mensajero),
-                                cursor: isLocked ? 'not-allowed' : 'pointer',
-                                opacity: isLocked ? 0.72 : 1,
-                              }}
-                              value={o.mensajero || ''}
-                              onChange={(e) =>
-                                void patchLocalFields(o.id, {
-                                  mensajero: e.target.value === '' ? null : e.target.value,
-                                })
-                              }
-                              disabled={isLocked}
-                              title={isLocked ? 'Pedido despachado/cancelado: mensajero bloqueado' : 'Cambiar mensajero'}
-                            >
-                              {MENSAJERO_OPTIONS.map((opt) => (
-                                <option
-                                  key={opt.label}
-                                  value={opt.value}
-                                  style={mensajeroOptionStyle(opt.value)}
-                                >
-                                  {opt.label}
-                                </option>
-                              ))}
-                            </select>
-                          </Td>
                           <Td isLast={i === arr.length - 1} style={pedidosEditColTd}>
                             <button
                               type="button"
-                              onClick={() => window.open(`/pedidos/editar/${o.id}`, '_blank', 'noopener,noreferrer')}
-                              disabled={isLocked}
+                              onClick={() => handleOpenOrderEdit(o)}
+                              disabled={HARD_LOCKED_INTERNAL_STATUSES.has(String(o.internal_status || '').toLowerCase() as InternalStatusValue)}
                               aria-label={`Editar pedido ${o.orderName}`}
                               title={
-                                isLocked
-                                  ? 'Pedido despachado/cancelado: edición bloqueada'
+                                String(o.internal_status || '').toLowerCase() === 'motico'
+                                  ? 'Edita desde el módulo Motico.'
+                                  : HARD_LOCKED_INTERNAL_STATUSES.has(String(o.internal_status || '').toLowerCase() as InternalStatusValue)
+                                    ? 'Pedido despachado/cancelado: edición bloqueada'
                                   : 'Abrir editor en pestaña nueva'
                               }
                               style={{
@@ -1651,8 +1535,13 @@ export default function PedidosPage() {
                                 display: 'inline-flex',
                                 alignItems: 'center',
                                 justifyContent: 'center',
-                                cursor: isLocked ? 'not-allowed' : 'pointer',
-                                opacity: isLocked ? 0.5 : 1,
+                                cursor:
+                                  String(o.internal_status || '').toLowerCase() === 'motico'
+                                    ? 'pointer'
+                                    : HARD_LOCKED_INTERNAL_STATUSES.has(String(o.internal_status || '').toLowerCase() as InternalStatusValue)
+                                      ? 'not-allowed'
+                                      : 'pointer',
+                                opacity: HARD_LOCKED_INTERNAL_STATUSES.has(String(o.internal_status || '').toLowerCase() as InternalStatusValue) ? 0.5 : 1,
                               }}
                             >
                               <IconPencil size={14} />

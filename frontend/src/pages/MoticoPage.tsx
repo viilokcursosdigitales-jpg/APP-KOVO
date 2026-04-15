@@ -573,6 +573,64 @@ function normalizeSearchText(v: string) {
     .trim();
 }
 
+function buildNormalizedIndexMap(source: string) {
+  const normalizedChars: string[] = [];
+  const indexMap: number[] = [];
+  for (let i = 0; i < source.length; i += 1) {
+    const chunk = source[i]!.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    for (let j = 0; j < chunk.length; j += 1) {
+      normalizedChars.push(chunk[j]!);
+      indexMap.push(i);
+    }
+  }
+  return { normalized: normalizedChars.join(''), indexMap };
+}
+
+function highlightText(text: string, rawTerm: string) {
+  const source = String(text || '');
+  const q = String(rawTerm || '').trim();
+  if (!source || !q) return source || '—';
+  const needle = normalizeSearchText(q);
+  if (!needle) return source;
+  const { normalized, indexMap } = buildNormalizedIndexMap(source);
+  const matchRanges: Array<{ start: number; end: number }> = [];
+  let from = 0;
+  while (from < normalized.length) {
+    const at = normalized.indexOf(needle, from);
+    if (at < 0) break;
+    const start = indexMap[at];
+    const lastNormPos = at + needle.length - 1;
+    const end = (indexMap[lastNormPos] ?? source.length - 1) + 1;
+    if (start != null && end > start) {
+      const prev = matchRanges[matchRanges.length - 1];
+      if (prev && start <= prev.end) prev.end = Math.max(prev.end, end);
+      else matchRanges.push({ start, end });
+    }
+    from = at + Math.max(needle.length, 1);
+  }
+  if (!matchRanges.length) return source;
+  const out: JSX.Element[] = [];
+  let cursor = 0;
+  matchRanges.forEach((r, idx) => {
+    if (r.start > cursor) {
+      out.push(<span key={`t-${idx}`}>{source.slice(cursor, r.start)}</span>);
+    }
+    out.push(
+      <mark
+        key={`m-${idx}`}
+        style={{ background: '#fff3b0', color: 'inherit', padding: '0 1px', borderRadius: 2 }}
+      >
+        {source.slice(r.start, r.end)}
+      </mark>,
+    );
+    cursor = r.end;
+  });
+  if (cursor < source.length) {
+    out.push(<span key="t-end">{source.slice(cursor)}</span>);
+  }
+  return out;
+}
+
 function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
   const bv = o.badgeVariant;
   const safeBv = (['success', 'paused', 'error', 'info', 'warning'].includes(bv) ? bv : 'info') as StatusBadgeVariant;
@@ -771,6 +829,14 @@ export default function MoticoPage() {
     const currency = filteredOrders.find((o) => String(o.motico_status || '') === 'despachado')?.currency || templateCurrency || 'COP';
     return { total, count, currency };
   }, [filteredOrders, templateCurrency]);
+
+  const orderStatusKpis = useMemo(() => {
+    const totalPedidos = filteredOrders.length;
+    const pedidosCancelados = filteredOrders.filter((o) => String(o.motico_status || '') === 'cancelado').length;
+    const pedidosNoConfirmo = filteredOrders.filter((o) => String(o.motico_status || '') === 'sin_confirmar').length;
+    const pedidosSinDespachar = Math.max(0, totalPedidos - pedidosCancelados - pedidosNoConfirmo);
+    return { totalPedidos, pedidosCancelados, pedidosSinDespachar };
+  }, [filteredOrders]);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
@@ -1654,6 +1720,24 @@ export default function MoticoPage() {
             value={despachadoKpis.count}
             icon={<IconTruck />}
           />
+          <KpiCard
+            variant="traffic"
+            label="Total pedidos (todos los estados)"
+            value={orderStatusKpis.totalPedidos}
+            icon={<IconTruck />}
+          />
+          <KpiCard
+            variant="alert"
+            label="Pedidos cancelados"
+            value={orderStatusKpis.pedidosCancelados}
+            icon={<IconTruck />}
+          />
+          <KpiCard
+            variant="stock"
+            label="Pedidos sin despachar"
+            value={orderStatusKpis.pedidosSinDespachar}
+            icon={<IconTruck />}
+          />
         </div>
       ) : null}
 
@@ -2497,14 +2581,16 @@ export default function MoticoPage() {
                         </div>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{o.orderName}</div>
-                        <div style={{ fontSize: 10.5, color: ds.textHint }}>{o.email}</div>
+                        <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>
+                          {highlightText(o.orderName, searchTerm)}
+                        </div>
+                        <div style={{ fontSize: 10.5, color: ds.textHint }}>{highlightText(o.email, searchTerm)}</div>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         {formatDate(o.createdAt)}
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        {o.client}
+                        {highlightText(o.client, searchTerm)}
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoPhoneColumnTd}>
                         {o.phoneLocal ? (
@@ -2536,17 +2622,17 @@ export default function MoticoPage() {
                               maxWidth: 'none',
                             }}
                           >
-                            {o.phoneLocal}
+                            {highlightText(o.phoneLocal, searchTerm)}
                           </button>
                         ) : (
                           <span style={{ fontSize: 11, color: ds.textMuted }}>—</span>
                         )}
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <span style={{ fontSize: 11 }}>{sa?.province?.trim() || '—'}</span>
+                        <span style={{ fontSize: 11 }}>{highlightText(sa?.province?.trim() || '—', searchTerm)}</span>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <span style={{ fontSize: 11 }}>{sa?.city?.trim() || '—'}</span>
+                        <span style={{ fontSize: 11 }}>{highlightText(sa?.city?.trim() || '—', searchTerm)}</span>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div
@@ -2557,7 +2643,7 @@ export default function MoticoPage() {
                             color: ds.textSecondary,
                           }}
                         >
-                          {dirLine || '—'}
+                          {highlightText(dirLine || '—', searchTerm)}
                         </div>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
