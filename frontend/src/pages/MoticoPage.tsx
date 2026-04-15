@@ -112,6 +112,14 @@ const MOTICO_PAYMENT_OPTIONS = [
   { value: 'refunded', label: 'Devolución' },
 ] as const;
 type MoticoPaymentStatusValue = (typeof MOTICO_PAYMENT_OPTIONS)[number]['value'];
+const MOTICO_PAYMENT_META: Record<
+  MoticoPaymentStatusValue,
+  { bg: string; fg: string; border: string; fontWeight?: CSSProperties['fontWeight'] }
+> = {
+  pending: { bg: '#ffedd5', fg: '#9a3412', border: '#fdba74' },
+  refunded: { bg: '#fee2e2', fg: '#7f1d1d', border: '#fca5a5' },
+  paid: { bg: '#6c47ff', fg: '#ffffff', border: '#6c47ff', fontWeight: 700 },
+};
 
 function isMoticoStatusLocked(status: string) {
   return MOTICO_LOCKED_STATUSES.has(String(status || '').toLowerCase());
@@ -889,6 +897,20 @@ export default function MoticoPage() {
     const pedidosSinDespachar = Math.max(0, totalPedidos - pedidosCancelados - pedidosNoConfirmo);
     return { totalPedidos, pedidosCancelados, pedidosSinDespachar };
   }, [filteredOrders]);
+
+  const paymentTotalsKpis = useMemo(() => {
+    let totalPagado = 0;
+    let totalPendiente = 0;
+    for (const o of filteredOrders) {
+      const totalPedido = Math.max(0, effectiveOrderTotalAmount(o));
+      const pendiente = Math.max(0, Number(o.total_a_pagar ?? 0));
+      const pagado = Math.max(0, Math.min(totalPedido, totalPedido - pendiente));
+      totalPagado += pagado;
+      totalPendiente += pendiente;
+    }
+    const currency = filteredOrders[0]?.currency || templateCurrency || 'COP';
+    return { totalPagado, totalPendiente, currency };
+  }, [filteredOrders, templateCurrency]);
 
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
 
@@ -1839,6 +1861,18 @@ export default function MoticoPage() {
             value={orderStatusKpis.pedidosSinDespachar}
             icon={<IconTruck />}
           />
+          <KpiCard
+            variant="sales"
+            label="Total pagado"
+            value={formatMoneyAmount(paymentTotalsKpis.totalPagado, paymentTotalsKpis.currency)}
+            icon={<IconCart />}
+          />
+          <KpiCard
+            variant="alert"
+            label="Total pendiente de pago"
+            value={formatMoneyAmount(paymentTotalsKpis.totalPendiente, paymentTotalsKpis.currency)}
+            icon={<IconCart />}
+          />
         </div>
       ) : null}
 
@@ -2577,6 +2611,7 @@ export default function MoticoPage() {
                 {filteredOrders.map((o, i, arr) => {
                   const meta = STATUS_META[o.motico_status] || STATUS_META[MOTICO_STATUS_DEFAULT];
                   const paymentStatus = normalizeMoticoPaymentStatus(o.financialStatus);
+                  const paymentMeta = MOTICO_PAYMENT_META[paymentStatus];
                   const editLocked = isMoticoOrderEditLocked(o);
                   const isDespachadoMotico = String(o.motico_status || '').toLowerCase() === 'despachado';
                   const paymentStatusLocked = String(o.motico_status || '').toLowerCase() === 'cancelado';
@@ -2811,9 +2846,10 @@ export default function MoticoPage() {
                             ...moticoEstadoSelectStyle,
                             minWidth: 132,
                             maxWidth: 160,
-                            background: '#fff',
-                            color: ds.textPrimary,
-                            borderColor: ds.borderCard,
+                            background: paymentMeta.bg,
+                            color: paymentMeta.fg,
+                            borderColor: paymentMeta.border,
+                            fontWeight: paymentMeta.fontWeight ?? 600,
                             cursor: paymentStatusLocked ? 'not-allowed' : 'pointer',
                             opacity: paymentStatusLocked ? 0.72 : 1,
                           }}

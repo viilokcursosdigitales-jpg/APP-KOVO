@@ -512,11 +512,11 @@ export default function InventarioPage() {
               }}
             >
               <div style={{ fontSize: 11, fontWeight: 600, color: ds.textPrimary, marginBottom: 8 }}>
-                Configuración manual de costos
+                Configuración manual de costos Motico
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 8 }}>
                 <label style={{ fontSize: 10.5, color: ds.textMuted }}>
-                  Precio del producto
+                  Costo del producto Motico
                   <div
                     style={{
                       marginTop: 4,
@@ -552,7 +552,7 @@ export default function InventarioPage() {
                   </div>
                 </label>
                 <label style={{ fontSize: 10.5, color: ds.textMuted }}>
-                  Precio del flete promedio
+                  Costo del flete Motico
                   <div
                     style={{
                       marginTop: 4,
@@ -646,7 +646,7 @@ export default function InventarioPage() {
                   cursor: savingPricing[p.id] ? 'wait' : 'pointer',
                 }}
               >
-                {savingPricing[p.id] ? 'Guardando...' : 'Guardar precios'}
+                {savingPricing[p.id] ? 'Guardando...' : 'Guardar costos Motico'}
               </button>
             </div>
           </div>
