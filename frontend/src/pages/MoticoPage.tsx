@@ -600,13 +600,17 @@ function effectiveOrderTotalAmount(o: {
 
 function computeAnticipoAmountFromRow(o: MoticoOrderRow): number {
   const total = effectiveOrderTotalAmount(o);
-  if (o.total_a_pagar_override != null && Number.isFinite(Number(o.total_a_pagar_override))) {
-    const pending = Math.max(0, Number(o.total_a_pagar_override));
-    return Math.max(0, total - pending);
-  }
-  const fin = String(o.financialStatus || '').toLowerCase();
-  if (fin === 'paid') return total;
-  return 0;
+  const pending =
+    o.total_a_pagar != null && Number.isFinite(Number(o.total_a_pagar))
+      ? Math.max(0, Number(o.total_a_pagar))
+      : computedTotalAPagarDefaultFromRow(o);
+  const pagoAlRecibir =
+    o.pago_al_recibir_override != null && Number.isFinite(Number(o.pago_al_recibir_override))
+      ? Math.max(0, Number(o.pago_al_recibir_override))
+      : 0;
+  // Formula solicitada: pendiente = total - anticipo - pago al recibir.
+  // Despejando anticipo: anticipo = total - pendiente - pago al recibir.
+  return Math.max(0, total - pending - pagoAlRecibir);
 }
 
 function normalizeSearchText(v: string) {
@@ -1290,7 +1294,14 @@ export default function MoticoPage() {
         setSyncError('El pedido está bloqueado (cancelado) y no se puede modificar.');
         return;
       }
-      await patchLocalFields(o.id, { payment_status: next });
+      const body: Record<string, unknown> = { payment_status: next };
+      if (next === 'paid') {
+        const pending = Math.max(0, Number(o.total_a_pagar || 0));
+        const pagoAlRecibirActual = Math.max(0, Number(o.pago_al_recibir_override || 0));
+        body.total_a_pagar_override = 0;
+        body.pago_al_recibir_override = pagoAlRecibirActual + pending;
+      }
+      await patchLocalFields(o.id, body);
     },
     [patchLocalFields],
   );

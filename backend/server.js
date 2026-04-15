@@ -2361,6 +2361,20 @@ function normalizeMoticoPaymentStatus(raw) {
   return 'pending';
 }
 
+const PAYMENT_STATUS_MUTABLE_FIELDS_ONLY = new Set([
+  'payment_status',
+  'total_a_pagar_override',
+  'pago_al_recibir_override',
+]);
+
+function isOnlyPaymentStatusMutation(bodyKeys) {
+  return (
+    Array.isArray(bodyKeys) &&
+    bodyKeys.length > 0 &&
+    bodyKeys.every((k) => PAYMENT_STATUS_MUTABLE_FIELDS_ONLY.has(String(k || '').trim()))
+  );
+}
+
 const SHOPIFY_ORDER_LIST_FIELDS =
   'id,name,phone,email,created_at,total_price,total_outstanding,currency,financial_status,fulfillment_status,customer,order_number,line_items,shipping_address,billing_address,landing_site,referring_site,source_name,note_attributes';
 
@@ -3222,7 +3236,6 @@ app.post('/api/hotmart/webhook', async (req, res) => {
 
   try {
     const body = req.body && typeof req.body === 'object' ? req.body : {};
-    const bodyKeys = Object.keys(body);
     const event = String(body.event || '');
     const email = hotmartBuyerEmailFromPayload(body);
     console.log('Hotmart event:', event, email);
@@ -4108,7 +4121,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         return res.status(400).json({ error: 'Los pedidos manuales Motico no se sincronizan con Shopify.' });
       }
       const manualId = -orderIdRaw;
-      const onlyPaymentStatusUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === 'payment_status');
+      const onlyPaymentStatusUpdate = isOnlyPaymentStatusMutation(bodyKeys);
       const { rows: mrows } = await pool.query(
         `SELECT id, price_override, quantity_override, motico_status, financial_status, pago_al_recibir_override, total_a_pagar_override, total_price, product_summary, line_items_json
          FROM motico_manual_orders
@@ -4196,6 +4209,23 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           }
           total_a_pagar_override = bal;
         }
+      }
+      if (
+        body.payment_status !== undefined &&
+        financial_status === 'paid' &&
+        body.total_a_pagar_override === undefined &&
+        body.pago_al_recibir_override === undefined
+      ) {
+        const pendingForReceive =
+          total_a_pagar_override != null && Number.isFinite(Number(total_a_pagar_override))
+            ? Math.max(0, Number(total_a_pagar_override))
+            : shopifyDefaultTotalAPagar({
+                financialStatus: String(cur.financial_status || 'pending'),
+                totalOutstanding: null,
+                total: String(cur.total_price || '0'),
+              });
+        pago_al_recibir_override = Math.max(0, pago_al_recibir_override + pendingForReceive);
+        total_a_pagar_override = 0;
       }
       let line_items_json = Array.isArray(cur.line_items_json) ? cur.line_items_json : [];
       if (typeof cur.line_items_json === 'string') {
@@ -4309,7 +4339,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       [req.organizationId, orderId],
     );
     const cur = existing[0] || {};
-    const onlyPaymentStatusUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === 'payment_status');
+    const onlyPaymentStatusUpdate = isOnlyPaymentStatusMutation(bodyKeys);
     const currentMoticoStatus =
       cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : MOTICO_STATUS_DEFAULT;
     const currentMoticoStatusNormalized = String(currentMoticoStatus || '').toLowerCase();
@@ -4443,6 +4473,19 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         }
         total_a_pagar_override = bal;
       }
+    }
+    if (
+      body.payment_status !== undefined &&
+      payment_status_override === 'paid' &&
+      body.total_a_pagar_override === undefined &&
+      body.pago_al_recibir_override === undefined
+    ) {
+      const pendingForReceive =
+        total_a_pagar_override != null && Number.isFinite(Number(total_a_pagar_override))
+          ? Math.max(0, Number(total_a_pagar_override))
+          : 0;
+      pago_al_recibir_override = Math.max(0, pago_al_recibir_override + pendingForReceive);
+      total_a_pagar_override = 0;
     }
 
     const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override)
