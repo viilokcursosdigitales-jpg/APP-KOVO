@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS shopify_order_local_fields (
   mensajero VARCHAR(32),
   motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
   payment_status_override VARCHAR(32),
+  pago_al_recibir_override NUMERIC(14, 4) NOT NULL DEFAULT 0,
   total_a_pagar_override NUMERIC(14, 4),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (organization_id, shopify_order_id)
@@ -190,6 +191,7 @@ CREATE TABLE IF NOT EXISTS motico_manual_orders (
   price_override NUMERIC(14, 4),
   quantity_override INTEGER,
   motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
+  pago_al_recibir_override NUMERIC(14, 4) NOT NULL DEFAULT 0,
   total_a_pagar_override NUMERIC(14, 4)
 );
 

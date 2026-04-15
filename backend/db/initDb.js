@@ -134,6 +134,9 @@ async function initDb(pool) {
     `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS payment_status_override VARCHAR(32)`,
   );
   await pool.query(
+    `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS pago_al_recibir_override NUMERIC(14, 4) NOT NULL DEFAULT 0`,
+  );
+  await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_shopify_order_local_org ON shopify_order_local_fields (organization_id)`,
   );
 
@@ -219,9 +222,13 @@ async function initDb(pool) {
       price_override NUMERIC(14, 4),
       quantity_override INTEGER,
       motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
+      pago_al_recibir_override NUMERIC(14, 4) NOT NULL DEFAULT 0,
       total_a_pagar_override NUMERIC(14, 4)
     )
   `);
+  await pool.query(
+    `ALTER TABLE motico_manual_orders ADD COLUMN IF NOT EXISTS pago_al_recibir_override NUMERIC(14, 4) NOT NULL DEFAULT 0`,
+  );
   await pool.query(
     `ALTER TABLE motico_manual_orders ALTER COLUMN motico_status SET DEFAULT 'sin_revisar'`,
   );

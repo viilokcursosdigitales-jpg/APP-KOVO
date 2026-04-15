@@ -202,6 +202,7 @@ type MoticoOrderRow = {
   total_a_pagar_override: number | null;
   /** Valor mostrado: override ?? default. */
   total_a_pagar: number;
+  pago_al_recibir_override?: number | null;
   /** Pedido creado en Motico (no existe en Shopify); id negativo en API. */
   is_motico_manual?: boolean;
 };
@@ -720,6 +721,10 @@ function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
         : o.total_a_pagar_override != null && Number.isFinite(Number(o.total_a_pagar_override))
           ? Number(o.total_a_pagar_override)
           : computedTotalAPagarDefaultFromRow(o),
+    pago_al_recibir_override:
+      o.pago_al_recibir_override != null && Number.isFinite(Number(o.pago_al_recibir_override))
+        ? Number(o.pago_al_recibir_override)
+        : 0,
     is_motico_manual: Boolean((o as { is_motico_manual?: boolean }).is_motico_manual),
   };
 }
@@ -1005,6 +1010,7 @@ export default function MoticoPage() {
       badgeVariant?: StatusBadgeVariant | null;
       price_override?: number | null;
       quantity_override?: number | null;
+      pago_al_recibir_override?: number | null;
       total_a_pagar_override?: number | null;
     };
     if (!res.ok) {
@@ -1034,6 +1040,8 @@ export default function MoticoPage() {
           badgeVariant: data.badgeVariant !== undefined && data.badgeVariant !== null ? data.badgeVariant : o.badgeVariant,
           price_override: data.price_override !== undefined ? data.price_override : o.price_override,
           quantity_override: data.quantity_override !== undefined ? data.quantity_override : o.quantity_override,
+          pago_al_recibir_override:
+            data.pago_al_recibir_override !== undefined ? data.pago_al_recibir_override : o.pago_al_recibir_override,
           total_a_pagar_override: nextOverride === undefined ? o.total_a_pagar_override : nextOverride,
           total_a_pagar: Number.isFinite(nextTotalAPagar) ? nextTotalAPagar : o.total_a_pagar,
         };
@@ -1278,6 +1286,10 @@ export default function MoticoPage() {
 
   const onPaymentStatusChange = useCallback(
     async (o: MoticoOrderRow, next: MoticoPaymentStatusValue) => {
+      if (String(o.motico_status || '').toLowerCase() === 'cancelado') {
+        setSyncError('El pedido está bloqueado (cancelado) y no se puede modificar.');
+        return;
+      }
       await patchLocalFields(o.id, { payment_status: next });
     },
     [patchLocalFields],
@@ -2540,9 +2552,10 @@ export default function MoticoPage() {
                     final
                   </Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Total del pedido</Th>
-                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Anticipo</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago anticipado</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pendiente de pago</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Estado de pago</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago al recibir</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Productos</Th>
                   <Th style={{ ...moticoEditColTh, ...orderListTheadStickyCell }} title="Editar pedido">
                     <IconPencil size={14} style={{ opacity: 0.4, display: 'block' }} aria-hidden />
@@ -2554,6 +2567,8 @@ export default function MoticoPage() {
                   const meta = STATUS_META[o.motico_status] || STATUS_META[MOTICO_STATUS_DEFAULT];
                   const paymentStatus = normalizeMoticoPaymentStatus(o.financialStatus);
                   const editLocked = isMoticoOrderEditLocked(o);
+                  const isDespachadoMotico = String(o.motico_status || '').toLowerCase() === 'despachado';
+                  const paymentStatusLocked = String(o.motico_status || '').toLowerCase() === 'cancelado';
                   const sa = o.shippingAddress;
                   const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
                   const showPrice = formatMoneyFromString(
@@ -2763,8 +2778,10 @@ export default function MoticoPage() {
                           aria-label={`Total a pagar pedido ${o.orderName}`}
                           disabled={editLocked}
                           title={
-                            editLocked
-                              ? 'Pedido despachado/cancelado/pagado: total a pagar bloqueado'
+                            isDespachadoMotico
+                              ? 'Pedido despachado: solo puedes cambiar Estado de pago'
+                              : editLocked
+                                ? 'Pedido cancelado/pagado: total a pagar bloqueado'
                               : 'Editar total a pagar'
                           }
                         />
@@ -2781,13 +2798,18 @@ export default function MoticoPage() {
                             background: '#fff',
                             color: ds.textPrimary,
                             borderColor: ds.borderCard,
-                            cursor: 'pointer',
-                            opacity: 1,
+                            cursor: paymentStatusLocked ? 'not-allowed' : 'pointer',
+                            opacity: paymentStatusLocked ? 0.72 : 1,
                           }}
                           value={paymentStatus}
                           onChange={(e) => void onPaymentStatusChange(o, e.target.value as MoticoPaymentStatusValue)}
                           aria-label={`Pago pedido ${o.orderName}`}
-                          title="Cambiar estado de pago"
+                          disabled={paymentStatusLocked}
+                          title={
+                            paymentStatusLocked
+                              ? 'Pedido cancelado: estado de pago bloqueado'
+                              : 'Cambiar estado de pago'
+                          }
                         >
                           {MOTICO_PAYMENT_OPTIONS.map((opt) => (
                             <option key={opt.value} value={opt.value}>
@@ -2795,6 +2817,11 @@ export default function MoticoPage() {
                             </option>
                           ))}
                         </select>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
+                          {formatMoneyAmount(Math.max(0, Number(o.pago_al_recibir_override || 0)), o.currency)}
+                        </div>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div style={{ fontSize: 11, color: ds.textSecondary, lineHeight: 1.35 }}>
@@ -2813,8 +2840,10 @@ export default function MoticoPage() {
                           }}
                           disabled={editLocked}
                           title={
-                            editLocked
-                              ? 'Pedido despachado/cancelado/pagado: edición bloqueada'
+                            isDespachadoMotico
+                              ? 'Pedido despachado: solo puedes cambiar Estado de pago'
+                              : editLocked
+                                ? 'Pedido cancelado/pagado: edición bloqueada'
                               : 'Editar pedido'
                           }
                         >

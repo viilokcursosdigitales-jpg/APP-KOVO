@@ -2485,6 +2485,10 @@ function mapMoticoManualOrderRowFromDb(r) {
     total_a_pagar_override != null && Number.isFinite(total_a_pagar_override)
       ? total_a_pagar_override
       : total_a_pagar_default;
+  const pago_al_recibir_override =
+    r.pago_al_recibir_override != null && Number.isFinite(Number(r.pago_al_recibir_override))
+      ? Number(r.pago_al_recibir_override)
+      : 0;
   const rawPhone = (sa.phone || '').trim();
   const phoneLocal = moticoPhoneDigitsLocal(rawPhone);
   const moticoRaw = r.motico_status;
@@ -2531,6 +2535,7 @@ function mapMoticoManualOrderRowFromDb(r) {
     total_a_pagar_override:
       total_a_pagar_override != null && Number.isFinite(total_a_pagar_override) ? total_a_pagar_override : null,
     total_a_pagar,
+    pago_al_recibir_override,
     assigned_date,
     is_motico_manual: true,
   };
@@ -2667,7 +2672,7 @@ async function loadLocalFieldsMap(organizationId, orderIds) {
   for (let i = 0; i < orderIds.length; i += CHUNK) {
     const slice = orderIds.slice(i, i + CHUNK);
     const { rows } = await pool.query(
-      `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, total_a_pagar_override
+      `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override
        FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = ANY($2::bigint[])`,
       [organizationId, slice],
     );
@@ -3386,6 +3391,10 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         total_a_pagar_override != null && Number.isFinite(total_a_pagar_override)
           ? total_a_pagar_override
           : total_a_pagar_default;
+      const pago_al_recibir_override =
+        lf?.pago_al_recibir_override != null && Number.isFinite(Number(lf.pago_al_recibir_override))
+          ? Number(lf.pago_al_recibir_override)
+          : 0;
       return {
         ...o,
         financialStatus,
@@ -3403,6 +3412,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
           ? total_a_pagar_override
           : null,
         total_a_pagar,
+        pago_al_recibir_override,
         shopifyTotal: o.total,
         shopifyQuantity: o.defaultQuantity,
       };
@@ -3491,6 +3501,10 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
       total_a_pagar_override != null && Number.isFinite(total_a_pagar_override)
         ? total_a_pagar_override
         : total_a_pagar_default;
+    const pago_al_recibir_override =
+      lf?.pago_al_recibir_override != null && Number.isFinite(Number(lf.pago_al_recibir_override))
+        ? Number(lf.pago_al_recibir_override)
+        : 0;
     const enriched = {
       ...o,
       financialStatus,
@@ -3506,6 +3520,7 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
       total_a_pagar_override:
         total_a_pagar_override != null && Number.isFinite(total_a_pagar_override) ? total_a_pagar_override : null,
       total_a_pagar,
+      pago_al_recibir_override,
       shopifyTotal: o.total,
       shopifyQuantity: o.defaultQuantity,
     };
@@ -4087,13 +4102,15 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       return res.status(400).json({ error: 'ID de pedido inválido' });
     }
     const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const bodyKeys = Object.keys(body);
     if (orderIdRaw < 0) {
       if (body.sync_to_shopify === true) {
         return res.status(400).json({ error: 'Los pedidos manuales Motico no se sincronizan con Shopify.' });
       }
       const manualId = -orderIdRaw;
+      const onlyPaymentStatusUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === 'payment_status');
       const { rows: mrows } = await pool.query(
-        `SELECT id, price_override, quantity_override, motico_status, financial_status, total_a_pagar_override, total_price, product_summary, line_items_json
+        `SELECT id, price_override, quantity_override, motico_status, financial_status, pago_al_recibir_override, total_a_pagar_override, total_price, product_summary, line_items_json
          FROM motico_manual_orders
          WHERE id = $1 AND organization_id = $2`,
         [manualId, req.organizationId],
@@ -4104,11 +4121,16 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       const cur = mrows[0];
       const currentMoticoStatus =
         cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : MOTICO_STATUS_DEFAULT;
-      if (LOCKED_MOTICO_STATUSES.has(currentMoticoStatus)) {
-        return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
+      const currentMoticoStatusNormalized = String(currentMoticoStatus || '').toLowerCase();
+      if (currentMoticoStatusNormalized === 'cancelado') {
+        return res.status(409).json({ error: 'El pedido está bloqueado (cancelado) y no se puede modificar.' });
+      }
+      if (currentMoticoStatusNormalized === 'despachado' && !onlyPaymentStatusUpdate) {
+        return res
+          .status(409)
+          .json({ error: 'El pedido está despachado: solo se puede modificar el estado de pago.' });
       }
       const currentPaymentStatus = normalizeMoticoPaymentStatus(cur.financial_status);
-      const onlyPaymentStatusUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === 'payment_status');
       if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate) {
         return res.status(409).json({ error: 'El pedido está bloqueado (pagado) y no se puede modificar.' });
       }
@@ -4155,6 +4177,16 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       }
       let total_a_pagar_override = cur.total_a_pagar_override != null ? Number(cur.total_a_pagar_override) : null;
       if (total_a_pagar_override != null && !Number.isFinite(total_a_pagar_override)) total_a_pagar_override = null;
+      let pago_al_recibir_override =
+        cur.pago_al_recibir_override != null ? Number(cur.pago_al_recibir_override) : 0;
+      if (!Number.isFinite(pago_al_recibir_override) || pago_al_recibir_override < 0) pago_al_recibir_override = 0;
+      if (body.pago_al_recibir_override !== undefined) {
+        const recv = Number(body.pago_al_recibir_override);
+        if (!Number.isFinite(recv) || recv < 0) {
+          return res.status(400).json({ error: 'Pago al recibir no válido' });
+        }
+        pago_al_recibir_override = recv;
+      }
       if (body.total_a_pagar_override !== undefined) {
         if (body.total_a_pagar_override === null) total_a_pagar_override = null;
         else {
@@ -4232,16 +4264,18 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           motico_status = $3,
           total_a_pagar_override = $4,
           financial_status = $5,
-          line_items_json = $6::jsonb,
-          product_summary = $7,
+          pago_al_recibir_override = $6,
+          line_items_json = $7::jsonb,
+          product_summary = $8,
           updated_at = now()
-        WHERE id = $8 AND organization_id = $9`,
+        WHERE id = $9 AND organization_id = $10`,
         [
           price_override,
           quantity_override,
           motico_status,
           total_a_pagar_override,
           financial_status,
+          pago_al_recibir_override,
           JSON.stringify(line_items_json),
           product_summary,
           manualId,
@@ -4259,6 +4293,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         financial_status,
         label: paymentBadge.label,
         badgeVariant: paymentBadge.variant,
+        pago_al_recibir_override,
         total_a_pagar_override,
       });
     }
@@ -4269,15 +4304,20 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       return res.status(400).json({ error: 'No hay tienda conectada', code: 'not_connected' });
     }
     const { rows: existing } = await pool.query(
-      `SELECT internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, total_a_pagar_override
+      `SELECT internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override
        FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = $2`,
       [req.organizationId, orderId],
     );
     const cur = existing[0] || {};
+    const onlyPaymentStatusUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === 'payment_status');
     const currentMoticoStatus =
       cur.motico_status != null && String(cur.motico_status) !== '' ? String(cur.motico_status) : MOTICO_STATUS_DEFAULT;
-    if (LOCKED_MOTICO_STATUSES.has(currentMoticoStatus)) {
-      return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
+    const currentMoticoStatusNormalized = String(currentMoticoStatus || '').toLowerCase();
+    if (currentMoticoStatusNormalized === 'cancelado') {
+      return res.status(409).json({ error: 'El pedido está bloqueado (cancelado) y no se puede modificar.' });
+    }
+    if (currentMoticoStatusNormalized === 'despachado' && !onlyPaymentStatusUpdate) {
+      return res.status(409).json({ error: 'El pedido está despachado: solo se puede modificar el estado de pago.' });
     }
     const currentInternalStatus =
       cur.internal_status != null && String(cur.internal_status) !== ''
@@ -4287,7 +4327,6 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
     }
     const currentPaymentStatus = normalizeMoticoPaymentStatus(cur.payment_status_override);
-    const onlyPaymentStatusUpdate = bodyKeys.length > 0 && bodyKeys.every((k) => k === 'payment_status');
     if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate) {
       return res.status(409).json({ error: 'El pedido está bloqueado (pagado) y no se puede modificar.' });
     }
@@ -4385,6 +4424,16 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
 
     let total_a_pagar_override = cur.total_a_pagar_override != null ? Number(cur.total_a_pagar_override) : null;
     if (total_a_pagar_override != null && !Number.isFinite(total_a_pagar_override)) total_a_pagar_override = null;
+    let pago_al_recibir_override =
+      cur.pago_al_recibir_override != null ? Number(cur.pago_al_recibir_override) : 0;
+    if (!Number.isFinite(pago_al_recibir_override) || pago_al_recibir_override < 0) pago_al_recibir_override = 0;
+    if (body.pago_al_recibir_override !== undefined) {
+      const recv = Number(body.pago_al_recibir_override);
+      if (!Number.isFinite(recv) || recv < 0) {
+        return res.status(400).json({ error: 'Pago al recibir no válido' });
+      }
+      pago_al_recibir_override = recv;
+    }
     if (body.total_a_pagar_override !== undefined) {
       if (body.total_a_pagar_override === null) total_a_pagar_override = null;
       else {
@@ -4396,8 +4445,8 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       }
     }
 
-    const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, total_a_pagar_override)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+    const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (organization_id, shopify_order_id) DO UPDATE SET
          internal_status = EXCLUDED.internal_status,
          price_override = EXCLUDED.price_override,
@@ -4405,6 +4454,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
          mensajero = EXCLUDED.mensajero,
          motico_status = EXCLUDED.motico_status,
          payment_status_override = EXCLUDED.payment_status_override,
+         pago_al_recibir_override = EXCLUDED.pago_al_recibir_override,
          total_a_pagar_override = EXCLUDED.total_a_pagar_override,
          updated_at = now()`;
     const insertParams = [
@@ -4416,6 +4466,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       mensajero,
       motico_status,
       payment_status_override,
+      pago_al_recibir_override,
       total_a_pagar_override,
     ];
     let variant_id = null;
@@ -4490,6 +4541,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       financial_status: payment_status_override || null,
       label: payment_status_override ? mapFinancialToBadge(payment_status_override).label : null,
       badgeVariant: payment_status_override ? mapFinancialToBadge(payment_status_override).variant : null,
+      pago_al_recibir_override,
       total_a_pagar_override,
     });
   } catch (e) {
