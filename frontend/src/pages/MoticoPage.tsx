@@ -841,12 +841,13 @@ export default function MoticoPage() {
 
   const buildLabelFromOrder = useCallback(
     (o: MoticoOrderRow): MoticoGuideLabelData => {
-      const lineItems: MoticoLineItemRow[] = (o.lineItemsDetail || []).map((li, idx) => {
-        if (idx === 0 && o.quantity_override != null) {
-          return { ...li, quantity: o.quantity_override };
-        }
-        return li;
-      });
+      const lineItems: MoticoLineItemRow[] = (o.lineItemsDetail || []).map((li, idx) => ({
+        title: li.title,
+        name: li.name,
+        variant_title: li.variant_title,
+        quantity: idx === 0 && o.quantity_override != null ? o.quantity_override : li.quantity,
+        properties: li.properties,
+      }));
       const totalStr = String(o.price_override != null ? o.price_override : o.total);
       const totalAmount = Number.parseFloat(totalStr);
       return buildMoticoGuideLabelData({
@@ -855,7 +856,7 @@ export default function MoticoPage() {
         shipping: o.shippingAddress,
         lineItems: lineItems.length
           ? lineItems
-          : [{ title: summarizeProducts(o.productIds), quantity: o.defaultQuantity, price: '' }],
+          : [{ title: summarizeProducts(o.productIds), quantity: o.defaultQuantity }],
         totalAmount: Number.isFinite(totalAmount) ? totalAmount : 0,
         currency: templateCurrency,
         fallbackProductSummary: summarizeProducts(o.productIds),

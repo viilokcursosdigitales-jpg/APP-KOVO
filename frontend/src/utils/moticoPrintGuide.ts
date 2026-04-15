@@ -1,3 +1,5 @@
+import { mapLineItemToExportLine, type MoticoGuideLineSource } from './moticoGuidesExcelExport';
+
 export type MoticoShippingAddress = {
   name: string;
   address1: string;
@@ -9,11 +11,8 @@ export type MoticoShippingAddress = {
   phone: string;
 };
 
-export type MoticoLineItemRow = {
-  title: string;
-  quantity: number;
-  price: string;
-};
+/** Misma forma que el Excel de guías (incluye variante, props y cantidad). */
+export type MoticoLineItemRow = MoticoGuideLineSource;
 
 /** Datos de una guía (una franja horizontal por pedido). */
 export type MoticoGuideLabelData = {
@@ -106,17 +105,30 @@ export function formatValorCobrarDisplay(amount: number, currency: string): stri
   }
 }
 
-/** Texto tipo “1 BODY CALI, 2 OTRO” en mayúsculas. */
+/**
+ * Observación de guía: por línea → cantidad, nombre de producto, nombre de variable (variante u opciones) y talla.
+ * En mayúsculas, separado con " · " entre partes y ", " entre líneas.
+ */
 export function buildObservacionLine(
-  lineItems: MoticoLineItemRow[],
+  lineItems: MoticoGuideLineSource[],
   fallbackTitle: string,
   fallbackQty: number,
 ): string {
   if (lineItems.length) {
-    return lineItems
-      .map((li) => `${li.quantity} ${li.title}`.trim())
-      .join(', ')
-      .toUpperCase();
+    const lines = lineItems.map((li) => {
+      const m = mapLineItemToExportLine(li);
+      const producto =
+        String(m.producto || '').trim() || String(li.title || li.name || '').trim() || 'Producto';
+      const variable =
+        String(li.variant_title || '').trim() ||
+        [m.diseño, m.color].filter((x) => String(x || '').trim()).join(' / ');
+      const talla = String(m.talla || '').trim();
+      const parts: string[] = [`${li.quantity} ${producto}`.trim()];
+      if (variable) parts.push(variable);
+      if (talla) parts.push(talla);
+      return parts.join(' · ');
+    });
+    return lines.join(', ').toUpperCase();
   }
   return `${fallbackQty} ${fallbackTitle}`.trim().toUpperCase();
 }
@@ -125,7 +137,7 @@ export function buildMoticoGuideLabelData(opts: {
   orderName: string;
   client: string;
   shipping: MoticoShippingAddress | null;
-  lineItems: MoticoLineItemRow[];
+  lineItems: MoticoGuideLineSource[];
   totalAmount: number;
   currency: string;
   fallbackProductSummary: string;
