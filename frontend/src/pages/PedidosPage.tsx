@@ -1743,7 +1743,6 @@ export default function PedidosPage() {
                         <Td isLast={i === arr.length - 1}>
                           <StatusBadge variant={o.st}>{o.lb}</StatusBadge>
                         </Td>
-                        <Td isLast={i === arr.length - 1}>—</Td>
                       </tr>
                     ))}
               </tbody>
