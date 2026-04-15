@@ -38,6 +38,11 @@ const INTERNAL_OPTIONS = [
   { value: 'prueba', label: 'Prueba' },
   { value: 'cancelado', label: 'Cancelado' },
 ] as const;
+const MENSAJERO_OPTIONS = [
+  { value: 'motico', label: 'Motico' },
+  { value: 'effix', label: 'Efiix' },
+  { value: 'dropi', label: 'Dropi' },
+] as const;
 
 /** Ancho mínimo del desplegable Estado según la etiqueta más larga (+ flecha). */
 const ESTADO_SELECT_MIN_WIDTH_CH = Math.max(...INTERNAL_OPTIONS.map((o) => o.label.length), 1) + 3;
@@ -328,6 +333,19 @@ function estadoSelectStyle(internalStatus: string): CSSProperties {
 
 function estadoOptionStyle(value: string): CSSProperties {
   const s = estadoSelectStyle(value);
+  return { backgroundColor: s.background as string, color: s.color as string };
+}
+
+function mensajeroSelectStyle(mensajero: string | null | undefined): CSSProperties {
+  const v = String(mensajero || '').toLowerCase();
+  if (v === 'motico') return { background: '#ede9fe', color: '#5b21b6', borderColor: '#c4b5fd' };
+  if (v === 'effix') return { background: '#e0f2fe', color: '#075985', borderColor: '#7dd3fc' };
+  if (v === 'dropi') return { background: '#dcfce7', color: '#166534', borderColor: '#86efac' };
+  return {};
+}
+
+function mensajeroOptionStyle(value: string): CSSProperties {
+  const s = mensajeroSelectStyle(value);
   return { backgroundColor: s.background as string, color: s.color as string };
 }
 
@@ -642,6 +660,13 @@ export default function PedidosPage() {
         return;
       }
       await patchLocalFields(row.id, { internal_status: nextStatus });
+    },
+    [patchLocalFields],
+  );
+
+  const handleMensajeroChange = useCallback(
+    async (row: ShopifyOrderRow, nextMensajero: string) => {
+      await patchLocalFields(row.id, { mensajero: nextMensajero || null });
     },
     [patchLocalFields],
   );
@@ -1362,7 +1387,7 @@ export default function PedidosPage() {
           <div style={{ padding: 24, color: ds.textMuted, fontSize: 13 }}>Cargando pedidos de Shopify…</div>
         ) : (
           <div style={orderListTableScrollWrapperStyle}>
-            <table style={{ ...tableBase, tableLayout: 'auto', minWidth: useLive ? 1650 : 1080 }}>
+            <table style={{ ...tableBase, tableLayout: 'auto', minWidth: useLive ? 1760 : 1080 }}>
               <thead>
                 <tr>
                   {useLive ? (
@@ -1408,6 +1433,7 @@ export default function PedidosPage() {
                       <Th style={orderListTheadStickyCell}>Ciudad</Th>
                       <Th style={orderListTheadStickyCell}>Departamento</Th>
                       <Th style={orderListTheadStickyCell}>Dirección</Th>
+                      <Th style={orderListTheadStickyCell}>Mensajero</Th>
                     </>
                   ) : null}
                   <Th style={orderListTheadStickyCell}>Precio</Th>
@@ -1546,6 +1572,27 @@ export default function PedidosPage() {
                             >
                               {highlightText(o.shippingAddressLine?.trim() || '—', searchTerm)}
                             </div>
+                          </Td>
+                          <Td isLast={i === arr.length - 1}>
+                            <select
+                              style={{
+                                ...selectStyle,
+                                ...mensajeroSelectStyle(o.mensajero),
+                                cursor: isLocked ? 'not-allowed' : 'pointer',
+                                opacity: isLocked ? 0.72 : 1,
+                              }}
+                              value={String(o.mensajero || '')}
+                              onChange={(e) => void handleMensajeroChange(o, e.target.value)}
+                              disabled={isLocked}
+                              title={isLocked ? 'Pedido bloqueado: mensajero no editable' : 'Cambiar mensajero'}
+                            >
+                              <option value="">Sin asignar</option>
+                              {MENSAJERO_OPTIONS.map((opt) => (
+                                <option key={opt.value} value={opt.value} style={mensajeroOptionStyle(opt.value)}>
+                                  {opt.label}
+                                </option>
+                              ))}
+                            </select>
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <input
