@@ -82,11 +82,18 @@ function oneStripHtml(logoDataUrl: string | null, row: MoticoGuideLabelData): st
           <td>${esc(row.valorCobrar)}</td>
         </tr>
         <tr>
-          <th scope="row" class="th-obs"><strong>Observación</strong></th>
+          <th scope="row" class="th-obs">Observación</th>
           <td>${esc(row.observacion)}</td>
         </tr>
       </tbody>
     </table>
+  </div>`;
+}
+
+function cutSeparatorHtml(): string {
+  return `
+  <div class="guide-cut-sep" aria-hidden="true">
+    <span class="guide-cut-sep-text">✂ Cortar por aquí</span>
   </div>`;
 }
 
@@ -107,6 +114,19 @@ export function formatValorCobrarDisplay(amount: number, currency: string): stri
   } catch {
     return `${amount.toFixed(2)} ${currency}`;
   }
+}
+
+function phoneWithoutColombia57(raw: string): string {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  const digits = s.replace(/[^\d+]/g, '');
+  const plus = digits.startsWith('+') ? digits : `+${digits.replace(/[^\d]/g, '')}`;
+  const m = plus.match(/^\+?57(\d{7,12})$/);
+  if (m && m[1]) return m[1];
+  // Fallback: solo dígitos, sin prefijo 57 si viene repetido
+  const just = s.replace(/\D/g, '');
+  if (just.startsWith('57') && just.length > 10) return just.slice(2);
+  return just;
 }
 
 /**
@@ -151,7 +171,8 @@ export function buildMoticoGuideLabelData(opts: {
   const direccion = dirParts.join(' ').trim() || '—';
   const ciudadRaw = ship?.city || ship?.province || '';
   const ciudad = ciudadRaw ? ciudadRaw.toUpperCase() : '—';
-  const celular = (ship?.phone && String(ship.phone).trim()) || '—';
+  const celularRaw = (ship?.phone && String(ship.phone).trim()) || '';
+  const celular = phoneWithoutColombia57(celularRaw) || '—';
   const valorCobrar = formatValorCobrarDisplay(opts.totalAmount, opts.currency);
   const observacion = buildObservacionLine(opts.lineItems, opts.fallbackProductSummary, opts.defaultQuantity);
   return {
@@ -178,7 +199,13 @@ function buildBatchPrintDocument(
   const pages = chunk(labels, GUIAS_POR_HOJA);
   const pagesHtml = pages
     .map((pageRows) => {
-      const strips = pageRows.map((row) => oneStripHtml(logoDataUrl, row)).join('\n');
+      const strips = pageRows
+        .map((row, idx) => {
+          const strip = oneStripHtml(logoDataUrl, row);
+          const sep = idx < pageRows.length - 1 ? cutSeparatorHtml() : '';
+          return `${strip}${sep}`;
+        })
+        .join('\n');
       return `<section class="print-page">${strips}</section>`;
     })
     .join('\n');
@@ -274,7 +301,7 @@ function buildBatchPrintDocument(
       width: 100%;
       display: flex;
       flex-direction: column;
-      gap: 0.08in;
+      gap: 0;
       justify-content: flex-start;
       page-break-after: always;
       page-break-inside: avoid;
@@ -291,6 +318,30 @@ function buildBatchPrintDocument(
       border: 1px solid #000;
       page-break-inside: avoid;
     }
+    .guide-cut-sep {
+      flex: 0 0 auto;
+      height: 0.08in;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #9ca3af; /* gris claro */
+      font-size: 8pt;
+      line-height: 1;
+      user-select: none;
+    }
+    .guide-cut-sep-text {
+      position: relative;
+      padding: 0 10px;
+      background: #fff;
+    }
+    .guide-cut-sep::before,
+    .guide-cut-sep::after {
+      content: "";
+      flex: 1 1 auto;
+      border-top: 1px dotted #cbd5e1;
+    }
+    .guide-cut-sep::before { margin-right: 10px; }
+    .guide-cut-sep::after { margin-left: 10px; }
     /* Celda izquierda = ~18% del ancho útil de carta; altura = franja (1.88in). Sin tope estrecho para que el logo use todo el hueco. */
     .guide-logo-cell {
       flex: 0 0 18%;
