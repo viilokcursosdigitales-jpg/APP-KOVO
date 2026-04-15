@@ -196,6 +196,22 @@ const thColHeadPedidos: CSSProperties = {
   hyphens: 'manual',
 };
 
+/** Ventas despachadas: ancho al texto más largo (encabezado o celdas) + 20px lateral. */
+const thColHeadVentasDespachadas: CSSProperties = {
+  ...thRight,
+  paddingTop: 8,
+  paddingBottom: 8,
+  paddingLeft: 20,
+  paddingRight: 20,
+  boxSizing: 'border-box',
+  width: '1%',
+  verticalAlign: 'bottom',
+  lineHeight: 1.25,
+  whiteSpace: 'normal',
+  wordBreak: 'normal',
+  hyphens: 'manual',
+};
+
 /** Cantidad / producto: ancho = palabra más larga del encabezado + 20px lateral. */
 const thColHeadCantidad: CSSProperties = {
   ...thRight,
@@ -227,6 +243,8 @@ const tdColRight: CSSProperties = {
   textAlign: 'right',
   fontVariantNumeric: 'tabular-nums',
 };
+
+const tdColVentasDespachadas: CSSProperties = { ...tdColRight };
 
 const tdColPedidos: CSSProperties = {
   ...tdStyle,
@@ -738,10 +756,9 @@ export default function GananciaDiariaPage() {
                   <thead>
                     <tr style={{ background: '#6c47ff' }}>
                       <th style={thColHeadLeft}>Día</th>
-                      <th style={thColHeadRight}>
-                        Ventas
-                        <br />
-                        despachadas
+                      <th style={thColHeadVentasDespachadas}>
+                        <span style={{ display: 'block', whiteSpace: 'nowrap' }}>Ventas</span>
+                        <span style={{ display: 'block', whiteSpace: 'nowrap' }}>despachadas</span>
                       </th>
                       <th style={thColHeadRight}>
                         Ventas
@@ -798,7 +815,7 @@ export default function GananciaDiariaPage() {
                       return (
                         <tr key={row.date} style={rowBg !== 'transparent' ? { background: rowBg } : undefined}>
                           <td style={tdColLeft}>{formatTableDate(row.date)}</td>
-                        <td style={tdColRight}>
+                        <td style={tdColVentasDespachadas}>
                           {formatMoney(row.ventas_despachadas_total, seriesVentasCur)}
                         </td>
                         <td style={tdColRight}>
@@ -837,7 +854,7 @@ export default function GananciaDiariaPage() {
                   <tfoot>
                     <tr style={{ background: ds.bgSubtle }}>
                       <td style={{ ...tdColLeft, fontWeight: 700 }}>Total período</td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
+                      <td style={{ ...tdColVentasDespachadas, fontWeight: 700 }}>
                         {formatMoney(totals.ventas, seriesVentasCur)}
                       </td>
                       <td style={{ ...tdColRight, fontWeight: 700 }}>
