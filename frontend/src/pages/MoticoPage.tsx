@@ -810,6 +810,9 @@ export default function MoticoPage() {
   const [editorOrder, setEditorOrder] = useState<MoticoOrderRow | null>(null);
   const [editorDraft, setEditorDraft] = useState<MoticoEditorDraft>(() => emptyEditorDraft());
   const [editorSaving, setEditorSaving] = useState(false);
+  const [unlockOrder, setUnlockOrder] = useState<MoticoOrderRow | null>(null);
+  const [unlockReason, setUnlockReason] = useState('');
+  const [unlocking, setUnlocking] = useState(false);
 
   const [manualModalOpen, setManualModalOpen] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualCreateDraft>(() => emptyManualDraft());
@@ -1369,6 +1372,12 @@ export default function MoticoPage() {
   );
 
   const openOrderEditor = useCallback((o: MoticoOrderRow) => {
+    if (String(o.motico_status || '').toLowerCase() === 'despachado') {
+      setUnlockOrder(o);
+      setUnlockReason('');
+      setSyncError('');
+      return;
+    }
     if (isMoticoOrderEditLocked(o)) {
       setSyncError('El pedido está bloqueado (despachado/cancelado/pagado) y no se puede editar.');
       return;
@@ -1377,6 +1386,30 @@ export default function MoticoPage() {
     setEditorDraft(draftFromOrder(o));
     setEditorOrder(o);
   }, []);
+
+  const submitUnlockDespachado = useCallback(async () => {
+    if (!unlockOrder) return;
+    const reason = unlockReason.trim();
+    if (reason.length < 5) {
+      setSyncError('Escribe un motivo de desbloqueo (mínimo 5 caracteres).');
+      return;
+    }
+    setUnlocking(true);
+    try {
+      const ok = await patchLocalFields(unlockOrder.id, {
+        motico_status: 'sin_revisar',
+        unlock_reason: reason,
+      });
+      if (!ok) return;
+      const unlockedShadow = normalizeRow({ ...unlockOrder, motico_status: 'sin_revisar' });
+      setUnlockOrder(null);
+      setUnlockReason('');
+      setEditorDraft(draftFromOrder(unlockedShadow));
+      setEditorOrder(unlockedShadow);
+    } finally {
+      setUnlocking(false);
+    }
+  }, [patchLocalFields, unlockOrder, unlockReason]);
 
   const saveOrderEditor = useCallback(async () => {
     if (!editorOrder) return;
@@ -2685,6 +2718,7 @@ export default function MoticoPage() {
                   const paymentMeta = MOTICO_PAYMENT_META[paymentStatus];
                   const editLocked = isMoticoOrderEditLocked(o);
                   const isDespachadoMotico = String(o.motico_status || '').toLowerCase() === 'despachado';
+                  const editButtonDisabled = editLocked && !isDespachadoMotico;
                   const paymentStatusLocked = String(o.motico_status || '').toLowerCase() === 'cancelado';
                   const sa = o.shippingAddress;
                   const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
@@ -2953,13 +2987,13 @@ export default function MoticoPage() {
                           onClick={() => openOrderEditor(o)}
                           style={{
                             ...moticoOrderEditIconBtn,
-                            cursor: editLocked ? 'not-allowed' : 'pointer',
-                            opacity: editLocked ? 0.5 : 1,
+                            cursor: editButtonDisabled ? 'not-allowed' : 'pointer',
+                            opacity: editButtonDisabled ? 0.5 : 1,
                           }}
-                          disabled={editLocked}
+                          disabled={editButtonDisabled}
                           title={
                             isDespachadoMotico
-                              ? 'Pedido despachado: solo puedes cambiar Estado de pago'
+                              ? 'Pedido despachado: responde motivo y desbloquea para editar'
                               : editLocked
                                 ? 'Pedido cancelado/pagado: edición bloqueada'
                               : 'Editar pedido'
@@ -2986,6 +3020,99 @@ export default function MoticoPage() {
           </div>
         ) : null}
       </DataTable>
+
+      {unlockOrder ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.18)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(560px, calc(100vw - 28px))',
+              maxHeight: 'calc(100vh - 36px)',
+              overflowY: 'auto',
+              background: ds.bgCard,
+              border: `1px solid ${ds.borderCard}`,
+              borderRadius: 14,
+              boxShadow: '0 16px 44px rgba(15,23,42,0.16)',
+              padding: 18,
+            }}
+          >
+            <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>Desbloquear pedido despachado</h3>
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.4 }}>
+              Pedido <strong>{unlockOrder.orderName}</strong>. Para editarlo debes responder el motivo de desbloqueo.
+            </p>
+            <label style={{ display: 'block', fontSize: 12, color: ds.textSecondary, fontWeight: 600 }}>
+              Motivo de desbloqueo *
+              <textarea
+                value={unlockReason}
+                onChange={(e) => setUnlockReason(e.target.value)}
+                placeholder="Escribe el motivo del desbloqueo..."
+                style={{
+                  marginTop: 6,
+                  width: '100%',
+                  minHeight: 94,
+                  borderRadius: 10,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgSubtle,
+                  color: ds.textPrimary,
+                  padding: '10px 11px',
+                  fontSize: 13,
+                  resize: 'vertical',
+                }}
+              />
+            </label>
+            <div style={{ display: 'flex', gap: 10, marginTop: 14, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (unlocking) return;
+                  setUnlockOrder(null);
+                  setUnlockReason('');
+                }}
+                disabled={unlocking}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textSecondary,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: unlocking ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitUnlockDespachado()}
+                disabled={unlocking}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: ds.brand,
+                  color: '#fff',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: unlocking ? 'wait' : 'pointer',
+                  opacity: unlocking ? 0.85 : 1,
+                }}
+              >
+                {unlocking ? 'Desbloqueando…' : 'Desbloquear'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {editorOrder ? (
         <div
