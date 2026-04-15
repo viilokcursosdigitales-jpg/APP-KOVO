@@ -1424,6 +1424,7 @@ export default function PedidosPage() {
                   >
                     Estado
                   </Th>
+                  {useLive ? <Th style={orderListTheadStickyCell}>Mensajero</Th> : null}
                   <Th style={orderListTheadStickyCell}>Pedido</Th>
                   <Th style={orderListTheadStickyCell}>Fecha</Th>
                   <Th style={orderListTheadStickyCell}>Cliente</Th>
@@ -1433,7 +1434,6 @@ export default function PedidosPage() {
                       <Th style={orderListTheadStickyCell}>Ciudad</Th>
                       <Th style={orderListTheadStickyCell}>Departamento</Th>
                       <Th style={orderListTheadStickyCell}>Dirección</Th>
-                      <Th style={orderListTheadStickyCell}>Mensajero</Th>
                     </>
                   ) : null}
                   <Th style={orderListTheadStickyCell}>Precio</Th>
