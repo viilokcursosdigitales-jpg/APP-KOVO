@@ -2554,8 +2554,8 @@ export default function MoticoPage() {
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Total del pedido</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago anticipado</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pendiente de pago</Th>
-                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Estado de pago</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago al recibir</Th>
+                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Estado de pago</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Productos</Th>
                   <Th style={{ ...moticoEditColTh, ...orderListTheadStickyCell }} title="Editar pedido">
                     <IconPencil size={14} style={{ opacity: 0.4, display: 'block' }} aria-hidden />
@@ -2790,6 +2790,11 @@ export default function MoticoPage() {
                         </div>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
+                          {formatMoneyAmount(Math.max(0, Number(o.pago_al_recibir_override || 0)), o.currency)}
+                        </div>
+                      </Td>
+                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <select
                           style={{
                             ...moticoEstadoSelectStyle,
@@ -2817,11 +2822,6 @@ export default function MoticoPage() {
                             </option>
                           ))}
                         </select>
-                      </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
-                          {formatMoneyAmount(Math.max(0, Number(o.pago_al_recibir_override || 0)), o.currency)}
-                        </div>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div style={{ fontSize: 11, color: ds.textSecondary, lineHeight: 1.35 }}>
