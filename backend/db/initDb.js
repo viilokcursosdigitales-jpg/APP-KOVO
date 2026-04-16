@@ -139,6 +139,12 @@ async function initDb(pool) {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_shopify_order_local_org ON shopify_order_local_fields (organization_id)`,
   );
+  await pool.query(
+    `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS shipping_address_override JSONB`,
+  );
+  await pool.query(
+    `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS line_items_override_json JSONB`,
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS meta_campaign_product_links (

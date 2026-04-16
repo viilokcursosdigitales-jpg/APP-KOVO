@@ -1590,8 +1590,8 @@ export default function MoticoPage() {
           patchBody.quantity_override = qNum;
         }
       } else {
-        /** Pedidos de tienda: solo KOVO (`shopify_order_local_fields`), sin `sync_to_shopify`. */
-        const normalizedShopifyLines = editorDraft.line_items
+        /** Pedidos de tienda: líneas y totales solo en KOVO (no se escribe en Shopify). */
+        const normalizedStoreItems = editorDraft.line_items
           .map((line) => {
             const pid = Number(line.product_id);
             if (!Number.isFinite(pid) || pid <= 0) return null;
@@ -1605,16 +1605,25 @@ export default function MoticoPage() {
             if (!Number.isFinite(qty) || qty < 1) return null;
             const vid = Number(selectedVariant.id);
             if (!Number.isFinite(vid) || vid <= 0) return null;
-            return { quantity: qty };
+            return {
+              product_id: pid,
+              variant_id: vid,
+              title: String(product.title || 'Producto').trim() || 'Producto',
+              variant_title: String(selectedVariant.title || '').trim(),
+              sku: String(selectedVariant.sku || '').trim(),
+              barcode: String(selectedVariant.barcode || '').trim(),
+              quantity: qty,
+            };
           })
           .filter(Boolean);
 
-        if (normalizedShopifyLines.length > 0) {
-          const sumQ = normalizedShopifyLines.reduce((s, li) => s + li.quantity, 0);
+        if (normalizedStoreItems.length > 0) {
+          const sumQ = normalizedStoreItems.reduce((s, li) => s + li.quantity, 0);
           if (!Number.isFinite(sumQ) || sumQ < 1) {
             setSyncError('La suma de cantidades por línea debe ser al menos 1');
             return;
           }
+          patchBody.line_items = normalizedStoreItems;
           patchBody.quantity_override = sumQ;
         } else if (qt === '') {
           patchBody.quantity_override = null;
@@ -2031,7 +2040,7 @@ export default function MoticoPage() {
         title="Motico"
         subtitle={
           useLive
-            ? `Pedidos con mensajero Motico · ${shopDomain}. Precio y cantidad se sincronizan con Shopify (primera línea del pedido).`
+            ? `Pedidos con mensajero Motico · ${shopDomain}. Los datos vienen de Shopify; las ediciones se guardan solo en KOVO.`
             : 'Conecta Shopify en Canales. Asigna Motico en Pedidos.'
         }
         right={
@@ -3596,7 +3605,7 @@ export default function MoticoPage() {
               {editorOrder.orderName} ·{' '}
               {editorOrder.is_motico_manual || editorOrder.id < 0
                 ? 'Dirección, precio y cantidad se guardan solo en KOVO (no en Shopify).'
-                : 'Dirección de envío se puede actualizar en Shopify; precio, cantidad y anticipo se guardan en KOVO (no se sincroniza el catálogo de líneas desde aquí).'}
+                : 'Dirección, precio, cantidad, tallas/líneas y anticipo se guardan solo en KOVO (no se modifica el pedido en Shopify).'}
             </p>
             <p style={{ margin: '0 0 10px', fontSize: 11, fontWeight: 700, color: ds.textSecondary, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
               Dirección de envío

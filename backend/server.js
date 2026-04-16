@@ -31,10 +31,6 @@ const {
   verifyShopifyOAuthHmac,
   verifyShopifyWebhookHmac,
   shopifyRequest,
-  shopifySyncFirstLineItemQuantityAndPrice,
-  shopifySyncFirstLineItemVariantQuantityAndPrice,
-  shopifySyncOrderLineItemsMulti,
-  shopifyUpdateOrderShippingAddress,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
   mapFinancialToBadge,
@@ -45,6 +41,7 @@ const {
   shopifyFetchAllOrders,
   shopifyInformativeOrdersRangeYearToDate,
   shopifyClampInformativeCreatedAtRange,
+  phoneWithoutColombia57,
 } = require('./shopifyService');
 const {
   getPublicAppUrl,
@@ -2753,6 +2750,29 @@ async function gananciaFetchMetaSpendSingleDay(organizationId, dateStr) {
   return out;
 }
 
+/** Líneas de producto guardadas solo en KOVO (JSON en shopify_order_local_fields). */
+function parseShopifyOrderLineItemsOverrideFromBody(bodyLineItems) {
+  if (!Array.isArray(bodyLineItems) || bodyLineItems.length === 0) return null;
+  const parsed = [];
+  for (const raw of bodyLineItems) {
+    if (!raw || typeof raw !== 'object') continue;
+    const q = parseInt(String(raw.quantity != null ? raw.quantity : '1'), 10);
+    if (!Number.isFinite(q) || q < 1) continue;
+    const title = String(raw.title || raw.name || '').trim();
+    if (!title) continue;
+    parsed.push({
+      product_id: raw.product_id != null && Number.isFinite(Number(raw.product_id)) ? Number(raw.product_id) : null,
+      variant_id: raw.variant_id != null && Number.isFinite(Number(raw.variant_id)) ? Number(raw.variant_id) : null,
+      title,
+      variant_title: String(raw.variant_title || '').trim(),
+      sku: String(raw.sku || '').trim(),
+      barcode: String(raw.barcode || '').trim(),
+      quantity: q,
+    });
+  }
+  return parsed.length ? parsed : null;
+}
+
 async function loadLocalFieldsMap(organizationId, orderIds) {
   if (!orderIds.length) return new Map();
   const CHUNK = 2500;
@@ -2760,13 +2780,87 @@ async function loadLocalFieldsMap(organizationId, orderIds) {
   for (let i = 0; i < orderIds.length; i += CHUNK) {
     const slice = orderIds.slice(i, i + CHUNK);
     const { rows } = await pool.query(
-      `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override
+      `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override, shipping_address_override, line_items_override_json
        FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = ANY($2::bigint[])`,
       [organizationId, slice],
     );
     for (const r of rows) m.set(Number(r.shopify_order_id), r);
   }
   return m;
+}
+
+/**
+ * Aplica overrides guardados en KOVO sobre un pedido ya normalizado desde Shopify (solo lectura desde la API).
+ * @param {object} order
+ * @param {object|null|undefined} lf fila shopify_order_local_fields
+ */
+function applyShopifyOrderKovoDisplayOverrides(order, lf) {
+  if (!order || typeof order !== 'object') return order;
+  if (!lf || typeof lf !== 'object') return { ...order };
+  let next = { ...order };
+  const shipOv = lf.shipping_address_override;
+  if (shipOv && typeof shipOv === 'object' && !Array.isArray(shipOv)) {
+    const base = next.shippingAddress && typeof next.shippingAddress === 'object' ? { ...next.shippingAddress } : {};
+    const merged = { ...base };
+    for (const k of ['name', 'address1', 'address2', 'city', 'province', 'zip', 'country', 'phone']) {
+      if (Object.prototype.hasOwnProperty.call(shipOv, k)) {
+        merged[k] = shipOv[k] == null ? '' : String(shipOv[k]);
+      }
+    }
+    next.shippingAddress = merged;
+    next.shippingCity = String(merged.city || '').trim();
+    next.shippingProvince = String(merged.province || '').trim();
+    next.shippingAddressLine = [merged.address1, merged.address2].filter(Boolean).join(' · ').trim();
+    const rawPhone = String(merged.phone || '').trim();
+    next.phoneLocal = phoneWithoutColombia57(rawPhone);
+  }
+  let linesOv = lf.line_items_override_json;
+  if (typeof linesOv === 'string') {
+    try {
+      linesOv = JSON.parse(linesOv);
+    } catch {
+      linesOv = null;
+    }
+  }
+  if (Array.isArray(linesOv) && linesOv.length > 0) {
+    const lineItemsDetail = linesOv.map((li, idx) => {
+      const title = String(li.title || li.name || '').trim() || 'Producto';
+      const name = String(li.name || '').trim();
+      const variant_title = String(li.variant_title != null ? li.variant_title : '').trim();
+      return {
+        id: li.id != null && Number.isFinite(Number(li.id)) ? Number(li.id) : idx + 1,
+        product_id: li.product_id != null && Number.isFinite(Number(li.product_id)) ? Number(li.product_id) : null,
+        variant_id: li.variant_id != null && Number.isFinite(Number(li.variant_id)) ? Number(li.variant_id) : null,
+        title,
+        name,
+        variant_title,
+        quantity: parseInt(String(li.quantity != null ? li.quantity : '0'), 10) || 0,
+        price: li.price != null ? String(li.price) : '',
+        sku: li.sku != null ? String(li.sku).trim() : '',
+        properties: Array.isArray(li.properties)
+          ? li.properties.map((p) => ({
+              name: String(p.name != null ? p.name : '').trim(),
+              value: String(p.value != null ? p.value : '').trim(),
+            }))
+          : [],
+      };
+    });
+    const defaultQuantity = lineItemsDetail.reduce((s, li) => s + (li.quantity || 0), 0);
+    const productIds = [
+      ...new Set(
+        lineItemsDetail
+          .map((li) => (li.product_id != null ? Number(li.product_id) : NaN))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    ];
+    next = {
+      ...next,
+      lineItemsDetail,
+      defaultQuantity: defaultQuantity > 0 ? defaultQuantity : next.defaultQuantity,
+      productIds,
+    };
+  }
+  return next;
 }
 
 async function loadProductManualPricingMap(organizationId, productIds) {
@@ -3569,16 +3663,17 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
     }
     let orders = normalized.map((o) => {
       const lf = localMap.get(Number(o.id));
+      const oBase = applyShopifyOrderKovoDisplayOverrides(o, lf);
       const paymentOverrideRaw =
         lf?.payment_status_override != null && String(lf.payment_status_override).trim() !== ''
           ? String(lf.payment_status_override).toLowerCase().trim()
           : '';
       const payment_status_override = MOTICO_PAYMENT_STATUSES.has(paymentOverrideRaw) ? paymentOverrideRaw : null;
       const financialStatus =
-        payment_status_override != null ? payment_status_override : String(o.financialStatus || '').toLowerCase();
+        payment_status_override != null ? payment_status_override : String(oBase.financialStatus || '').toLowerCase();
       const paymentBadge = mapFinancialToBadge(financialStatus);
       const unifiedEstado = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
-      const total_a_pagar_default = shopifyDefaultTotalAPagar(o);
+      const total_a_pagar_default = shopifyDefaultTotalAPagar(oBase);
       const total_a_pagar_override =
         lf?.total_a_pagar_override != null && lf.total_a_pagar_override !== ''
           ? Number(lf.total_a_pagar_override)
@@ -3592,7 +3687,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
           ? Number(lf.pago_al_recibir_override)
           : 0;
       return {
-        ...o,
+        ...oBase,
         financialStatus,
         label: paymentBadge.label,
         badgeVariant: paymentBadge.variant,
@@ -3709,16 +3804,17 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
     const o = normalized[0];
     const localMap = await loadLocalFieldsMap(req.organizationId, [orderId]);
     const lf = localMap.get(orderId);
+    const oBase = applyShopifyOrderKovoDisplayOverrides(o, lf);
     const paymentOverrideRaw =
       lf?.payment_status_override != null && String(lf.payment_status_override).trim() !== ''
         ? String(lf.payment_status_override).toLowerCase().trim()
         : '';
     const payment_status_override = MOTICO_PAYMENT_STATUSES.has(paymentOverrideRaw) ? paymentOverrideRaw : null;
     const financialStatus =
-      payment_status_override != null ? payment_status_override : String(o.financialStatus || '').toLowerCase();
+      payment_status_override != null ? payment_status_override : String(oBase.financialStatus || '').toLowerCase();
     const paymentBadge = mapFinancialToBadge(financialStatus);
     const unifiedEstado = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
-    const total_a_pagar_default = shopifyDefaultTotalAPagar(o);
+    const total_a_pagar_default = shopifyDefaultTotalAPagar(oBase);
     const total_a_pagar_override =
       lf?.total_a_pagar_override != null && lf.total_a_pagar_override !== ''
         ? Number(lf.total_a_pagar_override)
@@ -3732,7 +3828,7 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
         ? Number(lf.pago_al_recibir_override)
         : 0;
     const enriched = {
-      ...o,
+      ...oBase,
       financialStatus,
       label: paymentBadge.label,
       badgeVariant: paymentBadge.variant,
@@ -3873,8 +3969,17 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     }
     const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
     const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
+    let localMapGanancia = new Map();
+    try {
+      localMapGanancia = await loadLocalFieldsMap(req.organizationId, ids);
+    } catch (ganLfErr) {
+      if (!(ganLfErr && ganLfErr.code === '42P01')) throw ganLfErr;
+    }
+    const normalizedMerged = normalized.map((o) =>
+      applyShopifyOrderKovoDisplayOverrides(o, localMapGanancia.get(Number(o.id))),
+    );
     const productIds = [];
-    for (const o of normalized) {
+    for (const o of normalizedMerged) {
       const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
       for (const li of detail) {
         const pid = Number(li?.product_id);
@@ -3888,10 +3993,9 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
         if (Number.isFinite(pid)) productIds.push(pid);
       }
     }
-    const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap([...normalized, ...manualRows]);
+    const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap([...normalizedMerged, ...manualRows]);
     const uniqPids = [...new Set(productIds)];
-    const [localMap, metaSingle, manualPricingMap] = await Promise.all([
-      loadLocalFieldsMap(req.organizationId, ids),
+    const [metaSingle, manualPricingMap] = await Promise.all([
       gananciaFetchMetaSpendSingleDay(req.organizationId, dateStr),
       (async () => {
         try {
@@ -3911,8 +4015,8 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     let costoProductoTotal = 0;
     let costoProductoEntregadoTotal = 0;
     let costoFletePromedioTotal = 0;
-    for (const o of normalized) {
-      const lf = localMap.get(Number(o.id));
+    for (const o of normalizedMerged) {
+      const lf = localMapGanancia.get(Number(o.id));
       const estadoUnified = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
       if (isUnifiedEstadoPrueba(estadoUnified)) continue;
       const st = String(lf?.internal_status || '')
@@ -4082,8 +4186,17 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     }
     const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
     const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
+    let localMapGanancia2 = new Map();
+    try {
+      localMapGanancia2 = await loadLocalFieldsMap(req.organizationId, ids);
+    } catch (ganLfErr2) {
+      if (!(ganLfErr2 && ganLfErr2.code === '42P01')) throw ganLfErr2;
+    }
+    const normalizedMerged2 = normalized.map((o) =>
+      applyShopifyOrderKovoDisplayOverrides(o, localMapGanancia2.get(Number(o.id))),
+    );
     const productIds = [];
-    for (const o of normalized) {
+    for (const o of normalizedMerged2) {
       const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
       for (const li of detail) {
         const pid = Number(li?.product_id);
@@ -4097,20 +4210,17 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         if (Number.isFinite(pid)) productIds.push(pid);
       }
     }
-    const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap([...normalized, ...manualRows]);
+    const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap([...normalizedMerged2, ...manualRows]);
     const uniqPids = [...new Set(productIds)];
-    const [localMap, manualPricingMap] = await Promise.all([
-      loadLocalFieldsMap(req.organizationId, ids),
-      (async () => {
-        try {
-          if (!uniqPids.length) return new Map();
-          return await loadProductManualPricingMap(req.organizationId, uniqPids);
-        } catch (pricingErr) {
-          if (pricingErr && pricingErr.code === '42P01') return new Map();
-          throw pricingErr;
-        }
-      })(),
-    ]);
+    const manualPricingMap = await (async () => {
+      try {
+        if (!uniqPids.length) return new Map();
+        return await loadProductManualPricingMap(req.organizationId, uniqPids);
+      } catch (pricingErr) {
+        if (pricingErr && pricingErr.code === '42P01') return new Map();
+        throw pricingErr;
+      }
+    })();
 
     const daySet = new Set(sortedAsc);
     const ventasByDay = new Map();
@@ -4142,13 +4252,13 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     };
 
     const excludeFin = new Set(['voided', 'cancelled']);
-    for (const o of normalized) {
+    for (const o of normalizedMerged2) {
       const t = Date.parse(String(o.createdAt || ''));
       if (!Number.isFinite(t)) continue;
       const od = shopCalendarYmdFromInstant(t, iana);
       const key = gananciaDiariaYmdKey(od);
       if (!daySet.has(key)) continue;
-      const lf = localMap.get(Number(o.id));
+      const lf = localMapGanancia2.get(Number(o.id));
       const estadoUnified = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
       if (isUnifiedEstadoPrueba(estadoUnified)) continue;
       const st = String(lf?.internal_status || '')
@@ -4584,12 +4694,8 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
     }
 
     const orderId = orderIdRaw;
-    const conn = await getActiveShopifyConnection(req.organizationId);
-    if (!conn) {
-      return res.status(400).json({ error: 'No hay tienda conectada', code: 'not_connected' });
-    }
     const { rows: existing } = await pool.query(
-      `SELECT internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override
+      `SELECT internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override, shipping_address_override, line_items_override_json
        FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = $2`,
       [req.organizationId, orderId],
     );
@@ -4714,39 +4820,42 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       total_a_pagar_override = 0;
     }
 
-    /** Borrador multi-línea (Motico → Shopify): varias variantes en un solo PUT a `orders.json`. */
-    let shopifyMultiLineDesired = null;
-    if (
-      body.sync_to_shopify === true &&
-      Array.isArray(body.line_items) &&
-      body.line_items.length > 0
-    ) {
-      const parsedMulti = [];
-      for (const raw of body.line_items) {
-        if (!raw || typeof raw !== 'object') continue;
-        const q = parseInt(String(raw.quantity != null ? raw.quantity : '0'), 10);
-        const vid = raw.variant_id != null ? Number(raw.variant_id) : NaN;
-        if (!Number.isFinite(q) || q < 1 || !Number.isFinite(vid) || vid <= 0) continue;
-        let shopify_line_item_id = null;
-        if (raw.shopify_line_item_id != null && String(raw.shopify_line_item_id).trim() !== '') {
-          const sid = Number(raw.shopify_line_item_id);
-          if (Number.isFinite(sid) && sid > 0) shopify_line_item_id = Math.floor(sid);
-        }
-        parsedMulti.push({
-          shopify_line_item_id,
-          variant_id: Math.floor(vid),
-          quantity: q,
-        });
+    let line_items_override_json = cur.line_items_override_json;
+    if (typeof line_items_override_json === 'string') {
+      try {
+        line_items_override_json = JSON.parse(line_items_override_json);
+      } catch {
+        line_items_override_json = null;
       }
-      if (parsedMulti.length) {
-        shopifyMultiLineDesired = parsedMulti;
-        const sumQ = parsedMulti.reduce((acc, li) => acc + li.quantity, 0);
+    }
+    let shipping_address_override = cur.shipping_address_override;
+    if (typeof shipping_address_override === 'string') {
+      try {
+        shipping_address_override = JSON.parse(shipping_address_override);
+      } catch {
+        shipping_address_override = null;
+      }
+    }
+    if (body.line_items !== undefined) {
+      if (body.line_items === null) {
+        line_items_override_json = null;
+      } else if (!Array.isArray(body.line_items)) {
+        return res.status(400).json({ error: 'line_items debe ser un arreglo o null' });
+      } else if (body.line_items.length === 0) {
+        line_items_override_json = null;
+      } else {
+        const parsedLines = parseShopifyOrderLineItemsOverrideFromBody(body.line_items);
+        if (!parsedLines) {
+          return res.status(400).json({ error: 'Envía al menos una línea de producto válida (título y cantidad).' });
+        }
+        line_items_override_json = parsedLines;
+        const sumQ = parsedLines.reduce((acc, li) => acc + li.quantity, 0);
         if (Number.isFinite(sumQ) && sumQ > 0) quantity_override = sumQ;
       }
     }
 
-    const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+    const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override, shipping_address_override, line_items_override_json)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)
        ON CONFLICT (organization_id, shopify_order_id) DO UPDATE SET
          internal_status = EXCLUDED.internal_status,
          price_override = EXCLUDED.price_override,
@@ -4756,6 +4865,8 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
          payment_status_override = EXCLUDED.payment_status_override,
          pago_al_recibir_override = EXCLUDED.pago_al_recibir_override,
          total_a_pagar_override = EXCLUDED.total_a_pagar_override,
+         shipping_address_override = EXCLUDED.shipping_address_override,
+         line_items_override_json = EXCLUDED.line_items_override_json,
          updated_at = now()`;
     const insertParams = [
       req.organizationId,
@@ -4768,80 +4879,15 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       payment_status_override,
       pago_al_recibir_override,
       total_a_pagar_override,
+      shipping_address_override && typeof shipping_address_override === 'object'
+        ? JSON.stringify(shipping_address_override)
+        : null,
+      line_items_override_json && typeof line_items_override_json === 'object'
+        ? JSON.stringify(line_items_override_json)
+        : null,
     ];
-    let variant_id = null;
-    if (body.variant_id !== undefined && body.variant_id !== null && body.variant_id !== '') {
-      const v = Number(body.variant_id);
-      if (!Number.isFinite(v) || v <= 0) {
-        return res.status(400).json({ error: 'Variante no válida' });
-      }
-      variant_id = Math.floor(v);
-    }
 
-    const syncToShopify = body.sync_to_shopify === true;
-    if (syncToShopify) {
-      if (price_override == null || quantity_override == null) {
-        return res.status(400).json({
-          error: 'Para sincronizar con Shopify envía precio y cantidad explícitos (no vacíos).',
-        });
-      }
-      const dbClient = await pool.connect();
-      try {
-        await dbClient.query('BEGIN');
-        await dbClient.query(insertSql, insertParams);
-        let syncRes;
-        if (shopifyMultiLineDesired && shopifyMultiLineDesired.length > 0) {
-          syncRes = await shopifySyncOrderLineItemsMulti(
-            conn.shop_domain,
-            conn.access_token,
-            orderId,
-            shopifyMultiLineDesired,
-            Number(price_override),
-          );
-        } else {
-          const unit = Number(price_override) / Number(quantity_override);
-          if (!Number.isFinite(unit) || unit < 0) {
-            await dbClient.query('ROLLBACK');
-            return res.status(400).json({ error: 'Precio o cantidad no válidos para calcular precio unitario' });
-          }
-          syncRes =
-            variant_id != null
-              ? await shopifySyncFirstLineItemVariantQuantityAndPrice(
-                  conn.shop_domain,
-                  conn.access_token,
-                  orderId,
-                  variant_id,
-                  quantity_override,
-                  unit,
-                )
-              : await shopifySyncFirstLineItemQuantityAndPrice(
-                  conn.shop_domain,
-                  conn.access_token,
-                  orderId,
-                  quantity_override,
-                  unit,
-                );
-        }
-        if (!syncRes.ok) {
-          await dbClient.query('ROLLBACK');
-          return res.status(422).json({
-            error: syncRes.error || 'Shopify rechazó la actualización del pedido',
-          });
-        }
-        await dbClient.query('COMMIT');
-      } catch (txErr) {
-        try {
-          await dbClient.query('ROLLBACK');
-        } catch {
-          /* noop */
-        }
-        throw txErr;
-      } finally {
-        dbClient.release();
-      }
-    } else {
-      await pool.query(insertSql, insertParams);
-    }
+    await pool.query(insertSql, insertParams);
 
     res.json({
       ok: true,
@@ -4941,12 +4987,8 @@ app.put(
           },
         });
       }
-      const conn = await getActiveShopifyConnection(req.organizationId);
-      if (!conn) {
-        return res.status(400).json({ error: 'No hay tienda conectada', code: 'not_connected' });
-      }
       const { rows: lockRows } = await pool.query(
-        `SELECT motico_status, payment_status_override
+        `SELECT motico_status, payment_status_override, shipping_address_override
          FROM shopify_order_local_fields
          WHERE organization_id = $1 AND shopify_order_id = $2
          LIMIT 1`,
@@ -4973,25 +5015,40 @@ app.put(
       if (LOCKED_INTERNAL_STATUSES.has(internalLockedStatus)) {
         return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
       }
-      const r = await shopifyUpdateOrderShippingAddress(conn.shop_domain, conn.access_token, orderId, updates);
-      if (!r.ok) {
-        return res.status(422).json({ error: r.error || 'No se pudo actualizar la dirección en Shopify' });
+      let prevOv = lockRows[0]?.shipping_address_override;
+      if (typeof prevOv === 'string') {
+        try {
+          prevOv = JSON.parse(prevOv);
+        } catch {
+          prevOv = {};
+        }
       }
-      const s = r.shippingAddress;
+      if (!prevOv || typeof prevOv !== 'object') prevOv = {};
+      const mergedOv = { ...prevOv };
+      for (const k of allowed) {
+        if (Object.prototype.hasOwnProperty.call(updates, k)) mergedOv[k] = updates[k];
+      }
+      await pool.query(
+        `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, motico_status, shipping_address_override)
+         VALUES ($1, $2, 'sin_revisar', 'sin_revisar', $3::jsonb)
+         ON CONFLICT (organization_id, shopify_order_id) DO UPDATE SET
+           shipping_address_override = EXCLUDED.shipping_address_override,
+           updated_at = now()`,
+        [req.organizationId, orderId, JSON.stringify(mergedOv)],
+      );
+      const s = mergedOv;
       res.json({
         ok: true,
-        shippingAddress: s
-          ? {
-              name: String(s.name || ''),
-              address1: String(s.address1 || ''),
-              address2: String(s.address2 || ''),
-              city: String(s.city || ''),
-              province: String(s.province || ''),
-              zip: String(s.zip || ''),
-              country: String(s.country || ''),
-              phone: String(s.phone || ''),
-            }
-          : null,
+        shippingAddress: {
+          name: String(s.name || ''),
+          address1: String(s.address1 || ''),
+          address2: String(s.address2 || ''),
+          city: String(s.city || ''),
+          province: String(s.province || ''),
+          zip: String(s.zip || ''),
+          country: String(s.country || ''),
+          phone: String(s.phone || ''),
+        },
       });
     } catch (e) {
       console.error(e);

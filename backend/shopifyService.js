@@ -914,6 +914,7 @@ module.exports = {
   verifyShopifyWebhookHmac,
   shopifyRequest,
   shopifyJsonRequest,
+  phoneWithoutColombia57,
   shopifySyncFirstLineItemQuantityAndPrice,
   shopifySyncFirstLineItemVariantQuantityAndPrice,
   shopifySyncOrderLineItemsMulti,

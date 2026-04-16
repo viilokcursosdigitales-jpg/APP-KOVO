@@ -98,6 +98,8 @@ CREATE TABLE IF NOT EXISTS shopify_order_local_fields (
   payment_status_override VARCHAR(32),
   pago_al_recibir_override NUMERIC(14, 4) NOT NULL DEFAULT 0,
   total_a_pagar_override NUMERIC(14, 4),
+  shipping_address_override JSONB,
+  line_items_override_json JSONB,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (organization_id, shopify_order_id)
 );

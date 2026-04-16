@@ -233,6 +233,17 @@ export default function PedidosOrderEditPage() {
         setError('Selecciona una variante válida');
         return;
       }
+      const productId = Number(draft.product_id);
+      if (!Number.isFinite(productId) || productId <= 0) {
+        setError('Selecciona un producto');
+        return;
+      }
+      const selectedProduct = products.find((p) => p.id === productId);
+      const selectedVariant = selectedProduct?.variants.find((v) => String(v.id) === String(draft.variant_id));
+      if (!selectedProduct || !selectedVariant) {
+        setError('Producto o variante no válidos');
+        return;
+      }
       const resAddr = await apiFetch(`/api/shopify/orders/${order.id}/shipping-address`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -256,8 +267,18 @@ export default function PedidosOrderEditPage() {
         body: JSON.stringify({
           price_override: price,
           quantity_override: qty,
-          variant_id: variantId,
-          sync_to_shopify: true,
+          sync_to_shopify: false,
+          line_items: [
+            {
+              product_id: productId,
+              variant_id: variantId,
+              title: selectedProduct.title.trim() || 'Producto',
+              variant_title: String(selectedVariant.title || '').trim(),
+              sku: '',
+              barcode: '',
+              quantity: qty,
+            },
+          ],
         }),
       });
       const dataLocal = (await resLocal.json().catch(() => ({}))) as { error?: string };
@@ -269,13 +290,13 @@ export default function PedidosOrderEditPage() {
     } finally {
       setSaving(false);
     }
-  }, [order, locked, draft, navigate]);
+  }, [order, locked, draft, navigate, products]);
 
   return (
     <>
       <PageHeader
-        title="Editar pedido Shopify"
-        subtitle="Solo se puede editar dirección, precio, producto y cantidad."
+        title="Editar pedido (origen Shopify)"
+        subtitle="Los cambios se guardan solo en KOVO (dirección, precio, producto y cantidad); no se modifica el pedido en Shopify."
         right={
           <button
             type="button"
