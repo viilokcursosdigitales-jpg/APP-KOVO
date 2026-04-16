@@ -903,6 +903,7 @@ export default function PedidosPage() {
       const st = String(o.internal_status || '');
       return st === 'sin_revisar' || st === 'confirmado';
     }).length;
+    const efectividadPct = totalPedidos > 0 ? (pedidosDespachados / totalPedidos) * 100 : 0;
     return {
       pedidosWhatsapp,
       totalPedidos,
@@ -913,6 +914,7 @@ export default function PedidosPage() {
       totalVentasDespachadoCurrency,
       pedidosCancelados,
       pedidosSinDespachar,
+      efectividadPct,
     };
   }, [filteredShopify]);
 
@@ -1354,6 +1356,16 @@ export default function PedidosPage() {
             label="Total ventas despachado"
             value={formatMoneyAmount(pedidosKpis.totalVentasDespachado, pedidosKpis.totalVentasDespachadoCurrency)}
             icon={<IconCart />}
+          />
+          <KpiCard
+            variant={pedidosKpis.efectividadPct < 80 ? 'alert' : 'stock'}
+            label="% Efectividad"
+            value={
+              <span style={{ color: pedidosKpis.efectividadPct < 80 ? ds.dangerText : ds.successText }}>
+                {`${pedidosKpis.efectividadPct.toFixed(2)}%`}
+              </span>
+            }
+            icon={<IconTruck />}
           />
           <KpiCard variant="alert" label="Pedidos cancelados" value={pedidosKpis.pedidosCancelados} icon={<IconTruck />} />
           <KpiCard variant="stock" label="Pedidos sin despachar" value={pedidosKpis.pedidosSinDespachar} icon={<IconTruck />} />
