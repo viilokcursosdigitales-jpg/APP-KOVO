@@ -2608,7 +2608,7 @@ function mapMoticoManualOrderRowFromDb(r) {
     sourceName: 'motico_manual',
     utm: {},
     internal_status: motico_status,
-    mensajero: 'motico',
+    mensajero: null,
     motico_status,
     price_override: po != null && Number.isFinite(po) ? po : null,
     quantity_override: qo != null && Number.isFinite(qo) ? qo : null,
@@ -3718,7 +3718,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       if (!(me && me.code === '42P01')) throw me;
     }
     if (mensajeroFilter === 'motico') {
-      orders = orders.filter((o) => o.mensajero === 'motico');
+      orders = orders.filter((o) => o.mensajero === 'motico' || String(o.internal_status || '').toLowerCase() === 'motico');
     }
     const productIdQ = typeof req.query.product_id === 'string' ? req.query.product_id.trim() : '';
     if (productIdQ) {
