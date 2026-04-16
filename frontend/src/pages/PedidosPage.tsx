@@ -881,13 +881,23 @@ export default function PedidosPage() {
 
   const pedidosKpis = useMemo(() => {
     const calculable = filteredShopify.filter((o) => !isPedidosPruebaOrder(o));
+    const despachados = calculable.filter((o) => String(o.internal_status || '') === 'despachado');
     const pedidosWhatsapp = filteredShopify.filter((o) => o.id < 0).length;
     const totalPedidos = calculable.length;
     const pedidosMotico = calculable.filter((o) => o.mensajero === 'motico').length;
     const pedidosNoConfirmados = calculable.filter(
       (o) => coerceOrderInternalEstadoForSelect(o.internal_status) === 'sin_confirmar',
     ).length;
-    const pedidosDespachados = calculable.filter((o) => String(o.internal_status || '') === 'despachado').length;
+    const pedidosDespachados = despachados.length;
+    const totalVentasDespachado = despachados.reduce((sum, o) => {
+      const raw = o.price_override != null ? Number(o.price_override) : Number.parseFloat(String(o.shopifyTotal ?? o.total ?? '0'));
+      const val = Number.isFinite(raw) ? raw : 0;
+      return sum + val;
+    }, 0);
+    const totalVentasDespachadoCurrency =
+      String(despachados[0]?.currency || calculable[0]?.currency || 'COP')
+        .trim()
+        .toUpperCase() || 'COP';
     const pedidosCancelados = calculable.filter((o) => String(o.internal_status || '') === 'cancelado').length;
     const pedidosSinDespachar = calculable.filter((o) => {
       const st = String(o.internal_status || '');
@@ -899,6 +909,8 @@ export default function PedidosPage() {
       pedidosMotico,
       pedidosNoConfirmados,
       pedidosDespachados,
+      totalVentasDespachado,
+      totalVentasDespachadoCurrency,
       pedidosCancelados,
       pedidosSinDespachar,
     };
@@ -1337,6 +1349,12 @@ export default function PedidosPage() {
           <KpiCard variant="conversion" label="Pedidos Motico" value={pedidosKpis.pedidosMotico} icon={<IconTruck />} />
           <KpiCard variant="alert" label="Pedidos No confirmó" value={pedidosKpis.pedidosNoConfirmados} icon={<IconTruck />} />
           <KpiCard variant="sales" label="Ventas despachado" value={pedidosKpis.pedidosDespachados} icon={<IconTruck />} />
+          <KpiCard
+            variant="sales"
+            label="Total ventas despachado"
+            value={formatMoneyAmount(pedidosKpis.totalVentasDespachado, pedidosKpis.totalVentasDespachadoCurrency)}
+            icon={<IconCart />}
+          />
           <KpiCard variant="alert" label="Pedidos cancelados" value={pedidosKpis.pedidosCancelados} icon={<IconTruck />} />
           <KpiCard variant="stock" label="Pedidos sin despachar" value={pedidosKpis.pedidosSinDespachar} icon={<IconTruck />} />
         </div>
