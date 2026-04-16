@@ -1159,8 +1159,10 @@ export default function MoticoPage() {
         quantity: idx === 0 && o.quantity_override != null ? o.quantity_override : li.quantity,
         properties: li.properties,
       }));
-      const totalStr = String(o.price_override != null ? o.price_override : o.total);
-      const totalAmount = Number.parseFloat(totalStr);
+      const totalAmount =
+        o.total_a_pagar != null && Number.isFinite(Number(o.total_a_pagar))
+          ? Math.max(0, Number(o.total_a_pagar))
+          : 0;
       return buildMoticoGuideLabelData({
         orderName: o.orderName,
         client: o.client,
@@ -1168,7 +1170,7 @@ export default function MoticoPage() {
         lineItems: lineItems.length
           ? lineItems
           : [{ title: summarizeProducts(o.productIds), quantity: o.defaultQuantity }],
-        totalAmount: Number.isFinite(totalAmount) ? totalAmount : 0,
+        totalAmount,
         currency: templateCurrency,
         fallbackProductSummary: summarizeProducts(o.productIds),
         defaultQuantity: o.quantity_override ?? o.defaultQuantity,
