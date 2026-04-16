@@ -802,6 +802,7 @@ function mapFinancialToBadge(financial) {
   if (f === 'authorized') return { label: 'Autorizado', variant: 'info' };
   if (f === 'partially_paid') return { label: 'Pago parcial', variant: 'info' };
   if (f === 'refunded') return { label: 'Reembolsado', variant: 'error' };
+  if (f === 'cancelado') return { label: 'Cancelado', variant: 'error' };
   if (f === 'partially_refunded') return { label: 'Reemb. parcial', variant: 'warning' };
   if (f === 'voided') return { label: 'Anulado', variant: 'error' };
   return { label: financial != null && financial !== '' ? String(financial) : '—', variant: 'info' };

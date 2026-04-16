@@ -589,7 +589,7 @@ export default function PedidosPage() {
         if (data.mensajero !== undefined) patch.mensajero = data.mensajero;
         if (data.financial_status !== undefined) {
           const fs = String(data.financial_status || '').toLowerCase().trim() || 'pending';
-          patch.financialStatus = ['pending', 'paid', 'refunded'].includes(fs) ? fs : o.financialStatus;
+          patch.financialStatus = ['pending', 'paid', 'refunded', 'cancelado'].includes(fs) ? fs : o.financialStatus;
         }
         if (data.label !== undefined && data.label != null && String(data.label).trim() !== '') {
           patch.label = String(data.label);

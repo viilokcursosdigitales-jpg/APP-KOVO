@@ -36,7 +36,6 @@ import {
 } from '../utils/moticoPrintGuide';
 
 const POLL_MS = 25_000;
-const MOTICO_TOTAL_APAGAR_DEBOUNCE_MS = 450;
 const SEARCH_DEBOUNCE_MS = 240;
 const MAX_LOGO_BYTES = 400_000;
 const MOTICO_STATUS_DEFAULT: OrderInternalEstadoValue = 'sin_revisar';
@@ -49,6 +48,7 @@ const MOTICO_PAYMENT_OPTIONS = [
   { value: 'pending', label: 'Pendiente de pago' },
   { value: 'paid', label: 'Pagado' },
   { value: 'refunded', label: 'Devolución' },
+  { value: 'cancelado', label: 'Cancelado' },
 ] as const;
 type MoticoPaymentStatusValue = (typeof MOTICO_PAYMENT_OPTIONS)[number]['value'];
 const MOTICO_PAYMENT_META: Record<
@@ -58,6 +58,7 @@ const MOTICO_PAYMENT_META: Record<
   pending: { bg: '#ffedd5', fg: '#9a3412', border: '#fdba74' },
   refunded: { bg: '#fee2e2', fg: '#7f1d1d', border: '#fca5a5' },
   paid: { bg: '#6c47ff', fg: '#ffffff', border: '#6c47ff', fontWeight: 700 },
+  cancelado: { bg: '#f3f4f6', fg: '#374151', border: '#d1d5db', fontWeight: 600 },
 };
 const COLOMBIA_LOCATIONS_URL =
   'https://raw.githubusercontent.com/marcovega/colombia-json/master/colombia.min.json';
@@ -78,6 +79,7 @@ function normalizeMoticoPaymentStatus(raw: string | undefined | null): MoticoPay
   const v = String(raw || '').trim().toLowerCase();
   if (v === 'paid') return 'paid';
   if (v === 'refunded') return 'refunded';
+  if (v === 'cancelado') return 'cancelado';
   return 'pending';
 }
 
@@ -304,19 +306,6 @@ const moticoOrderEditIconBtn: CSSProperties = {
   lineHeight: 0,
 };
 
-const moticoTotalAPagarInputStyle: CSSProperties = {
-  width: '100%',
-  maxWidth: 128,
-  padding: '6px 8px',
-  borderRadius: 8,
-  border: `1px solid ${ds.borderCard}`,
-  background: ds.bgCard,
-  color: ds.textPrimary,
-  fontSize: 12,
-  fontWeight: 600,
-  boxSizing: 'border-box',
-};
-
 const modalFieldStyle: CSSProperties = {
   width: '100%',
   maxWidth: '100%',
@@ -377,7 +366,7 @@ type ManualCreateDraft = {
     variant_id: string;
     quantity: string;
   }[];
-  financial_status: 'paid' | 'pending' | 'unpaid';
+  financial_status: 'paid' | 'pending' | 'unpaid' | 'refunded' | 'cancelado';
   province: string;
   city: string;
   address1: string;
@@ -594,12 +583,21 @@ function computeAnticipoAmountFromRow(o: MoticoOrderRow): number {
   return Math.max(0, total - pending - pagoAlRecibir);
 }
 
-/** Pendiente pago proveedor = pendiente cliente (total a pagar) − costo producto Motico − costo flete Motico. */
+/** Pendiente pago proveedor = pago al recibir − costo producto Motico − costo flete Motico (0 si pedido cancelado o pago pendiente). */
 function computePendientePagoProveedorFromRow(
-  o: Pick<MoticoOrderRow, 'total_a_pagar' | 'product_cost_motico' | 'freight_cost_motico'>,
+  o: Pick<
+    MoticoOrderRow,
+    'motico_status' | 'financialStatus' | 'pago_al_recibir_override' | 'product_cost_motico' | 'freight_cost_motico'
+  >,
 ): number {
-  const pendienteCliente =
-    o.total_a_pagar != null && Number.isFinite(Number(o.total_a_pagar)) ? Number(o.total_a_pagar) : 0;
+  const orderSt = String(o.motico_status || '').toLowerCase();
+  if (orderSt === 'cancelado') return 0;
+  const pay = normalizeMoticoPaymentStatus(o.financialStatus);
+  if (pay === 'pending' || pay === 'cancelado') return 0;
+  const pagoRecibir =
+    o.pago_al_recibir_override != null && Number.isFinite(Number(o.pago_al_recibir_override))
+      ? Math.max(0, Number(o.pago_al_recibir_override))
+      : 0;
   const pc =
     o.product_cost_motico != null && Number.isFinite(Number(o.product_cost_motico))
       ? Number(o.product_cost_motico)
@@ -608,7 +606,7 @@ function computePendientePagoProveedorFromRow(
     o.freight_cost_motico != null && Number.isFinite(Number(o.freight_cost_motico))
       ? Number(o.freight_cost_motico)
       : 0;
-  return pendienteCliente - pc - fc;
+  return pagoRecibir - pc - fc;
 }
 
 const PENDIENTE_PROVEEDOR_POSITIVE_COLOR = '#16a34a';
@@ -804,9 +802,6 @@ export default function MoticoPage() {
   const [phoneCopyToastVisible, setPhoneCopyToastVisible] = useState(false);
   const phoneCopyToastTimerRef = useRef<number | null>(null);
 
-  const [totalAPagarDraft, setTotalAPagarDraft] = useState<Record<number, string>>({});
-  const totalAPagarTimers = useRef<Map<number, number>>(new Map());
-
   const copyPhoneToClipboard = useCallback((digits: string) => {
     const t = digits.trim();
     if (!t) return;
@@ -831,8 +826,6 @@ export default function MoticoPage() {
   useEffect(() => {
     return () => {
       if (phoneCopyToastTimerRef.current != null) window.clearTimeout(phoneCopyToastTimerRef.current);
-      for (const t of totalAPagarTimers.current.values()) window.clearTimeout(t);
-      totalAPagarTimers.current.clear();
     };
   }, []);
 
@@ -1032,7 +1025,6 @@ export default function MoticoPage() {
           setShopifyConnected(true);
           setShopDomain(data.shop_domain || null);
           setFetchedAt(data.fetchedAt || null);
-          setTotalAPagarDraft({});
           setOrders(data.orders.map((o) => normalizeRow(o as MoticoOrderRow)));
         }
       } catch {
@@ -1104,36 +1096,8 @@ export default function MoticoPage() {
         };
       }),
     );
-    if (Object.prototype.hasOwnProperty.call(body, 'total_a_pagar_override')) {
-      setTotalAPagarDraft((d) => {
-        const n = { ...d };
-        delete n[orderId];
-        return n;
-      });
-    }
     return true;
   }, []);
-
-  const scheduleTotalAPagarSave = useCallback(
-    (orderId: number, raw: string) => {
-      const prev = totalAPagarTimers.current.get(orderId);
-      if (prev != null) window.clearTimeout(prev);
-      const tid = window.setTimeout(() => {
-        totalAPagarTimers.current.delete(orderId);
-        const t = raw.trim();
-        if (t === '') {
-          void patchLocalFields(orderId, { total_a_pagar_override: null });
-          return;
-        }
-        const normalized = t.replace(',', '.');
-        const n = Number.parseFloat(normalized);
-        if (!Number.isFinite(n) || n < 0) return;
-        void patchLocalFields(orderId, { total_a_pagar_override: n });
-      }, MOTICO_TOTAL_APAGAR_DEBOUNCE_MS);
-      totalAPagarTimers.current.set(orderId, tid);
-    },
-    [patchLocalFields],
-  );
 
   const buildLabelFromOrder = useCallback(
     (o: MoticoOrderRow): MoticoGuideLabelData => {
@@ -1349,10 +1313,11 @@ export default function MoticoPage() {
       }
       const body: Record<string, unknown> = { payment_status: next };
       if (next === 'paid') {
-        const pending = Math.max(0, Number(o.total_a_pagar || 0));
+        const pendienteCliente = Math.max(0, Number(o.total_a_pagar || 0));
         const pagoAlRecibirActual = Math.max(0, Number(o.pago_al_recibir_override || 0));
         body.total_a_pagar_override = 0;
-        body.pago_al_recibir_override = pagoAlRecibirActual + pending;
+        // Al marcar pagado: el pendiente del cliente pasa a sumarse en «pago al recibir».
+        body.pago_al_recibir_override = pagoAlRecibirActual + pendienteCliente;
       }
       await patchLocalFields(o.id, body);
     },
@@ -2693,7 +2658,7 @@ export default function MoticoPage() {
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago anticipado</Th>
                   <Th
                     style={{ ...moticoThPad, ...orderListTheadStickyCell }}
-                    title="Lo que el cliente aún debe (total a pagar editable)."
+                    title="Pendiente que debe el cliente (total a pagar). Edítalo desde el lápiz del pedido."
                   >
                     Pendiente d pago cliente
                   </Th>
@@ -2706,13 +2671,13 @@ export default function MoticoPage() {
                   </Th>
                   <Th
                     style={{ ...moticoThPad, ...orderListTheadStickyCell }}
-                    title="Costo flete Motico en Inventario: un valor por producto; con varios productos se muestra el promedio (un flete por pedido)."
+                    title="Costo flete Motico (Inventario). En «Devolución» se muestra ese costo de flete (0 si no hay dato)."
                   >
                     Costo flete Motico
                   </Th>
                   <Th
                     style={{ ...moticoThPad, ...orderListTheadStickyCell }}
-                    title="Pendiente cliente (total a pagar) menos costo producto Motico y costo flete Motico. Positivo: verde; negativo: rojo."
+                    title="Pago al recibir − costo producto − costo flete. 0 si el pedido está cancelado o el pago es pendiente. Positivo: verde; negativo: rojo."
                   >
                     Pendiente de pago proveedor
                   </Th>
@@ -2728,7 +2693,7 @@ export default function MoticoPage() {
                   const estadoKey = coerceOrderInternalEstadoForSelect(o.motico_status);
                   const meta = ORDER_INTERNAL_ESTADO_ROW_META[estadoKey] ?? ORDER_INTERNAL_ESTADO_ROW_META.sin_revisar;
                   const paymentStatus = normalizeMoticoPaymentStatus(o.financialStatus);
-                  const paymentMeta = MOTICO_PAYMENT_META[paymentStatus];
+                  const paymentMeta = MOTICO_PAYMENT_META[paymentStatus] ?? MOTICO_PAYMENT_META.pending;
                   const editLocked = isMoticoOrderEditLocked(o);
                   const stMot = String(o.motico_status || '').toLowerCase();
                   const isDespachadoMotico = stMot === 'despachado';
@@ -2924,35 +2889,22 @@ export default function MoticoPage() {
                           {formatMoneyAmount(computeAnticipoAmountFromRow(o), o.currency)}
                         </div>
                       </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
-                        <input
-                          type="text"
-                          inputMode="decimal"
+                      <Td
+                        isLast={i === arr.length - 1}
+                        style={moticoTdPad}
+                        title="Solo lectura. Ajusta el pendiente del cliente desde Editar pedido (lápiz)."
+                      >
+                        <div
                           style={{
-                            ...moticoTotalAPagarInputStyle,
-                            cursor: editLocked ? 'not-allowed' : 'text',
+                            fontSize: 12,
+                            fontWeight: 600,
+                            color: ds.textPrimary,
                             opacity: editLocked ? 0.72 : 1,
                           }}
-                          value={
-                            totalAPagarDraft[o.id] !== undefined
-                              ? totalAPagarDraft[o.id]!
-                              : String(o.total_a_pagar)
-                          }
-                          onChange={(e) => {
-                            const v = e.target.value;
-                            setTotalAPagarDraft((d) => ({ ...d, [o.id]: v }));
-                            scheduleTotalAPagarSave(o.id, v);
-                          }}
-                          aria-label={`Pendiente de pago cliente (total a pagar) pedido ${o.orderName}`}
-                          disabled={editLocked}
-                          title={
-                            isDespachadoMotico
-                              ? 'Pedido despachado: solo puedes cambiar Estado de pago'
-                              : editLocked
-                                ? 'Pedido cancelado: total a pagar bloqueado'
-                              : 'Editar total a pagar'
-                          }
-                        />
+                          aria-label={`Pendiente de pago cliente pedido ${o.orderName}`}
+                        >
+                          {formatMoneyAmount(Math.max(0, Number(o.total_a_pagar ?? 0)), o.currency)}
+                        </div>
                         <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4, lineHeight: 1.3 }}>
                           Calculado Shopify: {formatMoneyAmount(o.total_a_pagar_default, o.currency)}
                         </div>
@@ -2978,9 +2930,22 @@ export default function MoticoPage() {
                       <Td
                         isLast={i === arr.length - 1}
                         style={moticoTdPad}
-                        title="Costo flete Motico (Inventario): promedio por productos distintos en el pedido"
+                        title={
+                          paymentStatus === 'refunded'
+                            ? 'Devolución: se muestra el costo flete Motico (Inventario).'
+                            : 'Costo flete Motico (Inventario): promedio por productos distintos en el pedido'
+                        }
                       >
-                        {o.freight_cost_motico != null && Number.isFinite(o.freight_cost_motico) ? (
+                        {paymentStatus === 'refunded' ? (
+                          <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
+                            {formatMoneyAmount(
+                              o.freight_cost_motico != null && Number.isFinite(o.freight_cost_motico)
+                                ? Number(o.freight_cost_motico)
+                                : 0,
+                              o.currency,
+                            )}
+                          </div>
+                        ) : o.freight_cost_motico != null && Number.isFinite(o.freight_cost_motico) ? (
                           <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
                             {formatMoneyAmount(o.freight_cost_motico, o.currency)}
                           </div>
@@ -2991,7 +2956,7 @@ export default function MoticoPage() {
                       <Td
                         isLast={i === arr.length - 1}
                         style={moticoTdPad}
-                        title="Pendiente cliente − costo producto Motico − costo flete Motico (Inventario)."
+                        title="Pago al recibir − costo producto Motico − costo flete Motico (Inventario)."
                       >
                         <div
                           style={{
@@ -3746,6 +3711,8 @@ export default function MoticoPage() {
                 <option value="pending">Pendiente de pago</option>
                 <option value="unpaid">Sin pagar</option>
                 <option value="paid">Pagado</option>
+                <option value="refunded">Devolución</option>
+                <option value="cancelado">Cancelado</option>
               </select>
             </label>
             <p style={{ margin: '18px 0 8px', fontSize: 11, fontWeight: 700, color: ds.textSecondary, textTransform: 'uppercase', letterSpacing: '0.4px' }}>

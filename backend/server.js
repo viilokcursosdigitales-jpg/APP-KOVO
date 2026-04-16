@@ -2380,7 +2380,7 @@ const SHOPIFY_INTERNAL_STATUSES = new Set(UNIFIED_ORDER_ESTADO_LIST);
 const SHOPIFY_MOTICO_STATUSES = SHOPIFY_INTERNAL_STATUSES;
 const SHOPIFY_MENSAJEROS = new Set(['motico', 'dropi', 'effix']);
 const MOTICO_STATUS_DEFAULT = 'sin_revisar';
-const MOTICO_PAYMENT_STATUSES = new Set(['pending', 'paid', 'refunded']);
+const MOTICO_PAYMENT_STATUSES = new Set(['pending', 'paid', 'refunded', 'cancelado']);
 const LOCKED_MOTICO_STATUSES = new Set(['despachado', 'cancelado']);
 const LOCKED_INTERNAL_STATUSES = new Set(['despachado', 'cancelado']);
 
@@ -5066,7 +5066,7 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
         ? qtyFallback
         : 1;
     const fin = String(body.financial_status || 'pending').toLowerCase();
-    const allowedFin = new Set(['paid', 'pending', 'unpaid', 'partially_paid', 'authorized', 'voided']);
+    const allowedFin = new Set(['paid', 'pending', 'unpaid', 'partially_paid', 'authorized', 'voided', 'refunded', 'cancelado']);
     const financial_status = allowedFin.has(fin) ? fin : 'pending';
 
     let currency = String(body.currency || '').trim();
@@ -5136,7 +5136,10 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
           .join(' + ')
       : (product_summary_in || 'Producto');
     const product_summary = `${baseSummary}${note ? ` · Observación: ${note}` : ''}`.slice(0, 600);
-    const total_outstanding = financial_status === 'paid' ? 0 : Math.max(0, total - anticipo);
+    const total_outstanding =
+      financial_status === 'paid' || financial_status === 'refunded' || financial_status === 'cancelado'
+        ? 0
+        : Math.max(0, total - anticipo);
 
     let createdAtParam = null;
     if (rawCreated) {
