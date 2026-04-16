@@ -77,6 +77,11 @@ function isMoticoStatusLocked(status: string) {
   return MOTICO_LOCKED_STATUSES.has(String(status || '').toLowerCase() as OrderInternalEstadoValue);
 }
 
+function isMoticoPruebaOrder(row: Pick<MoticoOrderRow, 'motico_status' | 'internal_status'>) {
+  const st = String(row.motico_status || row.internal_status || '').trim().toLowerCase();
+  return st === 'prueba';
+}
+
 function normalizeMoticoPaymentStatus(raw: string | undefined | null): MoticoPaymentStatusValue {
   const v = String(raw || '').trim().toLowerCase();
   if (v === 'paid') return 'paid';
@@ -907,6 +912,7 @@ export default function MoticoPage() {
     let total = 0;
     let count = 0;
     for (const o of filteredOrders) {
+      if (isMoticoPruebaOrder(o)) continue;
       if (String(o.motico_status || '') !== 'despachado') continue;
       count += 1;
       const base = o.price_override != null ? Number(o.price_override) : Number.parseFloat(String(o.shopifyTotal || o.total || '0'));
@@ -917,9 +923,10 @@ export default function MoticoPage() {
   }, [filteredOrders, templateCurrency]);
 
   const orderStatusKpis = useMemo(() => {
-    const totalPedidos = filteredOrders.length;
-    const pedidosCancelados = filteredOrders.filter((o) => String(o.motico_status || '') === 'cancelado').length;
-    const pedidosNoConfirmo = filteredOrders.filter((o) => String(o.motico_status || '') === 'sin_confirmar').length;
+    const calculable = filteredOrders.filter((o) => !isMoticoPruebaOrder(o));
+    const totalPedidos = calculable.length;
+    const pedidosCancelados = calculable.filter((o) => String(o.motico_status || '') === 'cancelado').length;
+    const pedidosNoConfirmo = calculable.filter((o) => String(o.motico_status || '') === 'sin_confirmar').length;
     const pedidosSinDespachar = Math.max(0, totalPedidos - pedidosCancelados - pedidosNoConfirmo);
     return { totalPedidos, pedidosCancelados, pedidosSinDespachar };
   }, [filteredOrders]);
@@ -928,6 +935,7 @@ export default function MoticoPage() {
     let totalPagado = 0;
     let totalPendiente = 0;
     for (const o of filteredOrders) {
+      if (isMoticoPruebaOrder(o)) continue;
       const totalPedido = Math.max(0, effectiveOrderTotalAmount(o));
       const pendiente = Math.max(0, Number(o.total_a_pagar ?? 0));
       const pagado = Math.max(0, Math.min(totalPedido, totalPedido - pendiente));

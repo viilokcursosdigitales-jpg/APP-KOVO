@@ -543,27 +543,33 @@ export default function GananciaDiariaPage() {
                   <span>{selectedRangeDates.from ? formatTableDate(selectedRangeDates.from) : '—'}</span>
                   <span>{selectedRangeDates.to ? formatTableDate(selectedRangeDates.to) : '—'}</span>
                 </div>
-                <div style={{ position: 'relative', marginTop: 8, height: 24 }}>
-                  <input
-                    type="range"
-                    min={0}
-                    max={Math.max(dayKeys.length - 1, 0)}
-                    value={effectiveRangeIdx.start}
-                    onChange={(e) => setRangeStartIdx(parseInt(e.target.value, 10) || 0)}
-                    aria-label="Inicio del rango de fechas"
-                    style={{ position: 'absolute', inset: 0, width: '100%' }}
-                    disabled={dayKeys.length <= 1}
-                  />
-                  <input
-                    type="range"
-                    min={0}
-                    max={Math.max(dayKeys.length - 1, 0)}
-                    value={effectiveRangeIdx.end}
-                    onChange={(e) => setRangeEndIdx(parseInt(e.target.value, 10) || 0)}
-                    aria-label="Fin del rango de fechas"
-                    style={{ position: 'absolute', inset: 0, width: '100%' }}
-                    disabled={dayKeys.length <= 1}
-                  />
+                <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
+                  <label style={{ display: 'grid', gap: 2 }}>
+                    <span style={{ fontSize: 10, color: ds.textHint, fontWeight: 600 }}>Inicio</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(dayKeys.length - 1, 0)}
+                      value={effectiveRangeIdx.start}
+                      onChange={(e) => setRangeStartIdx(parseInt(e.target.value, 10) || 0)}
+                      aria-label="Inicio del rango de fechas"
+                      style={{ width: '100%', accentColor: '#6c47ff' }}
+                      disabled={dayKeys.length <= 1}
+                    />
+                  </label>
+                  <label style={{ display: 'grid', gap: 2 }}>
+                    <span style={{ fontSize: 10, color: ds.textHint, fontWeight: 600 }}>Fin</span>
+                    <input
+                      type="range"
+                      min={0}
+                      max={Math.max(dayKeys.length - 1, 0)}
+                      value={effectiveRangeIdx.end}
+                      onChange={(e) => setRangeEndIdx(parseInt(e.target.value, 10) || 0)}
+                      aria-label="Fin del rango de fechas"
+                      style={{ width: '100%', accentColor: '#6c47ff' }}
+                      disabled={dayKeys.length <= 1}
+                    />
+                  </label>
                 </div>
               </div>
               <button

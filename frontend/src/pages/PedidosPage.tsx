@@ -61,6 +61,11 @@ function isOrderLockedInPedidos(row: Pick<ShopifyOrderRow, 'internal_status' | '
   return isOrderLockedByInternalStatus(row.internal_status) || isOrderManagedByMotico(row);
 }
 
+function isPedidosPruebaOrder(row: Pick<ShopifyOrderRow, 'internal_status' | 'motico_status'>) {
+  const st = String(row.internal_status || row.motico_status || '').trim().toLowerCase();
+  return st === 'prueba';
+}
+
 /** Tooltip cuando la fila no es editable desde Pedidos (incluye gestión Motico por mensajero). */
 function pedidosRowLockTitle(row: ShopifyOrderRow, kind: 'estado' | 'mensajero' | 'precio' | 'cantidad'): string {
   if (isOrderManagedByMotico(row)) {
@@ -850,11 +855,12 @@ export default function PedidosPage() {
   );
 
   const pedidosKpis = useMemo(() => {
-    const totalPedidos = filteredShopify.length;
-    const pedidosMotico = filteredShopify.filter((o) => o.mensajero === 'motico').length;
-    const pedidosDespachados = filteredShopify.filter((o) => String(o.internal_status || '') === 'despachado').length;
-    const pedidosCancelados = filteredShopify.filter((o) => String(o.internal_status || '') === 'cancelado').length;
-    const pedidosSinDespachar = filteredShopify.filter((o) => {
+    const calculable = filteredShopify.filter((o) => !isPedidosPruebaOrder(o));
+    const totalPedidos = calculable.length;
+    const pedidosMotico = calculable.filter((o) => o.mensajero === 'motico').length;
+    const pedidosDespachados = calculable.filter((o) => String(o.internal_status || '') === 'despachado').length;
+    const pedidosCancelados = calculable.filter((o) => String(o.internal_status || '') === 'cancelado').length;
+    const pedidosSinDespachar = calculable.filter((o) => {
       const st = String(o.internal_status || '');
       return st === 'sin_revisar' || st === 'confirmado';
     }).length;

@@ -2419,6 +2419,10 @@ function mergeDisplayedOrderEstado(internalRaw, moticoRaw) {
   return ra >= rb ? a : b;
 }
 
+function isUnifiedEstadoPrueba(raw) {
+  return normalizeLegacyMoticoEstadoToUnified(raw) === 'prueba';
+}
+
 function normalizeMoticoPaymentStatus(raw) {
   const v = String(raw || '').trim().toLowerCase();
   if (v === 'paid') return 'paid';
@@ -3906,6 +3910,8 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     let costoFletePromedioTotal = 0;
     for (const o of normalized) {
       const lf = localMap.get(Number(o.id));
+      const estadoUnified = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
+      if (isUnifiedEstadoPrueba(estadoUnified)) continue;
       const st = String(lf?.internal_status || '')
         .trim()
         .toLowerCase()
@@ -3926,6 +3932,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     for (const o of manualRows) {
       const manualDay = moticoManualOrderAssignedYmd(o, iana);
       if (manualDay !== dateStr) continue;
+      if (isUnifiedEstadoPrueba(o?.motico_status)) continue;
       const st = String(o?.motico_status || '')
         .trim()
         .toLowerCase()
@@ -4139,6 +4146,8 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       const key = gananciaDiariaYmdKey(od);
       if (!daySet.has(key)) continue;
       const lf = localMap.get(Number(o.id));
+      const estadoUnified = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
+      if (isUnifiedEstadoPrueba(estadoUnified)) continue;
       const st = String(lf?.internal_status || '')
         .trim()
         .toLowerCase()
@@ -4173,6 +4182,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       const key = moticoManualOrderAssignedYmd(o, iana);
       if (!key) continue;
       if (!daySet.has(key)) continue;
+      if (isUnifiedEstadoPrueba(o?.motico_status)) continue;
       const st = String(o?.motico_status || '')
         .trim()
         .toLowerCase()
