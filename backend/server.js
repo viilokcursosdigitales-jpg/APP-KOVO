@@ -2883,6 +2883,56 @@ function calculateOrderManualCosts(order, pricingMap, titleToProductIdMap) {
 }
 
 /**
+ * Suma (costo producto Motico en inventario) × cantidad por línea (`manual_product_price_motico`).
+ * @returns {number|null} total o null si no hay ninguna línea con costo Motico configurado.
+ */
+function calculateOrderMoticoProductCost(order, pricingMap, titleToProductIdMap) {
+  const detail = Array.isArray(order?.lineItemsDetail) ? order.lineItemsDetail : [];
+  let total = 0;
+  let matched = false;
+  for (const li of detail) {
+    if (!li || typeof li !== 'object') continue;
+    let pid = Number(li.product_id);
+    if (!Number.isFinite(pid) || pid <= 0) {
+      const key = normalizeLineItemLookupKey(li.title || li.name || '');
+      if (key && titleToProductIdMap instanceof Map) {
+        const mappedPid = Number(titleToProductIdMap.get(key));
+        if (Number.isFinite(mappedPid) && mappedPid > 0) pid = mappedPid;
+      }
+    }
+    if (!Number.isFinite(pid) || pid <= 0) continue;
+    const qty = Number.parseInt(String(li.quantity ?? 0), 10);
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    const pricing = pricingMap.get(pid);
+    const unitMotico =
+      pricing?.manual_product_price_motico != null && Number.isFinite(Number(pricing.manual_product_price_motico))
+        ? Number(pricing.manual_product_price_motico)
+        : null;
+    if (unitMotico != null) {
+      total += unitMotico * qty;
+      matched = true;
+    }
+  }
+  if (!matched && detail.length === 0 && Array.isArray(order?.productIds) && order.productIds.length === 1) {
+    const pid = Number(order.productIds[0]);
+    if (Number.isFinite(pid) && pid > 0) {
+      const pricing = pricingMap.get(pid);
+      const unitMotico =
+        pricing?.manual_product_price_motico != null && Number.isFinite(Number(pricing.manual_product_price_motico))
+          ? Number(pricing.manual_product_price_motico)
+          : null;
+      if (unitMotico != null) {
+        const qtyRaw = Number.parseInt(String(order.defaultQuantity ?? order.shopifyQuantity ?? 1), 10);
+        const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? qtyRaw : 1;
+        total += unitMotico * qty;
+        matched = true;
+      }
+    }
+  }
+  return matched ? total : null;
+}
+
+/**
  * Reparte ventas, costos y flete del pedido entre productos (líneas) por participación en ingreso de líneas.
  * Devuelve Map productKey -> acumulados para agregar por día.
  */
@@ -3523,6 +3573,36 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       if (Number.isFinite(want)) {
         orders = orders.filter((o) => Array.isArray(o.productIds) && o.productIds.includes(want));
       }
+    }
+    if (mensajeroFilter === 'motico' && orders.length > 0) {
+      const pidCollector = [];
+      for (const o of orders) {
+        const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
+        for (const li of detail) {
+          const pid = li?.product_id != null ? Number(li.product_id) : NaN;
+          if (Number.isFinite(pid) && pid > 0) pidCollector.push(pid);
+        }
+        if (Array.isArray(o.productIds)) {
+          for (const pid of o.productIds) {
+            const n = Number(pid);
+            if (Number.isFinite(n) && n > 0) pidCollector.push(n);
+          }
+        }
+      }
+      const uniqPids = [...new Set(pidCollector)];
+      let pricingMap = new Map();
+      if (uniqPids.length) {
+        try {
+          pricingMap = await loadProductManualPricingMap(req.organizationId, uniqPids);
+        } catch (pe) {
+          if (!(pe && pe.code === '42P01')) throw pe;
+        }
+      }
+      const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap(orders);
+      orders = orders.map((o) => ({
+        ...o,
+        product_cost_motico: calculateOrderMoticoProductCost(o, pricingMap, lineTitleToProductIdMap),
+      }));
     }
     orders.sort((a, b) => {
       const ta = Date.parse(String(a.createdAt)) || 0;
@@ -4229,18 +4309,6 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
             : 'Pedido despachado: responde el motivo y desbloquea antes de editar.';
         return res.status(409).json({ error: msg });
       }
-      const currentPaymentStatus = normalizeMoticoPaymentStatus(cur.financial_status);
-      const requestedPaymentUnlockManual =
-        body.payment_status !== undefined ? String(body.payment_status || '').trim().toLowerCase() : '';
-      const unlockFromPaidManualRequested =
-        currentPaymentStatus === 'paid' &&
-        requestedPaymentUnlockManual === 'pending' &&
-        unlockReason.length >= 5;
-      if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate && !unlockFromPaidManualRequested) {
-        return res.status(409).json({
-          error: 'Pago marcado como pagado: responde el motivo y desbloquea (pasa a pendiente) antes de editar.',
-        });
-      }
       let price_override = cur.price_override != null ? Number(cur.price_override) : null;
       if (body.price_override !== undefined) {
         if (body.price_override === null) price_override = null;
@@ -4456,18 +4524,6 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           ? 'Pedido cancelado: responde el motivo y desbloquea antes de editar.'
           : 'Pedido despachado: responde el motivo y desbloquea antes de editar.';
       return res.status(409).json({ error: msg });
-    }
-    const currentPaymentStatus = normalizeMoticoPaymentStatus(cur.payment_status_override);
-    const requestedPaymentUnlock =
-      body.payment_status !== undefined ? String(body.payment_status || '').trim().toLowerCase() : '';
-    const unlockFromPaidRequested =
-      currentPaymentStatus === 'paid' &&
-      requestedPaymentUnlock === 'pending' &&
-      unlockReasonCombined.length >= 5;
-    if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate && !unlockFromPaidRequested) {
-      return res.status(409).json({
-        error: 'Pago marcado como pagado: responde el motivo y desbloquea (pasa a pendiente) antes de editar.',
-      });
     }
     let internal_status = curEstado;
     if (body.internal_status !== undefined) {
@@ -4715,10 +4771,6 @@ app.put(
         if (LOCKED_MOTICO_STATUSES.has(manualStatus)) {
           return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
         }
-        const manualPaymentStatus = normalizeMoticoPaymentStatus(rows[0].financial_status);
-        if (manualPaymentStatus === 'paid') {
-          return res.status(409).json({ error: 'El pedido está bloqueado (pagado) y no se puede modificar.' });
-        }
         let ship = rows[0].shipping_json;
         if (typeof ship === 'string') {
           try {
@@ -4777,10 +4829,6 @@ app.put(
           : MOTICO_STATUS_DEFAULT;
       if (LOCKED_MOTICO_STATUSES.has(lockedStatus)) {
         return res.status(409).json({ error: 'El pedido está bloqueado (despachado/cancelado) y no se puede modificar.' });
-      }
-      const paymentStatus = normalizeMoticoPaymentStatus(lockRows[0]?.payment_status_override);
-      if (paymentStatus === 'paid') {
-        return res.status(409).json({ error: 'El pedido está bloqueado (pagado) y no se puede modificar.' });
       }
       const { rows: internalLockRows } = await pool.query(
         `SELECT internal_status

@@ -408,7 +408,6 @@ export default function PedidosPage() {
   const [unlockOrder, setUnlockOrder] = useState<ShopifyOrderRow | null>(null);
   const [unlockReason, setUnlockReason] = useState('');
   const [unlocking, setUnlocking] = useState(false);
-  const [unlockKind, setUnlockKind] = useState<'estado' | 'pago'>('estado');
   const priceTimers = useRef<Map<number, number>>(new Map());
   const qtyTimers = useRef<Map<number, number>>(new Map());
   const ordersRequestAbortRef = useRef<AbortController | null>(null);
@@ -720,15 +719,6 @@ export default function PedidosPage() {
       return;
     }
     if (st === 'despachado' || st === 'cancelado') {
-      setUnlockKind('estado');
-      setUnlockOrder(row);
-      setUnlockReason('');
-      setShopifyError('');
-      return;
-    }
-    const payOv = String(row.payment_status_override || '').toLowerCase();
-    if (payOv === 'paid') {
-      setUnlockKind('pago');
       setUnlockOrder(row);
       setUnlockReason('');
       setShopifyError('');
@@ -750,20 +740,18 @@ export default function PedidosPage() {
     }
     setUnlocking(true);
     try {
-      const body =
-        unlockKind === 'pago'
-          ? { payment_status: 'pending', unlock_reason: reason }
-          : { internal_status: 'sin_revisar', unlock_reason: reason };
-      const ok = await patchLocalFields(unlockOrder.id, body);
+      const ok = await patchLocalFields(unlockOrder.id, {
+        internal_status: 'sin_revisar',
+        unlock_reason: reason,
+      });
       if (!ok) return;
       setUnlockOrder(null);
       setUnlockReason('');
-      setUnlockKind('estado');
       navigate(`/pedidos/editar/${unlockOrder.id}`);
     } finally {
       setUnlocking(false);
     }
-  }, [navigate, patchLocalFields, unlockOrder, unlockReason, unlockKind]);
+  }, [navigate, patchLocalFields, unlockOrder, unlockReason]);
 
   useEffect(() => {
     return () => {
@@ -1502,7 +1490,6 @@ export default function PedidosPage() {
                   ? filteredShopify.map((o, i, arr) => {
                       const isLocked = isOrderLockedInPedidos(o);
                       const stLower = String(o.internal_status || '').toLowerCase();
-                      const payLockedKovo = String(o.payment_status_override || '').toLowerCase() === 'paid';
                       const editDisabledFromPedidos = o.id < 0 || isOrderManagedByMotico(o);
                       return (
                         <tr key={o.id}>
@@ -1734,7 +1721,7 @@ export default function PedidosPage() {
                               title={
                                 o.id < 0 || isOrderManagedByMotico(o)
                                   ? 'Edita desde el módulo Motico.'
-                                  : stLower === 'despachado' || stLower === 'cancelado' || payLockedKovo
+                                  : stLower === 'despachado' || stLower === 'cancelado'
                                     ? 'Responde motivo y desbloquea para editar'
                                     : 'Abrir editor'
                               }
@@ -1823,11 +1810,9 @@ export default function PedidosPage() {
             }}
           >
             <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>
-              {unlockKind === 'pago'
-                ? 'Desbloquear pago (pagado → pendiente)'
-                : String(unlockOrder.internal_status || '').toLowerCase() === 'cancelado'
-                  ? 'Desbloquear pedido cancelado'
-                  : 'Desbloquear pedido despachado'}
+              {String(unlockOrder.internal_status || '').toLowerCase() === 'cancelado'
+                ? 'Desbloquear pedido cancelado'
+                : 'Desbloquear pedido despachado'}
             </h3>
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.4 }}>
               Pedido <strong>{unlockOrder.orderName}</strong>. Para editarlo debes responder el motivo de desbloqueo
@@ -1860,7 +1845,6 @@ export default function PedidosPage() {
                   if (unlocking) return;
                   setUnlockOrder(null);
                   setUnlockReason('');
-                  setUnlockKind('estado');
                 }}
                 disabled={unlocking}
                 style={{
