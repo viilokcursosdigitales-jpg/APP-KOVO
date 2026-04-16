@@ -48,6 +48,7 @@ const MOTICO_PAYMENT_OPTIONS = [
   { value: 'pending', label: 'Pendiente de pago' },
   { value: 'paid', label: 'Pagado' },
   { value: 'refunded', label: 'Devolución' },
+  { value: 'double_freight', label: 'Doble flete' },
   { value: 'cancelado', label: 'Cancelado' },
 ] as const;
 type MoticoPaymentStatusValue = (typeof MOTICO_PAYMENT_OPTIONS)[number]['value'];
@@ -57,6 +58,7 @@ const MOTICO_PAYMENT_META: Record<
 > = {
   pending: { bg: '#ffedd5', fg: '#9a3412', border: '#fdba74' },
   refunded: { bg: '#fee2e2', fg: '#7f1d1d', border: '#fca5a5' },
+  double_freight: { bg: '#dbeafe', fg: '#1e3a8a', border: '#93c5fd', fontWeight: 700 },
   paid: { bg: '#6c47ff', fg: '#ffffff', border: '#6c47ff', fontWeight: 700 },
   cancelado: { bg: '#f3f4f6', fg: '#374151', border: '#d1d5db', fontWeight: 600 },
 };
@@ -79,6 +81,7 @@ function normalizeMoticoPaymentStatus(raw: string | undefined | null): MoticoPay
   const v = String(raw || '').trim().toLowerCase();
   if (v === 'paid') return 'paid';
   if (v === 'refunded') return 'refunded';
+  if (v === 'double_freight') return 'double_freight';
   if (v === 'cancelado') return 'cancelado';
   return 'pending';
 }
@@ -366,7 +369,7 @@ type ManualCreateDraft = {
     variant_id: string;
     quantity: string;
   }[];
-  financial_status: 'paid' | 'pending' | 'unpaid' | 'refunded' | 'cancelado';
+  financial_status: 'paid' | 'pending' | 'unpaid' | 'refunded' | 'double_freight' | 'cancelado';
   province: string;
   city: string;
   address1: string;
@@ -583,7 +586,12 @@ function computeAnticipoAmountFromRow(o: MoticoOrderRow): number {
   return Math.max(0, total - pending - pagoAlRecibir);
 }
 
-/** Pendiente pago proveedor = pago al recibir − costo producto Motico − costo flete Motico (0 si pedido cancelado o pago pendiente). */
+/** Pendiente pago proveedor:
+ * - Devolución: costo flete Motico
+ * - Doble flete: costo flete Motico x2
+ * - Cancelado/pending: 0
+ * - Resto: pago al recibir - costo producto - costo flete
+ */
 function computePendientePagoProveedorFromRow(
   o: Pick<
     MoticoOrderRow,
@@ -594,6 +602,12 @@ function computePendientePagoProveedorFromRow(
   if (orderSt === 'cancelado') return 0;
   const pay = normalizeMoticoPaymentStatus(o.financialStatus);
   if (pay === 'pending' || pay === 'cancelado') return 0;
+  const fc =
+    o.freight_cost_motico != null && Number.isFinite(Number(o.freight_cost_motico))
+      ? Number(o.freight_cost_motico)
+      : 0;
+  if (pay === 'refunded') return fc;
+  if (pay === 'double_freight') return fc * 2;
   const pagoRecibir =
     o.pago_al_recibir_override != null && Number.isFinite(Number(o.pago_al_recibir_override))
       ? Math.max(0, Number(o.pago_al_recibir_override))
@@ -601,10 +615,6 @@ function computePendientePagoProveedorFromRow(
   const pc =
     o.product_cost_motico != null && Number.isFinite(Number(o.product_cost_motico))
       ? Number(o.product_cost_motico)
-      : 0;
-  const fc =
-    o.freight_cost_motico != null && Number.isFinite(Number(o.freight_cost_motico))
-      ? Number(o.freight_cost_motico)
       : 0;
   return pagoRecibir - pc - fc;
 }
@@ -2677,7 +2687,7 @@ export default function MoticoPage() {
                   </Th>
                   <Th
                     style={{ ...moticoThPad, ...orderListTheadStickyCell }}
-                    title="Pago al recibir − costo producto − costo flete. 0 si el pedido está cancelado o el pago es pendiente. Positivo: verde; negativo: rojo."
+                    title="Devolución: costo flete Motico. Doble flete: costo flete x2. Cancelado/Pendiente: 0. En otros estados: pago al recibir − costo producto − costo flete."
                   >
                     Pendiente de pago proveedor
                   </Th>
@@ -3712,6 +3722,7 @@ export default function MoticoPage() {
                 <option value="unpaid">Sin pagar</option>
                 <option value="paid">Pagado</option>
                 <option value="refunded">Devolución</option>
+                <option value="double_freight">Doble flete</option>
                 <option value="cancelado">Cancelado</option>
               </select>
             </label>

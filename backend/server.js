@@ -2380,7 +2380,7 @@ const SHOPIFY_INTERNAL_STATUSES = new Set(UNIFIED_ORDER_ESTADO_LIST);
 const SHOPIFY_MOTICO_STATUSES = SHOPIFY_INTERNAL_STATUSES;
 const SHOPIFY_MENSAJEROS = new Set(['motico', 'dropi', 'effix']);
 const MOTICO_STATUS_DEFAULT = 'sin_revisar';
-const MOTICO_PAYMENT_STATUSES = new Set(['pending', 'paid', 'refunded', 'cancelado']);
+const MOTICO_PAYMENT_STATUSES = new Set(['pending', 'paid', 'refunded', 'double_freight', 'cancelado']);
 const LOCKED_MOTICO_STATUSES = new Set(['despachado', 'cancelado']);
 const LOCKED_INTERNAL_STATUSES = new Set(['despachado', 'cancelado']);
 
@@ -5066,7 +5066,17 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
         ? qtyFallback
         : 1;
     const fin = String(body.financial_status || 'pending').toLowerCase();
-    const allowedFin = new Set(['paid', 'pending', 'unpaid', 'partially_paid', 'authorized', 'voided', 'refunded', 'cancelado']);
+    const allowedFin = new Set([
+      'paid',
+      'pending',
+      'unpaid',
+      'partially_paid',
+      'authorized',
+      'voided',
+      'refunded',
+      'double_freight',
+      'cancelado',
+    ]);
     const financial_status = allowedFin.has(fin) ? fin : 'pending';
 
     let currency = String(body.currency || '').trim();
