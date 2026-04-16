@@ -2549,6 +2549,8 @@ function mapMoticoManualOrderRowFromDb(r) {
           },
         ];
   const financialStatus = String(r.financial_status || 'pending');
+  const financialStatusLower = financialStatus.toLowerCase();
+  const payment_status_override = MOTICO_PAYMENT_STATUSES.has(financialStatusLower) ? financialStatusLower : null;
   const b = mapFinancialToBadge(financialStatus);
   const totalOutstanding =
     r.total_outstanding != null && String(r.total_outstanding).trim() !== ''
@@ -2614,6 +2616,7 @@ function mapMoticoManualOrderRowFromDb(r) {
       total_a_pagar_override != null && Number.isFinite(total_a_pagar_override) ? total_a_pagar_override : null,
     total_a_pagar,
     pago_al_recibir_override,
+    payment_status_override,
     assigned_date,
     is_motico_manual: true,
   };
@@ -3458,11 +3461,13 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
     }
     let orders = normalized.map((o) => {
       const lf = localMap.get(Number(o.id));
-      const payment_status_override =
-        lf?.payment_status_override != null ? String(lf.payment_status_override).toLowerCase() : '';
-      const financialStatus = MOTICO_PAYMENT_STATUSES.has(payment_status_override)
-        ? payment_status_override
-        : String(o.financialStatus || '').toLowerCase();
+      const paymentOverrideRaw =
+        lf?.payment_status_override != null && String(lf.payment_status_override).trim() !== ''
+          ? String(lf.payment_status_override).toLowerCase().trim()
+          : '';
+      const payment_status_override = MOTICO_PAYMENT_STATUSES.has(paymentOverrideRaw) ? paymentOverrideRaw : null;
+      const financialStatus =
+        payment_status_override != null ? payment_status_override : String(o.financialStatus || '').toLowerCase();
       const paymentBadge = mapFinancialToBadge(financialStatus);
       const unifiedEstado = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
       const total_a_pagar_default = shopifyDefaultTotalAPagar(o);
@@ -3496,6 +3501,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
           : null,
         total_a_pagar,
         pago_al_recibir_override,
+        payment_status_override,
         shopifyTotal: o.total,
         shopifyQuantity: o.defaultQuantity,
       };
@@ -3564,11 +3570,13 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
     const o = normalized[0];
     const localMap = await loadLocalFieldsMap(req.organizationId, [orderId]);
     const lf = localMap.get(orderId);
-    const payment_status_override =
-      lf?.payment_status_override != null ? String(lf.payment_status_override).toLowerCase() : '';
-    const financialStatus = MOTICO_PAYMENT_STATUSES.has(payment_status_override)
-      ? payment_status_override
-      : String(o.financialStatus || '').toLowerCase();
+    const paymentOverrideRaw =
+      lf?.payment_status_override != null && String(lf.payment_status_override).trim() !== ''
+        ? String(lf.payment_status_override).toLowerCase().trim()
+        : '';
+    const payment_status_override = MOTICO_PAYMENT_STATUSES.has(paymentOverrideRaw) ? paymentOverrideRaw : null;
+    const financialStatus =
+      payment_status_override != null ? payment_status_override : String(o.financialStatus || '').toLowerCase();
     const paymentBadge = mapFinancialToBadge(financialStatus);
     const unifiedEstado = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
     const total_a_pagar_default = shopifyDefaultTotalAPagar(o);
@@ -3600,6 +3608,7 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
         total_a_pagar_override != null && Number.isFinite(total_a_pagar_override) ? total_a_pagar_override : null,
       total_a_pagar,
       pago_al_recibir_override,
+      payment_status_override,
       shopifyTotal: o.total,
       shopifyQuantity: o.defaultQuantity,
     };
@@ -4221,8 +4230,16 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         return res.status(409).json({ error: msg });
       }
       const currentPaymentStatus = normalizeMoticoPaymentStatus(cur.financial_status);
-      if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate) {
-        return res.status(409).json({ error: 'El pedido está bloqueado (pagado) y no se puede modificar.' });
+      const requestedPaymentUnlockManual =
+        body.payment_status !== undefined ? String(body.payment_status || '').trim().toLowerCase() : '';
+      const unlockFromPaidManualRequested =
+        currentPaymentStatus === 'paid' &&
+        requestedPaymentUnlockManual === 'pending' &&
+        unlockReason.length >= 5;
+      if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate && !unlockFromPaidManualRequested) {
+        return res.status(409).json({
+          error: 'Pago marcado como pagado: responde el motivo y desbloquea (pasa a pendiente) antes de editar.',
+        });
       }
       let price_override = cur.price_override != null ? Number(cur.price_override) : null;
       if (body.price_override !== undefined) {
@@ -4403,6 +4420,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         quantity_override,
         mensajero: 'motico',
         motico_status,
+        payment_status_override: financial_status,
         financial_status,
         label: paymentBadge.label,
         badgeVariant: paymentBadge.variant,
@@ -4440,8 +4458,16 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       return res.status(409).json({ error: msg });
     }
     const currentPaymentStatus = normalizeMoticoPaymentStatus(cur.payment_status_override);
-    if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate) {
-      return res.status(409).json({ error: 'El pedido está bloqueado (pagado) y no se puede modificar.' });
+    const requestedPaymentUnlock =
+      body.payment_status !== undefined ? String(body.payment_status || '').trim().toLowerCase() : '';
+    const unlockFromPaidRequested =
+      currentPaymentStatus === 'paid' &&
+      requestedPaymentUnlock === 'pending' &&
+      unlockReasonCombined.length >= 5;
+    if (currentPaymentStatus === 'paid' && !onlyPaymentStatusUpdate && !unlockFromPaidRequested) {
+      return res.status(409).json({
+        error: 'Pago marcado como pagado: responde el motivo y desbloquea (pasa a pendiente) antes de editar.',
+      });
     }
     let internal_status = curEstado;
     if (body.internal_status !== undefined) {
@@ -4639,6 +4665,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       quantity_override,
       mensajero,
       motico_status,
+      payment_status_override,
       financial_status: payment_status_override || null,
       label: payment_status_override ? mapFinancialToBadge(payment_status_override).label : null,
       badgeVariant: payment_status_override ? mapFinancialToBadge(payment_status_override).variant : null,

@@ -755,6 +755,8 @@ export default function MoticoPage() {
   const [unlockOrder, setUnlockOrder] = useState<MoticoOrderRow | null>(null);
   const [unlockReason, setUnlockReason] = useState('');
   const [unlocking, setUnlocking] = useState(false);
+  /** Desbloqueo por estado (despachado/cancelado) o por pago KOVO marcado «pagado». */
+  const [unlockKind, setUnlockKind] = useState<'estado' | 'pago'>('estado');
 
   const [manualModalOpen, setManualModalOpen] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualCreateDraft>(() => emptyManualDraft());
@@ -1323,7 +1325,16 @@ export default function MoticoPage() {
 
   const openOrderEditor = useCallback((o: MoticoOrderRow) => {
     const st = String(o.motico_status || '').toLowerCase();
+    const paymentPaid = normalizeMoticoPaymentStatus(o.financialStatus) === 'paid';
     if (st === 'despachado' || st === 'cancelado') {
+      setUnlockKind('estado');
+      setUnlockOrder(o);
+      setUnlockReason('');
+      setSyncError('');
+      return;
+    }
+    if (paymentPaid) {
+      setUnlockKind('pago');
       setUnlockOrder(o);
       setUnlockReason('');
       setSyncError('');
@@ -1347,20 +1358,26 @@ export default function MoticoPage() {
     }
     setUnlocking(true);
     try {
-      const ok = await patchLocalFields(unlockOrder.id, {
-        internal_status: 'sin_revisar',
-        unlock_reason: reason,
-      });
+      const body =
+        unlockKind === 'pago'
+          ? { payment_status: 'pending', unlock_reason: reason }
+          : { internal_status: 'sin_revisar', unlock_reason: reason };
+      const ok = await patchLocalFields(unlockOrder.id, body);
       if (!ok) return;
-      const unlockedShadow = normalizeRow({ ...unlockOrder, internal_status: 'sin_revisar', motico_status: 'sin_revisar' });
+      const unlockedShadow = normalizeRow(
+        unlockKind === 'pago'
+          ? { ...unlockOrder, financialStatus: 'pending' }
+          : { ...unlockOrder, internal_status: 'sin_revisar', motico_status: 'sin_revisar' },
+      );
       setUnlockOrder(null);
       setUnlockReason('');
+      setUnlockKind('estado');
       setEditorDraft(draftFromOrder(unlockedShadow));
       setEditorOrder(unlockedShadow);
     } finally {
       setUnlocking(false);
     }
-  }, [patchLocalFields, unlockOrder, unlockReason]);
+  }, [patchLocalFields, unlockOrder, unlockReason, unlockKind]);
 
   const saveOrderEditor = useCallback(async () => {
     if (!editorOrder) return;
@@ -2672,8 +2689,9 @@ export default function MoticoPage() {
                   const stMot = String(o.motico_status || '').toLowerCase();
                   const isDespachadoMotico = stMot === 'despachado';
                   const isCanceladoMotico = stMot === 'cancelado';
+                  const paymentPaidRow = paymentStatus === 'paid';
                   const canUnlockFromLockedEstado = isDespachadoMotico || isCanceladoMotico;
-                  const editButtonDisabled = editLocked && !canUnlockFromLockedEstado;
+                  const editButtonDisabled = editLocked && !canUnlockFromLockedEstado && !paymentPaidRow;
                   const paymentStatusLocked = isCanceladoMotico;
                   const sa = o.shippingAddress;
                   const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
@@ -2947,10 +2965,10 @@ export default function MoticoPage() {
                           }}
                           disabled={editButtonDisabled}
                           title={
-                            isDespachadoMotico || isCanceladoMotico
+                            isDespachadoMotico || isCanceladoMotico || paymentPaidRow
                               ? 'Responde motivo y desbloquea para editar'
                               : editLocked
-                                ? 'Pedido pagado: edición bloqueada'
+                                ? 'Edición bloqueada'
                                 : 'Editar pedido'
                           }
                         >
@@ -3001,9 +3019,11 @@ export default function MoticoPage() {
             }}
           >
             <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>
-              {String(unlockOrder.motico_status || '').toLowerCase() === 'cancelado'
-                ? 'Desbloquear pedido cancelado'
-                : 'Desbloquear pedido despachado'}
+              {unlockKind === 'pago'
+                ? 'Desbloquear pago (pagado → pendiente)'
+                : String(unlockOrder.motico_status || '').toLowerCase() === 'cancelado'
+                  ? 'Desbloquear pedido cancelado'
+                  : 'Desbloquear pedido despachado'}
             </h3>
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.4 }}>
               Pedido <strong>{unlockOrder.orderName}</strong>. Para editarlo debes responder el motivo de desbloqueo
@@ -3036,6 +3056,7 @@ export default function MoticoPage() {
                   if (unlocking) return;
                   setUnlockOrder(null);
                   setUnlockReason('');
+                  setUnlockKind('estado');
                 }}
                 disabled={unlocking}
                 style={{

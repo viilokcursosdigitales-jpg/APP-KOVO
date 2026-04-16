@@ -81,6 +81,8 @@ type ShopifyOrderRow = {
   total: string;
   currency: string;
   financialStatus: string;
+  /** Override KOVO/Motico en `shopify_order_local_fields`; null si no aplica. */
+  payment_status_override?: string | null;
   label: string;
   badgeVariant: StatusBadgeVariant;
   defaultQuantity: number;
@@ -406,6 +408,7 @@ export default function PedidosPage() {
   const [unlockOrder, setUnlockOrder] = useState<ShopifyOrderRow | null>(null);
   const [unlockReason, setUnlockReason] = useState('');
   const [unlocking, setUnlocking] = useState(false);
+  const [unlockKind, setUnlockKind] = useState<'estado' | 'pago'>('estado');
   const priceTimers = useRef<Map<number, number>>(new Map());
   const qtyTimers = useRef<Map<number, number>>(new Map());
   const ordersRequestAbortRef = useRef<AbortController | null>(null);
@@ -437,6 +440,10 @@ export default function PedidosPage() {
       shippingProvince: o.shippingProvince || '',
       shippingAddressLine: o.shippingAddressLine || '',
       phoneLocal: typeof o.phoneLocal === 'string' ? o.phoneLocal.trim() : '',
+      payment_status_override:
+        o.payment_status_override != null && String(o.payment_status_override).trim() !== ''
+          ? String(o.payment_status_override).toLowerCase().trim()
+          : null,
     };
   }, []);
 
@@ -558,6 +565,10 @@ export default function PedidosPage() {
       quantity_override?: number | null;
       mensajero?: string | null;
       motico_status?: string;
+      financial_status?: string | null;
+      payment_status_override?: string | null;
+      label?: string | null;
+      badgeVariant?: StatusBadgeVariant | null;
     };
     setShopifyError('');
     setShopifyOrders((prev) =>
@@ -569,14 +580,34 @@ export default function PedidosPage() {
               String(data.internal_status ?? data.motico_status ?? o.internal_status),
             )
           : null;
-        return {
-          ...o,
-          internal_status: nextEstado !== null ? nextEstado : o.internal_status,
-          price_override: data.price_override !== undefined ? data.price_override : o.price_override,
-          quantity_override: data.quantity_override !== undefined ? data.quantity_override : o.quantity_override,
-          mensajero: data.mensajero !== undefined ? data.mensajero : o.mensajero,
-          motico_status: nextEstado !== null ? nextEstado : o.motico_status,
-        };
+        const patch: Partial<ShopifyOrderRow> = {};
+        if (nextEstado !== null) {
+          patch.internal_status = nextEstado;
+          patch.motico_status = nextEstado;
+        }
+        if (data.price_override !== undefined) patch.price_override = data.price_override;
+        if (data.quantity_override !== undefined) patch.quantity_override = data.quantity_override;
+        if (data.mensajero !== undefined) patch.mensajero = data.mensajero;
+        if (data.financial_status !== undefined) {
+          const fs = String(data.financial_status || '').toLowerCase().trim() || 'pending';
+          patch.financialStatus = ['pending', 'paid', 'refunded'].includes(fs) ? fs : o.financialStatus;
+        }
+        if (data.label !== undefined && data.label != null && String(data.label).trim() !== '') {
+          patch.label = String(data.label);
+        }
+        if (data.badgeVariant !== undefined && data.badgeVariant != null) {
+          const bv = String(data.badgeVariant);
+          if (['success', 'paused', 'error', 'info', 'warning'].includes(bv)) {
+            patch.badgeVariant = bv as StatusBadgeVariant;
+          }
+        }
+        if (data.payment_status_override !== undefined) {
+          patch.payment_status_override =
+            data.payment_status_override != null && String(data.payment_status_override).trim() !== ''
+              ? String(data.payment_status_override).toLowerCase().trim()
+              : null;
+        }
+        return { ...o, ...patch };
       }),
     );
     setPriceDraft((d) => {
@@ -689,6 +720,15 @@ export default function PedidosPage() {
       return;
     }
     if (st === 'despachado' || st === 'cancelado') {
+      setUnlockKind('estado');
+      setUnlockOrder(row);
+      setUnlockReason('');
+      setShopifyError('');
+      return;
+    }
+    const payOv = String(row.payment_status_override || '').toLowerCase();
+    if (payOv === 'paid') {
+      setUnlockKind('pago');
       setUnlockOrder(row);
       setUnlockReason('');
       setShopifyError('');
@@ -710,18 +750,20 @@ export default function PedidosPage() {
     }
     setUnlocking(true);
     try {
-      const ok = await patchLocalFields(unlockOrder.id, {
-        internal_status: 'sin_revisar',
-        unlock_reason: reason,
-      });
+      const body =
+        unlockKind === 'pago'
+          ? { payment_status: 'pending', unlock_reason: reason }
+          : { internal_status: 'sin_revisar', unlock_reason: reason };
+      const ok = await patchLocalFields(unlockOrder.id, body);
       if (!ok) return;
       setUnlockOrder(null);
       setUnlockReason('');
+      setUnlockKind('estado');
       navigate(`/pedidos/editar/${unlockOrder.id}`);
     } finally {
       setUnlocking(false);
     }
-  }, [navigate, patchLocalFields, unlockOrder, unlockReason]);
+  }, [navigate, patchLocalFields, unlockOrder, unlockReason, unlockKind]);
 
   useEffect(() => {
     return () => {
@@ -1460,6 +1502,7 @@ export default function PedidosPage() {
                   ? filteredShopify.map((o, i, arr) => {
                       const isLocked = isOrderLockedInPedidos(o);
                       const stLower = String(o.internal_status || '').toLowerCase();
+                      const payLockedKovo = String(o.payment_status_override || '').toLowerCase() === 'paid';
                       const editDisabledFromPedidos = o.id < 0 || isOrderManagedByMotico(o);
                       return (
                         <tr key={o.id}>
@@ -1691,7 +1734,7 @@ export default function PedidosPage() {
                               title={
                                 o.id < 0 || isOrderManagedByMotico(o)
                                   ? 'Edita desde el módulo Motico.'
-                                  : stLower === 'despachado' || stLower === 'cancelado'
+                                  : stLower === 'despachado' || stLower === 'cancelado' || payLockedKovo
                                     ? 'Responde motivo y desbloquea para editar'
                                     : 'Abrir editor'
                               }
@@ -1780,9 +1823,11 @@ export default function PedidosPage() {
             }}
           >
             <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>
-              {String(unlockOrder.internal_status || '').toLowerCase() === 'cancelado'
-                ? 'Desbloquear pedido cancelado'
-                : 'Desbloquear pedido despachado'}
+              {unlockKind === 'pago'
+                ? 'Desbloquear pago (pagado → pendiente)'
+                : String(unlockOrder.internal_status || '').toLowerCase() === 'cancelado'
+                  ? 'Desbloquear pedido cancelado'
+                  : 'Desbloquear pedido despachado'}
             </h3>
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.4 }}>
               Pedido <strong>{unlockOrder.orderName}</strong>. Para editarlo debes responder el motivo de desbloqueo
@@ -1815,6 +1860,7 @@ export default function PedidosPage() {
                   if (unlocking) return;
                   setUnlockOrder(null);
                   setUnlockReason('');
+                  setUnlockKind('estado');
                 }}
                 disabled={unlocking}
                 style={{
