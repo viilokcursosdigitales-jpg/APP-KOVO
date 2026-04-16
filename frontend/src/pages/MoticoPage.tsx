@@ -327,6 +327,19 @@ const moticoOrderDeleteBtn: CSSProperties = {
   lineHeight: 1.1,
 };
 
+const moticoOrderRemoveBtn: CSSProperties = {
+  flexShrink: 0,
+  padding: '5px 8px',
+  borderRadius: 8,
+  border: `1px solid ${ds.warningText}`,
+  background: ds.warningBg,
+  color: ds.warningText,
+  cursor: 'pointer',
+  fontSize: 11,
+  fontWeight: 700,
+  lineHeight: 1.1,
+};
+
 const modalFieldStyle: CSSProperties = {
   width: '100%',
   maxWidth: '100%',
@@ -822,6 +835,9 @@ export default function MoticoPage() {
   const [deleteOrder, setDeleteOrder] = useState<MoticoOrderRow | null>(null);
   const [deleteReason, setDeleteReason] = useState('');
   const [deleting, setDeleting] = useState(false);
+  const [removeOrder, setRemoveOrder] = useState<MoticoOrderRow | null>(null);
+  const [removeReason, setRemoveReason] = useState('');
+  const [removing, setRemoving] = useState(false);
 
   const [manualModalOpen, setManualModalOpen] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualCreateDraft>(() => emptyManualDraft());
@@ -1418,6 +1434,47 @@ export default function MoticoPage() {
       setDeleting(false);
     }
   }, [deleteOrder, deleteReason]);
+
+  const openRemoveFromMoticoOrder = useCallback((o: MoticoOrderRow) => {
+    const st = String(o.motico_status || '').trim().toLowerCase();
+    if (st !== 'sin_revisar') {
+      setSyncError('Solo se pueden quitar pedidos con estado sin revisar.');
+      return;
+    }
+    if (o.is_motico_manual || o.id < 0) {
+      setSyncError('Los pedidos manuales no se pueden quitar de Motico; solo eliminarse.');
+      return;
+    }
+    setSyncError('');
+    setRemoveOrder(o);
+    setRemoveReason('');
+  }, []);
+
+  const submitRemoveFromMoticoOrder = useCallback(async () => {
+    if (!removeOrder) return;
+    const reason = removeReason.trim();
+    if (reason.length < 5) {
+      setSyncError('Escribe un motivo para quitar de Motico (mínimo 5 caracteres).');
+      return;
+    }
+    setRemoving(true);
+    try {
+      const ok = await patchLocalFields(removeOrder.id, {
+        mensajero: null,
+        internal_status: 'sin_revisar',
+        motico_status: 'sin_revisar',
+        unlock_reason: reason,
+      });
+      if (!ok) return;
+      setOrders((prev) => prev.filter((x) => x.id !== removeOrder.id));
+      setSelectedIds((prev) => prev.filter((id) => id !== removeOrder.id));
+      setRemoveOrder(null);
+      setRemoveReason('');
+      setSyncError('');
+    } finally {
+      setRemoving(false);
+    }
+  }, [removeOrder, removeReason, patchLocalFields]);
 
   const submitUnlockDespachado = useCallback(async () => {
     if (!unlockOrder) return;
@@ -2783,6 +2840,8 @@ export default function MoticoPage() {
                   const canUnlockFromLockedEstado = isDespachadoMotico || isCanceladoMotico;
                   const editButtonDisabled = editLocked && !canUnlockFromLockedEstado;
                   const canDeletePrueba = isMoticoPruebaOrder(o) && (o.is_motico_manual || o.id < 0);
+                  const canRemoveFromMotico =
+                    String(o.motico_status || '').trim().toLowerCase() === 'sin_revisar' && !(o.is_motico_manual || o.id < 0);
                   const paymentStatusLocked = isCanceladoMotico;
                   const sa = o.shippingAddress;
                   const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
@@ -3124,6 +3183,17 @@ export default function MoticoPage() {
                               Eliminar
                             </button>
                           ) : null}
+                          {canRemoveFromMotico ? (
+                            <button
+                              type="button"
+                              onClick={() => openRemoveFromMoticoOrder(o)}
+                              style={moticoOrderRemoveBtn}
+                              title="Quitar pedido de Motico (queda en Pedidos como sin revisar)"
+                              aria-label={`Quitar pedido ${o.orderName} de Motico`}
+                            >
+                              Quitar
+                            </button>
+                          ) : null}
                         </div>
                       </Td>
                     </tr>
@@ -3331,6 +3401,100 @@ export default function MoticoPage() {
                 }}
               >
                 {deleting ? 'Eliminando…' : 'Eliminar'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {removeOrder ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.18)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(560px, calc(100vw - 28px))',
+              maxHeight: 'calc(100vh - 36px)',
+              overflowY: 'auto',
+              background: ds.bgCard,
+              border: `1px solid ${ds.borderCard}`,
+              borderRadius: 14,
+              boxShadow: '0 16px 44px rgba(15,23,42,0.16)',
+              padding: 18,
+            }}
+          >
+            <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>Quitar pedido de Motico</h3>
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.4 }}>
+              Pedido <strong>{removeOrder.orderName}</strong>. Responde el motivo para habilitar <strong>Quitar</strong>.
+              En Pedidos quedará con estado <strong>sin revisar</strong>.
+            </p>
+            <label style={{ display: 'block', fontSize: 12, color: ds.textSecondary, fontWeight: 600 }}>
+              Motivo de quitar *
+              <textarea
+                value={removeReason}
+                onChange={(e) => setRemoveReason(e.target.value)}
+                placeholder="Escribe el motivo para quitar de Motico..."
+                style={{
+                  marginTop: 6,
+                  width: '100%',
+                  minHeight: 94,
+                  borderRadius: 10,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgSubtle,
+                  color: ds.textPrimary,
+                  padding: '10px 11px',
+                  fontSize: 13,
+                  resize: 'vertical',
+                }}
+              />
+            </label>
+            <div style={{ display: 'flex', gap: 10, marginTop: 14, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (removing) return;
+                  setRemoveOrder(null);
+                  setRemoveReason('');
+                }}
+                disabled={removing}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textSecondary,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: removing ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitRemoveFromMoticoOrder()}
+                disabled={removing || removeReason.trim().length < 5}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: ds.warningText,
+                  color: '#fff',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: removing || removeReason.trim().length < 5 ? 'not-allowed' : 'pointer',
+                  opacity: removing || removeReason.trim().length < 5 ? 0.7 : 1,
+                }}
+              >
+                {removing ? 'Quitando…' : 'Quitar'}
               </button>
             </div>
           </div>
