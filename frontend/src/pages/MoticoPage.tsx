@@ -614,13 +614,9 @@ function computeAnticipoAmountFromRow(o: MoticoOrderRow): number {
     o.total_a_pagar != null && Number.isFinite(Number(o.total_a_pagar))
       ? Math.max(0, Number(o.total_a_pagar))
       : computedTotalAPagarDefaultFromRow(o);
-  const pagoAlRecibir =
-    o.pago_al_recibir_override != null && Number.isFinite(Number(o.pago_al_recibir_override))
-      ? Math.max(0, Number(o.pago_al_recibir_override))
-      : 0;
-  // Formula solicitada: pendiente = total - anticipo - pago al recibir.
-  // Despejando anticipo: anticipo = total - pendiente - pago al recibir.
-  return Math.max(0, total - pending - pagoAlRecibir);
+  // El editor guarda anticipo como: total_a_pagar = total - anticipo.
+  // Para reflejar exactamente lo digitado, no se descuenta "pago al recibir" aquí.
+  return Math.max(0, total - pending);
 }
 
 /** Pendiente pago proveedor:
