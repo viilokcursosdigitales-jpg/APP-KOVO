@@ -254,9 +254,11 @@ export default function GananciaDiariaPage() {
   });
   const [rangeStartIdx, setRangeStartIdx] = useState(0);
   const [rangeEndIdx, setRangeEndIdx] = useState(0);
+  const [draggingRangeThumb, setDraggingRangeThumb] = useState<'start' | 'end' | null>(null);
   const skipSeriesEffectOnce = useRef(false);
   const appliedDefaultMonthsOnce = useRef(false);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
+  const rangeSliderTrackRef = useRef<HTMLDivElement>(null);
 
   const loadSeries = useCallback(async () => {
     setSeriesLoading(true);
@@ -376,6 +378,41 @@ export default function GananciaDiariaPage() {
       to: dayKeys[effectiveRangeIdx.end] || '',
     };
   }, [dayKeys, effectiveRangeIdx]);
+
+  const maxRangeIdx = Math.max(dayKeys.length - 1, 0);
+  const startPercent = maxRangeIdx > 0 ? (effectiveRangeIdx.start / maxRangeIdx) * 100 : 0;
+  const endPercent = maxRangeIdx > 0 ? (effectiveRangeIdx.end / maxRangeIdx) * 100 : 100;
+
+  const updateRangeThumbAtClientX = useCallback(
+    (thumb: 'start' | 'end', clientX: number) => {
+      const track = rangeSliderTrackRef.current;
+      if (!track || dayKeys.length === 0) return;
+      const rect = track.getBoundingClientRect();
+      if (rect.width <= 0) return;
+      const rel = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+      const idx = Math.round(rel * maxRangeIdx);
+      if (thumb === 'start') {
+        setRangeStartIdx(Math.max(0, Math.min(idx, effectiveRangeIdx.end)));
+      } else {
+        setRangeEndIdx(Math.min(maxRangeIdx, Math.max(idx, effectiveRangeIdx.start)));
+      }
+    },
+    [dayKeys.length, maxRangeIdx, effectiveRangeIdx.start, effectiveRangeIdx.end],
+  );
+
+  useEffect(() => {
+    if (!draggingRangeThumb) return;
+    const onMove = (ev: PointerEvent) => {
+      updateRangeThumbAtClientX(draggingRangeThumb, ev.clientX);
+    };
+    const onUp = () => setDraggingRangeThumb(null);
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+    return () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+    };
+  }, [draggingRangeThumb, updateRangeThumbAtClientX]);
 
   const daysInRange = useMemo(() => {
     if (dayKeys.length === 0 || !selectedRangeDates.from || !selectedRangeDates.to) return days;
@@ -543,33 +580,84 @@ export default function GananciaDiariaPage() {
                   <span>{selectedRangeDates.from ? formatTableDate(selectedRangeDates.from) : '—'}</span>
                   <span>{selectedRangeDates.to ? formatTableDate(selectedRangeDates.to) : '—'}</span>
                 </div>
-                <div style={{ marginTop: 8, display: 'grid', gap: 6 }}>
-                  <label style={{ display: 'grid', gap: 2 }}>
-                    <span style={{ fontSize: 10, color: ds.textHint, fontWeight: 600 }}>Inicio</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={Math.max(dayKeys.length - 1, 0)}
-                      value={effectiveRangeIdx.start}
-                      onChange={(e) => setRangeStartIdx(parseInt(e.target.value, 10) || 0)}
-                      aria-label="Inicio del rango de fechas"
-                      style={{ width: '100%', accentColor: '#6c47ff' }}
-                      disabled={dayKeys.length <= 1}
-                    />
-                  </label>
-                  <label style={{ display: 'grid', gap: 2 }}>
-                    <span style={{ fontSize: 10, color: ds.textHint, fontWeight: 600 }}>Fin</span>
-                    <input
-                      type="range"
-                      min={0}
-                      max={Math.max(dayKeys.length - 1, 0)}
-                      value={effectiveRangeIdx.end}
-                      onChange={(e) => setRangeEndIdx(parseInt(e.target.value, 10) || 0)}
-                      aria-label="Fin del rango de fechas"
-                      style={{ width: '100%', accentColor: '#6c47ff' }}
-                      disabled={dayKeys.length <= 1}
-                    />
-                  </label>
+                <div
+                  ref={rangeSliderTrackRef}
+                  style={{
+                    marginTop: 8,
+                    position: 'relative',
+                    height: 30,
+                    userSelect: 'none',
+                    touchAction: 'none',
+                  }}
+                >
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: 0,
+                      right: 0,
+                      top: '50%',
+                      height: 6,
+                      transform: 'translateY(-50%)',
+                      borderRadius: 999,
+                      background: ds.bgSubtle,
+                      border: `1px solid ${ds.borderCard}`,
+                    }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: `${startPercent}%`,
+                      width: `${Math.max(0, endPercent - startPercent)}%`,
+                      top: '50%',
+                      height: 6,
+                      transform: 'translateY(-50%)',
+                      borderRadius: 999,
+                      background: '#6c47ff',
+                    }}
+                  />
+                  {(['start', 'end'] as const).map((thumb) => {
+                    const isStart = thumb === 'start';
+                    const x = isStart ? startPercent : endPercent;
+                    return (
+                      <button
+                        key={thumb}
+                        type="button"
+                        aria-label={isStart ? 'Inicio del rango de fechas' : 'Fin del rango de fechas'}
+                        disabled={dayKeys.length <= 1}
+                        onPointerDown={(e) => {
+                          if (dayKeys.length <= 1) return;
+                          e.preventDefault();
+                          setDraggingRangeThumb(thumb);
+                          updateRangeThumbAtClientX(thumb, e.clientX);
+                        }}
+                        onKeyDown={(e) => {
+                          if (dayKeys.length <= 1) return;
+                          const delta = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+                          if (!delta) return;
+                          e.preventDefault();
+                          if (isStart) {
+                            setRangeStartIdx((prev) => Math.max(0, Math.min(prev + delta, effectiveRangeIdx.end)));
+                          } else {
+                            setRangeEndIdx((prev) => Math.min(maxRangeIdx, Math.max(prev + delta, effectiveRangeIdx.start)));
+                          }
+                        }}
+                        style={{
+                          position: 'absolute',
+                          left: `calc(${x}% - 8px)`,
+                          top: '50%',
+                          transform: 'translateY(-50%)',
+                          width: 16,
+                          height: 16,
+                          borderRadius: '50%',
+                          border: '2px solid #6c47ff',
+                          background: '#fff',
+                          boxShadow: '0 1px 3px rgba(0,0,0,0.22)',
+                          cursor: dayKeys.length <= 1 ? 'not-allowed' : 'grab',
+                          padding: 0,
+                        }}
+                      />
+                    );
+                  })}
                 </div>
               </div>
               <button
