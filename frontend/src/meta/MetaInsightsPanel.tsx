@@ -392,6 +392,66 @@ function buildSalesByAdFromOrders(rows: InsightRow[], orders: ShopifyOrderAttrib
   return salesByAd;
 }
 
+function buildSalesByCampaignFromOrders(
+  rows: InsightRow[],
+  level: InsightLevel,
+  orders: ShopifyOrderAttribution[],
+  productToCampaigns: Map<number, string[]>,
+): Record<string, number> {
+  const salesByCampaign: Record<string, number> = {};
+  if (rows.length === 0 || orders.length === 0) return salesByCampaign;
+  const campaignRows = campaignsFromInsightRows(rows, level);
+  for (const o of orders) {
+    const matchedCampaigns = attributeOrderToCampaigns(o, campaignRows, productToCampaigns);
+    if (matchedCampaigns.size === 0) continue;
+    const amount = resolveOrderRevenueAmount(o);
+    for (const cid of matchedCampaigns) {
+      salesByCampaign[cid] = (salesByCampaign[cid] || 0) + amount;
+    }
+  }
+  return salesByCampaign;
+}
+
+function buildSalesByAdsetFromOrders(rows: InsightRow[], orders: ShopifyOrderAttribution[]): Record<string, number> {
+  const salesByAdset: Record<string, number> = {};
+  if (rows.length === 0 || orders.length === 0) return salesByAdset;
+  const adsetRows = rows
+    .map((r) => ({ id: String(r.id || '').trim(), campaignId: String(r.campaignId || '').trim() }))
+    .filter((r) => Boolean(r.id));
+
+  for (const o of orders) {
+    const hay = buildShopifyAttributionHaystack(o);
+    const utm = o.utm && typeof o.utm === 'object' ? o.utm : {};
+    const termDig = digitsOnlyKey(String(utm['utm_term'] || '').trim());
+    const contentDig = digitsOnlyKey(String(utm['utm_content'] || '').trim());
+    const utmIdDig = digitsOnlyKey(String(utm['utm_id'] || '').trim());
+    let target: string | null = null;
+
+    if (termDig.length >= 10) {
+      const byTerm = adsetRows.filter((r) => termDig === digitsOnlyKey(r.id));
+      if (byTerm.length === 1) target = byTerm[0].id;
+    }
+    if (!target && contentDig.length >= 10) {
+      const byContent = adsetRows.filter((r) => contentDig === digitsOnlyKey(r.id));
+      if (byContent.length === 1) target = byContent[0].id;
+    }
+    if (!target && utmIdDig.length >= 10) {
+      const byUtmId = adsetRows.filter((r) => utmIdDig === digitsOnlyKey(r.id));
+      if (byUtmId.length === 1) target = byUtmId[0].id;
+    }
+    if (!target && hay) {
+      const byHayAdset = adsetRows.filter((r) => haystackContainsMetaEntityId(hay, r.id));
+      if (byHayAdset.length === 1) target = byHayAdset[0].id;
+    }
+
+    if (target) {
+      const amount = resolveOrderRevenueAmount(o);
+      salesByAdset[target] = (salesByAdset[target] || 0) + amount;
+    }
+  }
+  return salesByAdset;
+}
+
 function shopifyComprasCountForAdRow(counts: Record<string, number>, row: InsightRow): number {
   const id = String(row.id || '').trim();
   if (!id) return 0;
@@ -399,11 +459,11 @@ function shopifyComprasCountForAdRow(counts: Record<string, number>, row: Insigh
   return counts[id] ?? counts[d] ?? 0;
 }
 
-function shopifySalesAmountForAdRow(salesByAd: Record<string, number>, row: InsightRow): number {
+function shopifySalesAmountForInsightRow(salesById: Record<string, number>, row: InsightRow): number {
   const id = String(row.id || '').trim();
   if (!id) return 0;
   const d = digitsOnlyKey(id);
-  const v = salesByAd[id] ?? salesByAd[d] ?? 0;
+  const v = salesById[id] ?? salesById[d] ?? 0;
   return Number.isFinite(v) ? v : 0;
 }
 
@@ -654,7 +714,7 @@ export function MetaInsightsPanel({
   } | null>(null);
   const [shopifyPedidosByCampaign, setShopifyPedidosByCampaign] = useState<Record<string, number>>({});
   const [shopifyComprasByAd, setShopifyComprasByAd] = useState<Record<string, number>>({});
-  const [shopifyVentasByAd, setShopifyVentasByAd] = useState<Record<string, number>>({});
+  const [shopifyVentasByLevel, setShopifyVentasByLevel] = useState<Record<string, number>>({});
   const [shopifyPedidosAvailable, setShopifyPedidosAvailable] = useState(false);
 
   useEffect(() => {
@@ -783,7 +843,7 @@ export function MetaInsightsPanel({
       if (!res.ok) {
         setShopifyPedidosByCampaign({});
         setShopifyComprasByAd({});
-        setShopifyVentasByAd({});
+        setShopifyVentasByLevel({});
         setShopifyPedidosAvailable(false);
         return;
       }
@@ -808,15 +868,22 @@ export function MetaInsightsPanel({
       const countsByAd =
         level === 'ads' ? buildCountsByAdFromOrders(dedupeInsightRowsById(rows, level), orders) : {};
       setShopifyComprasByAd(countsByAd);
-      const salesByAd =
-        level === 'ads' ? buildSalesByAdFromOrders(dedupeInsightRowsById(rows, level), orders) : {};
-      setShopifyVentasByAd(salesByAd);
+      const dedupedRows = dedupeInsightRowsById(rows, level);
+      let salesByLevel: Record<string, number> = {};
+      if (level === 'ads') {
+        salesByLevel = buildSalesByAdFromOrders(dedupedRows, orders);
+      } else if (level === 'campaigns') {
+        salesByLevel = buildSalesByCampaignFromOrders(dedupedRows, level, orders, productToCampaigns);
+      } else {
+        salesByLevel = buildSalesByAdsetFromOrders(dedupedRows, orders);
+      }
+      setShopifyVentasByLevel(salesByLevel);
 
       setShopifyPedidosAvailable(true);
     } catch {
       setShopifyPedidosByCampaign({});
       setShopifyComprasByAd({});
-      setShopifyVentasByAd({});
+      setShopifyVentasByLevel({});
       setShopifyPedidosAvailable(false);
     }
   }, [period, campaignProductLinks, rows, level]);
@@ -868,8 +935,8 @@ export function MetaInsightsPanel({
     [shopifyComprasByAd],
   );
   const shopifyVentasTotalAttributed = useMemo(
-    () => Object.values(shopifyVentasByAd).reduce((a, n) => a + (Number(n) || 0), 0),
-    [shopifyVentasByAd],
+    () => Object.values(shopifyVentasByLevel).reduce((a, n) => a + (Number(n) || 0), 0),
+    [shopifyVentasByLevel],
   );
 
   const load = useCallback(async () => {
@@ -990,7 +1057,7 @@ export function MetaInsightsPanel({
       });
     }
     const roasValue =
-      level === 'ads' && shopifyPedidosAvailable
+      shopifyPedidosAvailable
         ? formatRoasMeta(displayTotals.spend > 0 ? shopifyVentasTotalAttributed / displayTotals.spend : 0)
         : formatRoasMeta(displayTotals.roas);
 
@@ -1346,10 +1413,10 @@ export function MetaInsightsPanel({
               tableRows.map((row) => {
                 const ev = buildRowTargetEvaluation(row, level, campaignProductLinks, targetsByProduct);
                 const rowBg = insightRowBg(ev.rowHighlight);
-                const roasRealAds =
-                  level === 'ads' && shopifyPedidosAvailable
+                const roasRealLevel =
+                  shopifyPedidosAvailable
                     ? (() => {
-                        const sales = shopifySalesAmountForAdRow(shopifyVentasByAd, row);
+                        const sales = shopifySalesAmountForInsightRow(shopifyVentasByLevel, row);
                         return row.spend > 0 && sales > 0 ? sales / row.spend : 0;
                       })()
                     : null;
@@ -1409,11 +1476,11 @@ export function MetaInsightsPanel({
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.ctr) }}>{formatPct(row.ctr)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpc) }}>{formatMoney2(row.cpc)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.roas) }}>
-                      {roasRealAds != null ? formatRoasMeta(roasRealAds) : formatRoasMeta(row.roas)}
+                      {roasRealLevel != null ? formatRoasMeta(roasRealLevel) : formatRoasMeta(row.roas)}
                     </td>
                     <td style={{ padding: '12px 16px' }}>
-                      {roasRealAds != null
-                        ? formatRoasMeta(roasRealAds)
+                      {roasRealLevel != null
+                        ? formatRoasMeta(roasRealLevel)
                         : row.spend > 0 && row.revenue > 0
                           ? formatRoasMeta(row.revenue / row.spend)
                           : '—'}
