@@ -587,8 +587,8 @@ function computeAnticipoAmountFromRow(o: MoticoOrderRow): number {
 }
 
 /** Pendiente pago proveedor:
- * - Devolución: costo flete Motico
- * - Doble flete: costo flete Motico x2
+ * - Devolución: -costo flete Motico
+ * - Doble flete: -costo flete Motico x2
  * - Cancelado/pending: 0
  * - Resto: pago al recibir - costo producto - costo flete
  */
@@ -606,8 +606,8 @@ function computePendientePagoProveedorFromRow(
     o.freight_cost_motico != null && Number.isFinite(Number(o.freight_cost_motico))
       ? Number(o.freight_cost_motico)
       : 0;
-  if (pay === 'refunded') return fc;
-  if (pay === 'double_freight') return fc * 2;
+  if (pay === 'refunded') return -fc;
+  if (pay === 'double_freight') return -(fc * 2);
   const pagoRecibir =
     o.pago_al_recibir_override != null && Number.isFinite(Number(o.pago_al_recibir_override))
       ? Math.max(0, Number(o.pago_al_recibir_override))
