@@ -89,6 +89,9 @@ type ShopifyOrderAttribution = {
   landingSite?: string;
   referringSite?: string;
   sourceName?: string;
+  total?: string;
+  shopifyTotal?: string;
+  price_override?: number | null;
 };
 
 function normalizeAttributionKey(s: string): string {
@@ -313,11 +316,95 @@ function buildCountsByAdFromOrders(rows: InsightRow[], orders: ShopifyOrderAttri
   return countsByAd;
 }
 
+function resolveOrderRevenueAmount(order: ShopifyOrderAttribution): number {
+  const overrideRaw = order.price_override != null ? Number(order.price_override) : NaN;
+  if (Number.isFinite(overrideRaw) && overrideRaw >= 0) return overrideRaw;
+  const baseRaw = Number.parseFloat(String(order.shopifyTotal ?? order.total ?? '0').replace(',', '.'));
+  if (Number.isFinite(baseRaw) && baseRaw >= 0) return baseRaw;
+  return 0;
+}
+
+function buildSalesByAdFromOrders(rows: InsightRow[], orders: ShopifyOrderAttribution[]): Record<string, number> {
+  const salesByAd: Record<string, number> = {};
+  if (rows.length === 0 || orders.length === 0) return salesByAd;
+  const campaignRows = campaignsFromInsightRows(rows, 'ads');
+  for (const o of orders) {
+    const hay = buildShopifyAttributionHaystack(o);
+    const utm = o.utm && typeof o.utm === 'object' ? o.utm : {};
+    const termRaw = String(utm['utm_term'] || '').trim();
+    const termDig = digitsOnlyKey(termRaw);
+
+    let target: string | null = null;
+
+    if (termDig.length >= 10) {
+      const byTerm = rows.filter(
+        (r) => termDig === digitsOnlyKey(String(r.id || '')) || termRaw === String(r.id || '').trim(),
+      );
+      const picked = pickSingleAdRowFromCandidates(byTerm, utm, hay, campaignRows, true);
+      if (picked) target = String(picked.id).trim();
+    }
+
+    if (!target) {
+      const contentRaw = String(utm['utm_content'] || '').trim();
+      const contentDig = digitsOnlyKey(contentRaw);
+      if (contentDig.length >= 10) {
+        const byContent = rows.filter((r) => contentDig === digitsOnlyKey(String(r.id || '')));
+        const picked = pickSingleAdRowFromCandidates(byContent, utm, hay, campaignRows, true);
+        if (picked) target = String(picked.id).trim();
+      }
+    }
+
+    if (!target) {
+      const utmIdDig = digitsOnlyKey(String(utm['utm_id'] || '').trim());
+      if (utmIdDig.length >= 10) {
+        const byUtmId = rows.filter((r) => utmIdDig === digitsOnlyKey(String(r.id || '')));
+        const picked = pickSingleAdRowFromCandidates(byUtmId, utm, hay, campaignRows, true);
+        if (picked) target = String(picked.id).trim();
+      }
+    }
+
+    if (!target) {
+      const byName = adRowsMatchingUtmCreativeName(rows, utm);
+      const picked = pickSingleAdRowFromCandidates(byName, utm, hay, campaignRows, true);
+      if (picked) target = String(picked.id).trim();
+    }
+
+    if (!target && hay) {
+      const idHits = adRowsWhoseIdAppearsInHaystack(rows, hay);
+      const picked = pickSingleAdRowFromCandidates(idHits, utm, hay, campaignRows, true);
+      if (picked) target = String(picked.id).trim();
+    }
+
+    if (!target && hay) {
+      const adsetHits = rows.filter((r) => {
+        const aid = String(r.adsetId || '').trim();
+        return aid && haystackContainsMetaEntityId(hay, aid);
+      });
+      const picked = pickSingleAdRowFromCandidates(adsetHits, utm, hay, campaignRows, false);
+      if (picked) target = String(picked.id).trim();
+    }
+
+    if (target) {
+      const amount = resolveOrderRevenueAmount(o);
+      salesByAd[target] = (salesByAd[target] || 0) + amount;
+    }
+  }
+  return salesByAd;
+}
+
 function shopifyComprasCountForAdRow(counts: Record<string, number>, row: InsightRow): number {
   const id = String(row.id || '').trim();
   if (!id) return 0;
   const d = digitsOnlyKey(id);
   return counts[id] ?? counts[d] ?? 0;
+}
+
+function shopifySalesAmountForAdRow(salesByAd: Record<string, number>, row: InsightRow): number {
+  const id = String(row.id || '').trim();
+  if (!id) return 0;
+  const d = digitsOnlyKey(id);
+  const v = salesByAd[id] ?? salesByAd[d] ?? 0;
+  return Number.isFinite(v) ? v : 0;
 }
 
 /** Meta a veces devuelve el mismo anuncio en más de una fila; deduplicamos por id para métricas y sumas. */
@@ -567,6 +654,7 @@ export function MetaInsightsPanel({
   } | null>(null);
   const [shopifyPedidosByCampaign, setShopifyPedidosByCampaign] = useState<Record<string, number>>({});
   const [shopifyComprasByAd, setShopifyComprasByAd] = useState<Record<string, number>>({});
+  const [shopifyVentasByAd, setShopifyVentasByAd] = useState<Record<string, number>>({});
   const [shopifyPedidosAvailable, setShopifyPedidosAvailable] = useState(false);
 
   useEffect(() => {
@@ -695,6 +783,7 @@ export function MetaInsightsPanel({
       if (!res.ok) {
         setShopifyPedidosByCampaign({});
         setShopifyComprasByAd({});
+        setShopifyVentasByAd({});
         setShopifyPedidosAvailable(false);
         return;
       }
@@ -719,11 +808,15 @@ export function MetaInsightsPanel({
       const countsByAd =
         level === 'ads' ? buildCountsByAdFromOrders(dedupeInsightRowsById(rows, level), orders) : {};
       setShopifyComprasByAd(countsByAd);
+      const salesByAd =
+        level === 'ads' ? buildSalesByAdFromOrders(dedupeInsightRowsById(rows, level), orders) : {};
+      setShopifyVentasByAd(salesByAd);
 
       setShopifyPedidosAvailable(true);
     } catch {
       setShopifyPedidosByCampaign({});
       setShopifyComprasByAd({});
+      setShopifyVentasByAd({});
       setShopifyPedidosAvailable(false);
     }
   }, [period, campaignProductLinks, rows, level]);
@@ -773,6 +866,10 @@ export function MetaInsightsPanel({
   const shopifyComprasTotalAttributed = useMemo(
     () => Object.values(shopifyComprasByAd).reduce((a, n) => a + (Number(n) || 0), 0),
     [shopifyComprasByAd],
+  );
+  const shopifyVentasTotalAttributed = useMemo(
+    () => Object.values(shopifyVentasByAd).reduce((a, n) => a + (Number(n) || 0), 0),
+    [shopifyVentasByAd],
   );
 
   const load = useCallback(async () => {
@@ -892,16 +989,21 @@ export function MetaInsightsPanel({
           'Total de pedidos Shopify del periodo (calendario de la tienda) que se pudieron enlazar a algún anuncio de esta lista (UTMs, URL, nombre). Cada pedido cuenta una vez. No incluye pedidos sin señal clara ni anuncios fuera de la lista.',
       });
     }
+    const roasValue =
+      level === 'ads' && shopifyPedidosAvailable
+        ? formatRoasMeta(displayTotals.spend > 0 ? shopifyVentasTotalAttributed / displayTotals.spend : 0)
+        : formatRoasMeta(displayTotals.roas);
+
     cards.push(
       { label: 'CPA', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
       { label: 'Gasto', value: formatMoney2(displayTotals.spend) },
       { label: 'CPM', value: formatMoney2(displayTotals.cpm) },
       { label: 'CPC', value: formatMoney2(displayTotals.cpc) },
       { label: 'CTR', value: formatPct(displayTotals.ctr) },
-      { label: 'ROAS', value: formatRoasMeta(displayTotals.roas) },
+      { label: 'ROAS', value: roasValue },
     );
     return cards;
-  }, [displayTotals, level, shopifyPedidosAvailable, shopifyComprasTotalAttributed]);
+  }, [displayTotals, level, shopifyPedidosAvailable, shopifyComprasTotalAttributed, shopifyVentasTotalAttributed]);
 
   const levelTabs: { id: InsightLevel; label: string }[] = [
     { id: 'campaigns', label: 'Campañas' },
@@ -1244,6 +1346,13 @@ export function MetaInsightsPanel({
               tableRows.map((row) => {
                 const ev = buildRowTargetEvaluation(row, level, campaignProductLinks, targetsByProduct);
                 const rowBg = insightRowBg(ev.rowHighlight);
+                const roasRealAds =
+                  level === 'ads' && shopifyPedidosAvailable
+                    ? (() => {
+                        const sales = shopifySalesAmountForAdRow(shopifyVentasByAd, row);
+                        return row.spend > 0 && sales > 0 ? sales / row.spend : 0;
+                      })()
+                    : null;
                 return (
                   <tr
                     key={`${row.adAccountId}-${row.id}`}
@@ -1300,10 +1409,14 @@ export function MetaInsightsPanel({
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.ctr) }}>{formatPct(row.ctr)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpc) }}>{formatMoney2(row.cpc)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.roas) }}>
-                      {formatRoasMeta(row.roas)}
+                      {roasRealAds != null ? formatRoasMeta(roasRealAds) : formatRoasMeta(row.roas)}
                     </td>
                     <td style={{ padding: '12px 16px' }}>
-                      {row.spend > 0 && row.revenue > 0 ? formatRoasMeta(row.revenue / row.spend) : '—'}
+                      {roasRealAds != null
+                        ? formatRoasMeta(roasRealAds)
+                        : row.spend > 0 && row.revenue > 0
+                          ? formatRoasMeta(row.revenue / row.spend)
+                          : '—'}
                     </td>
                     {level === 'ads' && (
                       <td
