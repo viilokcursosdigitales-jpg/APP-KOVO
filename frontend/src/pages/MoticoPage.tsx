@@ -594,6 +594,14 @@ function computeAnticipoAmountFromRow(o: MoticoOrderRow): number {
   return Math.max(0, total - pending - pagoAlRecibir);
 }
 
+/** Referencia inventario Motico: costo producto + flete (null si no hay ninguno configurado). */
+function computePendientePagoProveedorFromRow(o: Pick<MoticoOrderRow, 'product_cost_motico' | 'freight_cost_motico'>): number | null {
+  const pc = o.product_cost_motico;
+  const fc = o.freight_cost_motico;
+  if (pc == null && fc == null) return null;
+  return Math.max(0, (pc ?? 0) + (fc ?? 0));
+}
+
 function normalizeSearchText(v: string) {
   return String(v || '')
     .toLowerCase()
@@ -2671,7 +2679,12 @@ export default function MoticoPage() {
                   </Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Total del pedido</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago anticipado</Th>
-                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pendiente de pago</Th>
+                  <Th
+                    style={{ ...moticoThPad, ...orderListTheadStickyCell }}
+                    title="Lo que el cliente aún debe (total a pagar editable)."
+                  >
+                    Pendiente d pago cliente
+                  </Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago al recibir</Th>
                   <Th
                     style={{ ...moticoThPad, ...orderListTheadStickyCell }}
@@ -2684,6 +2697,12 @@ export default function MoticoPage() {
                     title="Costo flete Motico en Inventario: un valor por producto; con varios productos se muestra el promedio (un flete por pedido)."
                   >
                     Costo flete Motico
+                  </Th>
+                  <Th
+                    style={{ ...moticoThPad, ...orderListTheadStickyCell }}
+                    title="Suma del costo producto Motico y del costo flete Motico (Inventario), referencia frente al proveedor."
+                  >
+                    Pendiente de pago proveedor
                   </Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Estado de pago</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Productos</Th>
@@ -2730,6 +2749,7 @@ export default function MoticoPage() {
                   ]
                     .filter(Boolean)
                     .join(' · ');
+                  const proveedorPendiente = computePendientePagoProveedorFromRow(o);
                   return (
                     <tr
                       key={o.id}
@@ -2911,7 +2931,7 @@ export default function MoticoPage() {
                             setTotalAPagarDraft((d) => ({ ...d, [o.id]: v }));
                             scheduleTotalAPagarSave(o.id, v);
                           }}
-                          aria-label={`Total a pagar pedido ${o.orderName}`}
+                          aria-label={`Pendiente de pago cliente (total a pagar) pedido ${o.orderName}`}
                           disabled={editLocked}
                           title={
                             isDespachadoMotico
@@ -2951,6 +2971,19 @@ export default function MoticoPage() {
                         {o.freight_cost_motico != null && Number.isFinite(o.freight_cost_motico) ? (
                           <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
                             {formatMoneyAmount(o.freight_cost_motico, o.currency)}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: 11, color: ds.textMuted }}>—</span>
+                        )}
+                      </Td>
+                      <Td
+                        isLast={i === arr.length - 1}
+                        style={moticoTdPad}
+                        title="Costo producto Motico + costo flete Motico (Inventario). Referencia de pendiente frente al proveedor."
+                      >
+                        {proveedorPendiente != null ? (
+                          <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
+                            {formatMoneyAmount(proveedorPendiente, o.currency)}
                           </div>
                         ) : (
                           <span style={{ fontSize: 11, color: ds.textMuted }}>—</span>
