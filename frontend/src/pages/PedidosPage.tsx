@@ -43,6 +43,9 @@ const MENSAJERO_OPTIONS = [
 
 /** Ancho mínimo del desplegable Estado según la etiqueta más larga (+ flecha). */
 const ESTADO_SELECT_MIN_WIDTH_CH = Math.max(...INTERNAL_OPTIONS.map((o) => o.label.length), 1) + 3;
+/** Ancho mínimo del desplegable Mensajero según la etiqueta más larga (+ flecha). */
+const MENSAJERO_SELECT_MIN_WIDTH_CH =
+  Math.max('Sin asignar'.length, ...MENSAJERO_OPTIONS.map((o) => o.label.length), 1) + 3;
 
 const LOCKED_INTERNAL_STATUSES = ORDER_INTERNAL_LOCKED_STATUSES;
 
@@ -281,6 +284,28 @@ const estadoSelectInTableStyle: CSSProperties = {
   width: 'auto',
   maxWidth: 'none',
   minWidth: `${ESTADO_SELECT_MIN_WIDTH_CH}ch`,
+  boxSizing: 'border-box',
+};
+
+/** Columna Mensajero: ancho según texto más largo + padding L/R 10px. */
+const mensajeroColumnThStyle: CSSProperties = {
+  ...orderListTheadStickyCell,
+  width: '1%',
+  whiteSpace: 'nowrap',
+  padding: '8px 10px',
+};
+const mensajeroColumnTdStyle: CSSProperties = {
+  width: '1%',
+  whiteSpace: 'nowrap',
+  padding: '8px 10px',
+  verticalAlign: 'middle',
+};
+/** Select Mensajero en tabla: ancho según texto, sin tope artificial. */
+const mensajeroSelectInTableStyle: CSSProperties = {
+  ...selectStyle,
+  width: 'auto',
+  maxWidth: 'none',
+  minWidth: `${MENSAJERO_SELECT_MIN_WIDTH_CH}ch`,
   boxSizing: 'border-box',
 };
 
@@ -1473,7 +1498,7 @@ export default function PedidosPage() {
                   >
                     Estado
                   </Th>
-                  {useLive ? <Th style={orderListTheadStickyCell}>Mensajero</Th> : null}
+                  {useLive ? <Th style={mensajeroColumnThStyle}>Mensajero</Th> : null}
                   <Th style={orderListTheadStickyCell}>Pedido</Th>
                   <Th style={orderListTheadStickyCell}>Fecha</Th>
                   <Th style={orderListTheadStickyCell}>Cliente</Th>
@@ -1559,10 +1584,10 @@ export default function PedidosPage() {
                               ))}
                             </select>
                           </Td>
-                          <Td isLast={i === arr.length - 1}>
+                          <Td isLast={i === arr.length - 1} style={mensajeroColumnTdStyle}>
                             <select
                               style={{
-                                ...selectStyle,
+                                ...mensajeroSelectInTableStyle,
                                 ...mensajeroSelectStyle(o.mensajero),
                                 cursor: isLocked ? 'not-allowed' : 'pointer',
                                 opacity: isLocked ? 0.72 : 1,
