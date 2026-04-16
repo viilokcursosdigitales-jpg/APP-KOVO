@@ -337,7 +337,7 @@ function buildBatchPrintDocument(
     .guide-cut-sep::after {
       content: "";
       flex: 1 1 auto;
-      border-top: 1px solid #000;
+      border-top: 2px solid #000;
     }
     .guide-cut-sep::before { margin-right: 10px; }
     .guide-cut-sep::after { margin-left: 10px; }
