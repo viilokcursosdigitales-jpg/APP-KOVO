@@ -2933,6 +2933,57 @@ function calculateOrderMoticoProductCost(order, pricingMap, titleToProductIdMap)
 }
 
 /**
+ * Flete Motico del inventario (`manual_avg_freight_price_motico`): un valor por producto en el pedido;
+ * si hay varios productos, se promedia (misma idea que `manual_avg_freight_price` en costes manuales).
+ * @returns {number|null} valor por pedido o null si ningún producto del pedido tiene flete Motico configurado.
+ */
+function calculateOrderMoticoFreightCost(order, pricingMap, titleToProductIdMap) {
+  const detail = Array.isArray(order?.lineItemsDetail) ? order.lineItemsDetail : [];
+  const freightByProduct = new Map();
+  for (const li of detail) {
+    if (!li || typeof li !== 'object') continue;
+    let pid = Number(li.product_id);
+    if (!Number.isFinite(pid) || pid <= 0) {
+      const key = normalizeLineItemLookupKey(li.title || li.name || '');
+      if (key && titleToProductIdMap instanceof Map) {
+        const mappedPid = Number(titleToProductIdMap.get(key));
+        if (Number.isFinite(mappedPid) && mappedPid > 0) pid = mappedPid;
+      }
+    }
+    if (!Number.isFinite(pid) || pid <= 0) continue;
+    const qty = Number.parseInt(String(li.quantity ?? 0), 10);
+    if (!Number.isFinite(qty) || qty <= 0) continue;
+    const pricing = pricingMap.get(pid);
+    const fl =
+      pricing?.manual_avg_freight_price_motico != null &&
+      Number.isFinite(Number(pricing.manual_avg_freight_price_motico))
+        ? Number(pricing.manual_avg_freight_price_motico)
+        : null;
+    if (fl != null && !freightByProduct.has(pid)) {
+      freightByProduct.set(pid, fl);
+    }
+  }
+  if (freightByProduct.size > 0) {
+    let sum = 0;
+    for (const v of freightByProduct.values()) sum += v;
+    return sum / freightByProduct.size;
+  }
+  if (detail.length === 0 && Array.isArray(order?.productIds) && order.productIds.length === 1) {
+    const pid = Number(order.productIds[0]);
+    if (Number.isFinite(pid) && pid > 0) {
+      const pricing = pricingMap.get(pid);
+      const fl =
+        pricing?.manual_avg_freight_price_motico != null &&
+        Number.isFinite(Number(pricing.manual_avg_freight_price_motico))
+          ? Number(pricing.manual_avg_freight_price_motico)
+          : null;
+      if (fl != null) return fl;
+    }
+  }
+  return null;
+}
+
+/**
  * Reparte ventas, costos y flete del pedido entre productos (líneas) por participación en ingreso de líneas.
  * Devuelve Map productKey -> acumulados para agregar por día.
  */
@@ -3602,6 +3653,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       orders = orders.map((o) => ({
         ...o,
         product_cost_motico: calculateOrderMoticoProductCost(o, pricingMap, lineTitleToProductIdMap),
+        freight_cost_motico: calculateOrderMoticoFreightCost(o, pricingMap, lineTitleToProductIdMap),
       }));
     }
     orders.sort((a, b) => {

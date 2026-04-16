@@ -159,6 +159,8 @@ type MoticoOrderRow = {
   pago_al_recibir_override?: number | null;
   /** Suma (inventario: costo producto Motico × cantidad) por líneas del pedido; null si no hay costo configurado. */
   product_cost_motico?: number | null;
+  /** Flete Motico (inventario: costo flete Motico); promedio por productos distintos en el pedido; null si no hay dato. */
+  freight_cost_motico?: number | null;
   /** Pedido creado en Motico (no existe en Shopify); id negativo en API. */
   is_motico_manual?: boolean;
 };
@@ -712,6 +714,13 @@ function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
         : 0,
     product_cost_motico: (() => {
       const raw = (o as MoticoOrderRow & { product_cost_motico?: unknown }).product_cost_motico;
+      if (raw === undefined) return undefined;
+      if (raw === null) return null;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : null;
+    })(),
+    freight_cost_motico: (() => {
+      const raw = (o as MoticoOrderRow & { freight_cost_motico?: unknown }).freight_cost_motico;
       if (raw === undefined) return undefined;
       if (raw === null) return null;
       const n = Number(raw);
@@ -2670,6 +2679,12 @@ export default function MoticoPage() {
                   >
                     Costo producto Motico
                   </Th>
+                  <Th
+                    style={{ ...moticoThPad, ...orderListTheadStickyCell }}
+                    title="Costo flete Motico en Inventario: un valor por producto; con varios productos se muestra el promedio (un flete por pedido)."
+                  >
+                    Costo flete Motico
+                  </Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Estado de pago</Th>
                   <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Productos</Th>
                   <Th style={{ ...moticoEditColTh, ...orderListTheadStickyCell }} title="Editar pedido">
@@ -2923,6 +2938,19 @@ export default function MoticoPage() {
                         {o.product_cost_motico != null && Number.isFinite(o.product_cost_motico) ? (
                           <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
                             {formatMoneyAmount(o.product_cost_motico, o.currency)}
+                          </div>
+                        ) : (
+                          <span style={{ fontSize: 11, color: ds.textMuted }}>—</span>
+                        )}
+                      </Td>
+                      <Td
+                        isLast={i === arr.length - 1}
+                        style={moticoTdPad}
+                        title="Costo flete Motico (Inventario): promedio por productos distintos en el pedido"
+                      >
+                        {o.freight_cost_motico != null && Number.isFinite(o.freight_cost_motico) ? (
+                          <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
+                            {formatMoneyAmount(o.freight_cost_motico, o.currency)}
                           </div>
                         ) : (
                           <span style={{ fontSize: 11, color: ds.textMuted }}>—</span>
