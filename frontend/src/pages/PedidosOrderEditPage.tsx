@@ -32,6 +32,9 @@ type EditableOrder = {
   shopifyQuantity: number;
   price_override: number | null;
   quantity_override: number | null;
+  total_a_pagar_default?: number | null;
+  total_a_pagar_override?: number | null;
+  total_a_pagar?: number | null;
   shippingAddress: ShippingAddress | null;
   lineItemsDetail?: LineItemDetail[];
 };
@@ -55,6 +58,7 @@ type EditDraft = {
   country: string;
   phone: string;
   price: string;
+  anticipo: string;
   quantity: string;
   product_id: string;
   variant_id: string;
@@ -103,10 +107,54 @@ function emptyDraft(): EditDraft {
     country: '',
     phone: '',
     price: '',
+    anticipo: '0',
     quantity: '1',
     product_id: '',
     variant_id: '',
   };
+}
+
+function effectiveOrderTotalAmount(o: Pick<EditableOrder, 'price_override' | 'shopifyTotal' | 'total'>): number {
+  const n =
+    o.price_override != null
+      ? Number(o.price_override)
+      : Number.parseFloat(String(o.shopifyTotal ?? o.total ?? '0'));
+  return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+function computeAnticipoAmountFromOrder(
+  o: Pick<EditableOrder, 'price_override' | 'shopifyTotal' | 'total' | 'total_a_pagar_override' | 'total_a_pagar' | 'total_a_pagar_default'>,
+): number {
+  const total = effectiveOrderTotalAmount(o);
+  const pendingEdited =
+    o.total_a_pagar_override != null && Number.isFinite(Number(o.total_a_pagar_override))
+      ? Math.max(0, Number(o.total_a_pagar_override))
+      : null;
+  const pendingCurrent =
+    o.total_a_pagar != null && Number.isFinite(Number(o.total_a_pagar))
+      ? Math.max(0, Number(o.total_a_pagar))
+      : null;
+  const pendingDefault =
+    o.total_a_pagar_default != null && Number.isFinite(Number(o.total_a_pagar_default))
+      ? Math.max(0, Number(o.total_a_pagar_default))
+      : total;
+  const pending = pendingEdited ?? pendingCurrent ?? pendingDefault;
+  return Math.max(0, total - pending);
+}
+
+function parseNonNegativeDecimalInput(value: string): number | null {
+  const n = Number.parseFloat(String(value).replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+function formatMoneyAmount(n: number, currency: string): string {
+  const cur = String(currency || '').trim().toUpperCase() || 'COP';
+  try {
+    return new Intl.NumberFormat('es-CO', { style: 'currency', currency: cur }).format(n);
+  } catch {
+    return `${n.toFixed(2)} ${cur}`;
+  }
 }
 
 export default function PedidosOrderEditPage() {
@@ -120,6 +168,7 @@ export default function PedidosOrderEditPage() {
   const [order, setOrder] = useState<EditableOrder | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
   const [draft, setDraft] = useState<EditDraft>(() => emptyDraft());
+  const [configuredCurrency, setConfiguredCurrency] = useState('COP');
 
   const selectedProduct = useMemo(() => {
     const pid = Number(draft.product_id);
@@ -152,9 +201,10 @@ export default function PedidosOrderEditPage() {
     setError('');
     setSuccess('');
     try {
-      const [orderRes, productsRes] = await Promise.all([
+      const [orderRes, productsRes, settingsRes] = await Promise.all([
         apiFetch(`/api/shopify/orders/${orderId}`),
         apiFetch('/api/shopify/products?limit=250'),
+        apiFetch('/api/motico/settings'),
       ]);
       const orderData = (await orderRes.json().catch(() => ({}))) as {
         error?: string;
@@ -166,6 +216,13 @@ export default function PedidosOrderEditPage() {
       }
       const prodData = await productsRes.json().catch(() => ({}));
       const list = productsRes.ok ? normalizeProducts(prodData) : [];
+      if (settingsRes.ok) {
+        const settingsData = (await settingsRes.json().catch(() => ({}))) as { default_currency?: string | null };
+        const cur = String(settingsData.default_currency || 'COP')
+          .trim()
+          .toUpperCase();
+        if (cur) setConfiguredCurrency(cur);
+      }
       const loadedOrder = orderData.order;
       setOrder(loadedOrder);
       setProducts(list);
@@ -191,6 +248,7 @@ export default function PedidosOrderEditPage() {
         country: String(sa.country || ''),
         phone: String(sa.phone || ''),
         price: String(loadedOrder.price_override ?? loadedOrder.shopifyTotal ?? loadedOrder.total ?? ''),
+        anticipo: String(computeAnticipoAmountFromOrder(loadedOrder)),
         quantity: String(
           loadedOrder.quantity_override ??
             firstLine?.quantity ??
@@ -226,6 +284,15 @@ export default function PedidosOrderEditPage() {
       const price = Number.parseFloat(String(draft.price).replace(',', '.'));
       if (!Number.isFinite(price) || price < 0) {
         setError('Precio no válido');
+        return;
+      }
+      const anticipo = Number.parseFloat(String(draft.anticipo).replace(',', '.'));
+      if (!Number.isFinite(anticipo) || anticipo < 0) {
+        setError('Pago anticipado no válido');
+        return;
+      }
+      if (anticipo > price) {
+        setError('El pago anticipado no puede ser mayor al precio total');
         return;
       }
       const variantId = Number(draft.variant_id);
@@ -267,6 +334,8 @@ export default function PedidosOrderEditPage() {
         body: JSON.stringify({
           price_override: price,
           quantity_override: qty,
+          pago_al_recibir_override: anticipo,
+          total_a_pagar_override: Math.max(0, price - anticipo),
           sync_to_shopify: false,
           line_items: [
             {
@@ -292,11 +361,16 @@ export default function PedidosOrderEditPage() {
     }
   }, [order, locked, draft, navigate, products]);
 
+  const livePrice = parseNonNegativeDecimalInput(draft.price);
+  const liveAnticipo = parseNonNegativeDecimalInput(draft.anticipo);
+  const livePending = livePrice != null ? Math.max(0, livePrice - (liveAnticipo ?? 0)) : null;
+  const anticipoExceedsPrice = livePrice != null && liveAnticipo != null && liveAnticipo > livePrice;
+
   return (
     <>
       <PageHeader
         title="Editar pedido (origen Shopify)"
-        subtitle="Los cambios se guardan solo en KOVO (dirección, precio, producto y cantidad); no se modifica el pedido en Shopify."
+        subtitle="Los cambios se guardan solo en KOVO (dirección, precio, anticipo, producto y cantidad); no se modifica el pedido en Shopify."
         right={
           <button
             type="button"
@@ -466,7 +540,7 @@ export default function PedidosOrderEditPage() {
               </select>
             </label>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 12 }}>
             <label style={{ ...labelStyle, display: 'block' }}>
               Cantidad
               <input
@@ -489,6 +563,30 @@ export default function PedidosOrderEditPage() {
                 disabled={locked || saving}
               />
             </label>
+            <label style={{ ...labelStyle, display: 'block' }}>
+              Pago anticipado
+              <input
+                type="text"
+                inputMode="decimal"
+                value={draft.anticipo}
+                onChange={(e) => setDraft((d) => ({ ...d, anticipo: e.target.value }))}
+                style={fieldStyle}
+                disabled={locked || saving}
+              />
+            </label>
+          </div>
+          <div style={{ marginTop: 8 }}>
+            <p style={{ margin: 0, fontSize: 12, color: ds.textSecondary }}>
+              Pendiente por cobrar:{' '}
+              <strong style={{ color: ds.textPrimary }}>
+                {livePending != null ? formatMoneyAmount(livePending, configuredCurrency) : '—'}
+              </strong>
+            </p>
+            {anticipoExceedsPrice ? (
+              <p style={{ margin: '4px 0 0', fontSize: 12, color: ds.dangerText }}>
+                El pago anticipado no puede ser mayor al precio total.
+              </p>
+            ) : null}
           </div>
 
           <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
