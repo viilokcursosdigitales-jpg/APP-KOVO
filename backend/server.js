@@ -2638,7 +2638,9 @@ function moticoManualOrderAssignedYmd(order, shopTz) {
 
 async function loadMoticoManualOrdersForOrg(organizationId, minIso, maxIso) {
   const params = [organizationId];
-  let sql = `SELECT * FROM motico_manual_orders WHERE organization_id = $1`;
+  let sql = `SELECT * FROM motico_manual_orders
+             WHERE organization_id = $1
+             AND COALESCE(LOWER(NULLIF(BTRIM(shipping_json->>'removed_from_motico'), '')), 'false') <> 'true'`;
   if (minIso) {
     params.push(String(minIso));
     sql += ` AND created_at >= $${params.length}::timestamptz`;
@@ -4340,7 +4342,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       const manualId = -orderIdRaw;
       const onlyPaymentStatusUpdate = isOnlyPaymentStatusMutation(bodyKeys);
       const { rows: mrows } = await pool.query(
-        `SELECT id, price_override, quantity_override, motico_status, financial_status, pago_al_recibir_override, total_a_pagar_override, total_price, product_summary, line_items_json
+        `SELECT id, price_override, quantity_override, motico_status, financial_status, pago_al_recibir_override, total_a_pagar_override, total_price, product_summary, line_items_json, shipping_json
          FROM motico_manual_orders
          WHERE id = $1 AND organization_id = $2`,
         [manualId, req.organizationId],
@@ -4517,6 +4519,25 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         // La cantidad vive en las líneas; el override de cabecera deja de aplicar y evita mostrar 1 cuando hay 2+ unidades en líneas.
         quantity_override = null;
       }
+      let shipping_json = {};
+      if (cur.shipping_json && typeof cur.shipping_json === 'object') shipping_json = { ...cur.shipping_json };
+      else if (typeof cur.shipping_json === 'string') {
+        try {
+          const parsedShip = JSON.parse(cur.shipping_json);
+          if (parsedShip && typeof parsedShip === 'object') shipping_json = parsedShip;
+        } catch {
+          shipping_json = {};
+        }
+      }
+      if (body.mensajero === null) {
+        shipping_json.removed_from_motico = true;
+        shipping_json.removed_from_motico_at = new Date().toISOString();
+        if (unlockReason.length >= 5) shipping_json.removed_from_motico_reason = unlockReason;
+      } else if (body.mensajero === 'motico') {
+        shipping_json.removed_from_motico = false;
+        delete shipping_json.removed_from_motico_at;
+        delete shipping_json.removed_from_motico_reason;
+      }
       await pool.query(
         `UPDATE motico_manual_orders SET
           price_override = $1,
@@ -4527,8 +4548,9 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           pago_al_recibir_override = $6,
           line_items_json = $7::jsonb,
           product_summary = $8,
+          shipping_json = $9::jsonb,
           updated_at = now()
-        WHERE id = $9 AND organization_id = $10`,
+        WHERE id = $10 AND organization_id = $11`,
         [
           price_override,
           quantity_override,
@@ -4538,6 +4560,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           pago_al_recibir_override,
           JSON.stringify(line_items_json),
           product_summary,
+          JSON.stringify(shipping_json),
           manualId,
           req.organizationId,
         ],

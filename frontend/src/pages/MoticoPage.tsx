@@ -1441,10 +1441,6 @@ export default function MoticoPage() {
       setSyncError('Solo se pueden quitar pedidos con estado sin revisar.');
       return;
     }
-    if (o.is_motico_manual || o.id < 0) {
-      setSyncError('Los pedidos manuales no se pueden quitar de Motico; solo eliminarse.');
-      return;
-    }
     setSyncError('');
     setRemoveOrder(o);
     setRemoveReason('');
@@ -2840,8 +2836,7 @@ export default function MoticoPage() {
                   const canUnlockFromLockedEstado = isDespachadoMotico || isCanceladoMotico;
                   const editButtonDisabled = editLocked && !canUnlockFromLockedEstado;
                   const canDeletePrueba = isMoticoPruebaOrder(o) && (o.is_motico_manual || o.id < 0);
-                  const canRemoveFromMotico =
-                    String(o.motico_status || '').trim().toLowerCase() === 'sin_revisar' && !(o.is_motico_manual || o.id < 0);
+                  const canRemoveFromMotico = String(o.motico_status || '').trim().toLowerCase() === 'sin_revisar';
                   const paymentStatusLocked = isCanceladoMotico;
                   const sa = o.shippingAddress;
                   const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
@@ -3188,7 +3183,11 @@ export default function MoticoPage() {
                               type="button"
                               onClick={() => openRemoveFromMoticoOrder(o)}
                               style={moticoOrderRemoveBtn}
-                              title="Quitar pedido de Motico (queda en Pedidos como sin revisar)"
+                              title={
+                                o.is_motico_manual || o.id < 0
+                                  ? 'Quitar pedido manual de Motico'
+                                  : 'Quitar pedido de Motico (queda en Pedidos como sin revisar)'
+                              }
                               aria-label={`Quitar pedido ${o.orderName} de Motico`}
                             >
                               Quitar
@@ -3434,7 +3433,14 @@ export default function MoticoPage() {
             <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>Quitar pedido de Motico</h3>
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.4 }}>
               Pedido <strong>{removeOrder.orderName}</strong>. Responde el motivo para habilitar <strong>Quitar</strong>.
-              En Pedidos quedará con estado <strong>sin revisar</strong>.
+              {removeOrder.is_motico_manual || removeOrder.id < 0 ? (
+                <> Se ocultará del módulo Motico.</>
+              ) : (
+                <>
+                  {' '}
+                  En Pedidos quedará con estado <strong>sin revisar</strong>.
+                </>
+              )}
             </p>
             <label style={{ display: 'block', fontSize: 12, color: ds.textSecondary, fontWeight: 600 }}>
               Motivo de quitar *
