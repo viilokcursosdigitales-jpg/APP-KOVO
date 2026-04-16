@@ -46,6 +46,12 @@ function formatMoney(n: number, currency: string | null | undefined): string {
   }
 }
 
+function formatPercent(numerator: number, denominator: number): string {
+  if (!Number.isFinite(numerator) || !Number.isFinite(denominator) || denominator <= 0) return '0.00%';
+  const pct = (numerator / denominator) * 100;
+  return `${pct.toFixed(2)}%`;
+}
+
 function formatMonthLabel(ym: string): string {
   const m = ym.match(/^(\d{4})-(\d{2})$/);
   if (!m) return ym;
@@ -871,14 +877,29 @@ export default function GananciaDiariaPage() {
                         entregado
                       </th>
                       <th style={thColHeadRight}>
+                        % Costo
+                        <br />
+                        del producto
+                      </th>
+                      <th style={thColHeadRight}>
                         Flete
                         <br />
                         promedio
                       </th>
                       <th style={thColHeadRight}>
+                        %
+                        <br />
+                        Flete
+                      </th>
+                      <th style={thColHeadRight}>
                         Gasto
                         <br />
                         Meta
+                      </th>
+                      <th style={thColHeadRight}>
+                        %
+                        <br />
+                        Publicidad
                       </th>
                       <th style={thColHeadRight}>Utilidad</th>
                     </tr>
@@ -922,10 +943,19 @@ export default function GananciaDiariaPage() {
                           {formatMoney(costoProductoEntregadoRow, seriesVentasCur)}
                         </td>
                         <td style={tdColRight}>
+                          {formatPercent(costoProductoEntregadoRow, ventasEntregadasRow)}
+                        </td>
+                        <td style={tdColRight}>
                           {formatMoney(row.costo_flete_promedio_total || 0, seriesVentasCur)}
                         </td>
                         <td style={tdColRight}>
+                          {formatPercent(row.costo_flete_promedio_total || 0, ventasEntregadasRow)}
+                        </td>
+                        <td style={tdColRight}>
                           {formatMoney(row.gasto_publicitario_total, seriesMetaCur || seriesVentasCur)}
+                        </td>
+                        <td style={tdColRight}>
+                          {formatPercent(row.gasto_publicitario_total || 0, row.ventas_despachadas_total || 0)}
                         </td>
                         <td style={tdColRight}>
                           {utilidadRow != null && Number.isFinite(utilidadRow)
@@ -961,10 +991,19 @@ export default function GananciaDiariaPage() {
                         {formatMoney(totals.costoProductoEntregado, seriesVentasCur)}
                       </td>
                       <td style={{ ...tdColRight, fontWeight: 700 }}>
+                        {formatPercent(totals.costoProductoEntregado, totals.ventasEntregadas)}
+                      </td>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {formatMoney(totals.costoFletePromedio, seriesVentasCur)}
                       </td>
                       <td style={{ ...tdColRight, fontWeight: 700 }}>
+                        {formatPercent(totals.costoFletePromedio, totals.ventasEntregadas)}
+                      </td>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {formatMoney(totals.gasto, seriesMetaCur || seriesVentasCur)}
+                      </td>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
+                        {formatPercent(totals.gasto, totals.ventas)}
                       </td>
                       <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {totals.utilidad != null ? formatMoney(totals.utilidad, seriesVentasCur) : '—'}
