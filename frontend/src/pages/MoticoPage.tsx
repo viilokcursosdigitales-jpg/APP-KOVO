@@ -314,6 +314,19 @@ const moticoOrderEditIconBtn: CSSProperties = {
   lineHeight: 0,
 };
 
+const moticoOrderDeleteBtn: CSSProperties = {
+  flexShrink: 0,
+  padding: '5px 8px',
+  borderRadius: 8,
+  border: `1px solid ${ds.dangerText}`,
+  background: ds.dangerBg,
+  color: ds.dangerText,
+  cursor: 'pointer',
+  fontSize: 11,
+  fontWeight: 700,
+  lineHeight: 1.1,
+};
+
 const modalFieldStyle: CSSProperties = {
   width: '100%',
   maxWidth: '100%',
@@ -806,6 +819,9 @@ export default function MoticoPage() {
   const [unlockOrder, setUnlockOrder] = useState<MoticoOrderRow | null>(null);
   const [unlockReason, setUnlockReason] = useState('');
   const [unlocking, setUnlocking] = useState(false);
+  const [deleteOrder, setDeleteOrder] = useState<MoticoOrderRow | null>(null);
+  const [deleteReason, setDeleteReason] = useState('');
+  const [deleting, setDeleting] = useState(false);
 
   const [manualModalOpen, setManualModalOpen] = useState(false);
   const [manualDraft, setManualDraft] = useState<ManualCreateDraft>(() => emptyManualDraft());
@@ -1354,6 +1370,54 @@ export default function MoticoPage() {
     setEditorDraft(draftFromOrder(o));
     setEditorOrder(o);
   }, []);
+
+  const openDeletePruebaOrder = useCallback((o: MoticoOrderRow) => {
+    if (!isMoticoPruebaOrder(o)) {
+      setSyncError('Solo se pueden eliminar pedidos en estado prueba.');
+      return;
+    }
+    if (!(o.is_motico_manual || o.id < 0)) {
+      setSyncError('Solo se pueden eliminar pedidos de prueba creados manualmente en Motico.');
+      return;
+    }
+    setSyncError('');
+    setDeleteOrder(o);
+    setDeleteReason('');
+  }, []);
+
+  const submitDeletePruebaOrder = useCallback(async () => {
+    if (!deleteOrder) return;
+    const reason = deleteReason.trim();
+    if (reason.length < 5) {
+      setSyncError('Escribe un motivo de eliminación (mínimo 5 caracteres).');
+      return;
+    }
+    const manualId = Math.abs(Number(deleteOrder.id));
+    if (!Number.isFinite(manualId) || manualId <= 0) {
+      setSyncError('No se pudo determinar el pedido manual a eliminar.');
+      return;
+    }
+    setDeleting(true);
+    try {
+      const res = await apiFetch(`/api/motico/manual-orders/${manualId}`, {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ delete_reason: reason }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setSyncError(typeof data.error === 'string' ? data.error : 'No se pudo eliminar el pedido.');
+        return;
+      }
+      setOrders((prev) => prev.filter((x) => x.id !== deleteOrder.id));
+      setSelectedIds((prev) => prev.filter((id) => id !== deleteOrder.id));
+      setDeleteOrder(null);
+      setDeleteReason('');
+      setSyncError('');
+    } finally {
+      setDeleting(false);
+    }
+  }, [deleteOrder, deleteReason]);
 
   const submitUnlockDespachado = useCallback(async () => {
     if (!unlockOrder) return;
@@ -2718,6 +2782,7 @@ export default function MoticoPage() {
                   const isCanceladoMotico = stMot === 'cancelado';
                   const canUnlockFromLockedEstado = isDespachadoMotico || isCanceladoMotico;
                   const editButtonDisabled = editLocked && !canUnlockFromLockedEstado;
+                  const canDeletePrueba = isMoticoPruebaOrder(o) && (o.is_motico_manual || o.id < 0);
                   const paymentStatusLocked = isCanceladoMotico;
                   const sa = o.shippingAddress;
                   const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
@@ -3027,26 +3092,39 @@ export default function MoticoPage() {
                         </div>
                       </Td>
                       <Td isLast={i === arr.length - 1} style={{ ...moticoTdPad, ...moticoColFitNowrap }}>
-                        <button
-                          type="button"
-                          aria-label={`Editar pedido ${o.orderName}: dirección, precio y cantidad`}
-                          onClick={() => openOrderEditor(o)}
-                          style={{
-                            ...moticoOrderEditIconBtn,
-                            cursor: editButtonDisabled ? 'not-allowed' : 'pointer',
-                            opacity: editButtonDisabled ? 0.5 : 1,
-                          }}
-                          disabled={editButtonDisabled}
-                          title={
-                            isDespachadoMotico || isCanceladoMotico
-                              ? 'Responde motivo y desbloquea para editar'
-                              : editLocked
-                                ? 'Edición bloqueada'
-                                : 'Editar pedido'
-                          }
-                        >
-                          <IconPencil size={16} />
-                        </button>
+                        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+                          <button
+                            type="button"
+                            aria-label={`Editar pedido ${o.orderName}: dirección, precio y cantidad`}
+                            onClick={() => openOrderEditor(o)}
+                            style={{
+                              ...moticoOrderEditIconBtn,
+                              cursor: editButtonDisabled ? 'not-allowed' : 'pointer',
+                              opacity: editButtonDisabled ? 0.5 : 1,
+                            }}
+                            disabled={editButtonDisabled}
+                            title={
+                              isDespachadoMotico || isCanceladoMotico
+                                ? 'Responde motivo y desbloquea para editar'
+                                : editLocked
+                                  ? 'Edición bloqueada'
+                                  : 'Editar pedido'
+                            }
+                          >
+                            <IconPencil size={16} />
+                          </button>
+                          {canDeletePrueba ? (
+                            <button
+                              type="button"
+                              onClick={() => openDeletePruebaOrder(o)}
+                              style={moticoOrderDeleteBtn}
+                              title="Eliminar pedido de prueba"
+                              aria-label={`Eliminar pedido de prueba ${o.orderName}`}
+                            >
+                              Eliminar
+                            </button>
+                          ) : null}
+                        </div>
                       </Td>
                     </tr>
                   );
@@ -3159,6 +3237,100 @@ export default function MoticoPage() {
                 }}
               >
                 {unlocking ? 'Desbloqueando…' : 'Desbloquear'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {deleteOrder ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.18)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+          }}
+        >
+          <div
+            style={{
+              width: 'min(560px, calc(100vw - 28px))',
+              maxHeight: 'calc(100vh - 36px)',
+              overflowY: 'auto',
+              background: ds.bgCard,
+              border: `1px solid ${ds.borderCard}`,
+              borderRadius: 14,
+              boxShadow: '0 16px 44px rgba(15,23,42,0.16)',
+              padding: 18,
+            }}
+          >
+            <h3 style={{ margin: '0 0 8px', fontSize: 16, color: ds.textPrimary }}>Eliminar pedido de prueba</h3>
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.4 }}>
+              Pedido <strong>{deleteOrder.orderName}</strong>. Responde el motivo de eliminación para habilitar el botón
+              <strong> Eliminar</strong>.
+            </p>
+            <label style={{ display: 'block', fontSize: 12, color: ds.textSecondary, fontWeight: 600 }}>
+              Motivo de eliminación *
+              <textarea
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+                placeholder="Escribe el motivo de la eliminación..."
+                style={{
+                  marginTop: 6,
+                  width: '100%',
+                  minHeight: 94,
+                  borderRadius: 10,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgSubtle,
+                  color: ds.textPrimary,
+                  padding: '10px 11px',
+                  fontSize: 13,
+                  resize: 'vertical',
+                }}
+              />
+            </label>
+            <div style={{ display: 'flex', gap: 10, marginTop: 14, justifyContent: 'flex-end' }}>
+              <button
+                type="button"
+                onClick={() => {
+                  if (deleting) return;
+                  setDeleteOrder(null);
+                  setDeleteReason('');
+                }}
+                disabled={deleting}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textSecondary,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  cursor: deleting ? 'not-allowed' : 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={() => void submitDeletePruebaOrder()}
+                disabled={deleting || deleteReason.trim().length < 5}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 8,
+                  border: 'none',
+                  background: ds.dangerText,
+                  color: '#fff',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: deleting || deleteReason.trim().length < 5 ? 'not-allowed' : 'pointer',
+                  opacity: deleting || deleteReason.trim().length < 5 ? 0.7 : 1,
+                }}
+              >
+                {deleting ? 'Eliminando…' : 'Eliminar'}
               </button>
             </div>
           </div>

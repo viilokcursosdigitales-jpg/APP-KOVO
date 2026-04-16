@@ -5231,6 +5231,49 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
   }
 });
 
+/** Elimina pedido manual Motico solo si está en estado "prueba" y se aporta motivo. */
+app.delete('/api/motico/manual-orders/:manualId', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const manualId = parseInt(String(req.params.manualId), 10);
+    if (!Number.isFinite(manualId) || manualId <= 0) {
+      return res.status(400).json({ error: 'ID de pedido manual inválido' });
+    }
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const deleteReason = String(body.delete_reason || '').trim();
+    if (deleteReason.length < 5) {
+      return res.status(400).json({ error: 'Escribe un motivo de eliminación (mínimo 5 caracteres).' });
+    }
+    const { rows } = await pool.query(
+      `SELECT id, motico_status
+       FROM motico_manual_orders
+       WHERE id = $1 AND organization_id = $2`,
+      [manualId, req.organizationId],
+    );
+    if (!rows.length) {
+      return res.status(404).json({ error: 'Pedido manual no encontrado' });
+    }
+    const st = normalizeLegacyMoticoEstadoToUnified(rows[0].motico_status);
+    if (st !== 'prueba') {
+      return res.status(409).json({ error: 'Solo se pueden eliminar pedidos en estado prueba.' });
+    }
+    await pool.query(
+      `DELETE FROM motico_manual_orders
+       WHERE id = $1 AND organization_id = $2`,
+      [manualId, req.organizationId],
+    );
+    return res.json({ ok: true, id: manualId });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Falta la tabla motico_manual_orders. Reinicia el backend para ejecutar initDb.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    return res.status(500).json({ error: 'Error al eliminar el pedido manual' });
+  }
+});
+
 app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const row = await getActiveShopifyConnection(req.organizationId);
