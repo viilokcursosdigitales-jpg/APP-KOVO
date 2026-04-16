@@ -623,12 +623,12 @@ function computeAnticipoAmountFromRow(o: MoticoOrderRow): number {
  * - Devolución: -costo flete Motico
  * - Doble flete: -costo flete Motico x2
  * - Cancelado/pending: 0
- * - Resto: pago al recibir - costo producto - costo flete
+ * - Resto: pendiente de pago cliente - costo producto - costo flete
  */
 function computePendientePagoProveedorFromRow(
   o: Pick<
     MoticoOrderRow,
-    'motico_status' | 'financialStatus' | 'pago_al_recibir_override' | 'product_cost_motico' | 'freight_cost_motico'
+    'motico_status' | 'financialStatus' | 'total_a_pagar' | 'product_cost_motico' | 'freight_cost_motico'
   >,
 ): number {
   const orderSt = String(o.motico_status || '').toLowerCase();
@@ -641,15 +641,15 @@ function computePendientePagoProveedorFromRow(
       : 0;
   if (pay === 'refunded') return -fc;
   if (pay === 'double_freight') return -(fc * 2);
-  const pagoRecibir =
-    o.pago_al_recibir_override != null && Number.isFinite(Number(o.pago_al_recibir_override))
-      ? Math.max(0, Number(o.pago_al_recibir_override))
+  const pendienteCliente =
+    o.total_a_pagar != null && Number.isFinite(Number(o.total_a_pagar))
+      ? Math.max(0, Number(o.total_a_pagar))
       : 0;
   const pc =
     o.product_cost_motico != null && Number.isFinite(Number(o.product_cost_motico))
       ? Number(o.product_cost_motico)
       : 0;
-  return pagoRecibir - pc - fc;
+  return pendienteCliente - pc - fc;
 }
 
 const PENDIENTE_PROVEEDOR_POSITIVE_COLOR = '#16a34a';
@@ -2848,7 +2848,6 @@ export default function MoticoPage() {
                   >
                     Pendiente d pago cliente
                   </Th>
-                  <Th style={{ ...moticoThPad, ...orderListTheadStickyCell }}>Pago al recibir</Th>
                   <Th
                     style={{ ...moticoThPad, ...orderListTheadStickyCell }}
                     title="Suma del costo producto Motico definido en Inventario, por cantidad en cada línea del pedido."
@@ -2915,8 +2914,6 @@ export default function MoticoPage() {
                     .filter(Boolean)
                     .join(' · ');
                   const pendientePagoCliente = Math.max(0, Number(o.total_a_pagar ?? 0));
-                  const pagoAlRecibirBase = Math.max(0, Number(o.pago_al_recibir_override || 0));
-                  const pagoAlRecibirConPendiente = pagoAlRecibirBase + pendientePagoCliente;
                   const proveedorPendiente = computePendientePagoProveedorFromRow(o);
                   return (
                     <tr
@@ -3103,15 +3100,6 @@ export default function MoticoPage() {
                       <Td
                         isLast={i === arr.length - 1}
                         style={moticoTdPad}
-                        title="Incluye pago al recibir + pendiente de pago cliente"
-                      >
-                        <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
-                          {formatMoneyAmount(pagoAlRecibirConPendiente, o.currency)}
-                        </div>
-                      </Td>
-                      <Td
-                        isLast={i === arr.length - 1}
-                        style={moticoTdPad}
                         title="Costo producto Motico (Inventario) × cantidad por línea"
                       >
                         {o.product_cost_motico != null && Number.isFinite(o.product_cost_motico) ? (
@@ -3151,7 +3139,7 @@ export default function MoticoPage() {
                       <Td
                         isLast={i === arr.length - 1}
                         style={moticoTdPad}
-                        title="Pago al recibir − costo producto Motico − costo flete Motico (Inventario)."
+                        title="Pendiente de pago cliente − costo producto Motico − costo flete Motico (Inventario)."
                       >
                         <div
                           style={{
