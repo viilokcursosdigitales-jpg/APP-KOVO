@@ -4553,23 +4553,6 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           total_a_pagar_override = bal;
         }
       }
-      if (
-        body.payment_status !== undefined &&
-        financial_status === 'paid' &&
-        body.total_a_pagar_override === undefined &&
-        body.pago_al_recibir_override === undefined
-      ) {
-        const pendingForReceive =
-          total_a_pagar_override != null && Number.isFinite(Number(total_a_pagar_override))
-            ? Math.max(0, Number(total_a_pagar_override))
-            : shopifyDefaultTotalAPagar({
-                financialStatus: String(cur.financial_status || 'pending'),
-                totalOutstanding: null,
-                total: String(cur.total_price || '0'),
-              });
-        pago_al_recibir_override = Math.max(0, pago_al_recibir_override + pendingForReceive);
-        total_a_pagar_override = 0;
-      }
       let line_items_json = Array.isArray(cur.line_items_json) ? cur.line_items_json : [];
       if (typeof cur.line_items_json === 'string') {
         try {
@@ -4806,20 +4789,6 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         total_a_pagar_override = bal;
       }
     }
-    if (
-      body.payment_status !== undefined &&
-      payment_status_override === 'paid' &&
-      body.total_a_pagar_override === undefined &&
-      body.pago_al_recibir_override === undefined
-    ) {
-      const pendingForReceive =
-        total_a_pagar_override != null && Number.isFinite(Number(total_a_pagar_override))
-          ? Math.max(0, Number(total_a_pagar_override))
-          : 0;
-      pago_al_recibir_override = Math.max(0, pago_al_recibir_override + pendingForReceive);
-      total_a_pagar_override = 0;
-    }
-
     let line_items_override_json = cur.line_items_override_json;
     if (typeof line_items_override_json === 'string') {
       try {

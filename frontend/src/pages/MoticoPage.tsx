@@ -653,6 +653,7 @@ function computePendientePagoProveedorFromRow(
     o.product_cost_motico != null && Number.isFinite(Number(o.product_cost_motico))
       ? Number(o.product_cost_motico)
       : 0;
+  if (pay === 'paid') return pendienteCliente - pc - fc;
   return pendienteCliente - pc - fc;
 }
 
@@ -1368,15 +1369,7 @@ export default function MoticoPage() {
         setSyncError('El pedido está bloqueado (cancelado) y no se puede modificar.');
         return;
       }
-      const body: Record<string, unknown> = { payment_status: next };
-      if (next === 'paid') {
-        const pendienteCliente = Math.max(0, Number(o.total_a_pagar || 0));
-        const pagoAlRecibirActual = Math.max(0, Number(o.pago_al_recibir_override || 0));
-        body.total_a_pagar_override = 0;
-        // Al marcar pagado: el pendiente del cliente pasa a sumarse en «pago al recibir».
-        body.pago_al_recibir_override = pagoAlRecibirActual + pendienteCliente;
-      }
-      await patchLocalFields(o.id, body);
+      await patchLocalFields(o.id, { payment_status: next });
     },
     [patchLocalFields],
   );
