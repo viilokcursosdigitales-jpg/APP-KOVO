@@ -2914,6 +2914,9 @@ export default function MoticoPage() {
                   ]
                     .filter(Boolean)
                     .join(' · ');
+                  const pendientePagoCliente = Math.max(0, Number(o.total_a_pagar ?? 0));
+                  const pagoAlRecibirBase = Math.max(0, Number(o.pago_al_recibir_override || 0));
+                  const pagoAlRecibirConPendiente = pagoAlRecibirBase + pendientePagoCliente;
                   const proveedorPendiente = computePendientePagoProveedorFromRow(o);
                   return (
                     <tr
@@ -3091,15 +3094,19 @@ export default function MoticoPage() {
                           }}
                           aria-label={`Pendiente de pago cliente pedido ${o.orderName}`}
                         >
-                          {formatMoneyAmount(Math.max(0, Number(o.total_a_pagar ?? 0)), o.currency)}
+                          {formatMoneyAmount(pendientePagoCliente, o.currency)}
                         </div>
                         <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4, lineHeight: 1.3 }}>
                           Calculado Shopify: {formatMoneyAmount(o.total_a_pagar_default, o.currency)}
                         </div>
                       </Td>
-                      <Td isLast={i === arr.length - 1} style={moticoTdPad}>
+                      <Td
+                        isLast={i === arr.length - 1}
+                        style={moticoTdPad}
+                        title="Incluye pago al recibir + pendiente de pago cliente"
+                      >
                         <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
-                          {formatMoneyAmount(Math.max(0, Number(o.pago_al_recibir_override || 0)), o.currency)}
+                          {formatMoneyAmount(pagoAlRecibirConPendiente, o.currency)}
                         </div>
                       </Td>
                       <Td
