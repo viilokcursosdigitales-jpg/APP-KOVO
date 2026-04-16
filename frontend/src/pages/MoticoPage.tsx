@@ -610,12 +610,16 @@ function effectiveOrderTotalAmount(o: {
 
 function computeAnticipoAmountFromRow(o: MoticoOrderRow): number {
   const total = effectiveOrderTotalAmount(o);
-  const pending =
-    o.total_a_pagar != null && Number.isFinite(Number(o.total_a_pagar))
-      ? Math.max(0, Number(o.total_a_pagar))
+  const pendingEdited =
+    o.total_a_pagar_override != null && Number.isFinite(Number(o.total_a_pagar_override))
+      ? Math.max(0, Number(o.total_a_pagar_override))
+      : null;
+  const pendingShopify =
+    o.total_a_pagar_default != null && Number.isFinite(Number(o.total_a_pagar_default))
+      ? Math.max(0, Number(o.total_a_pagar_default))
       : computedTotalAPagarDefaultFromRow(o);
-  // El editor guarda anticipo como: total_a_pagar = total - anticipo.
-  // Para reflejar exactamente lo digitado, no se descuenta "pago al recibir" aquí.
+  const pending = pendingEdited != null ? pendingEdited : pendingShopify;
+  // Prioridad: valor editado en KOVO; si no existe, pago/pendiente de Shopify.
   return Math.max(0, total - pending);
 }
 
