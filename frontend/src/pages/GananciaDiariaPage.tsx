@@ -252,8 +252,8 @@ export default function GananciaDiariaPage() {
       return '0';
     }
   });
-  const [rangeFrom, setRangeFrom] = useState('');
-  const [rangeTo, setRangeTo] = useState('');
+  const [rangeStartIdx, setRangeStartIdx] = useState(0);
+  const [rangeEndIdx, setRangeEndIdx] = useState(0);
   const skipSeriesEffectOnce = useRef(false);
   const appliedDefaultMonthsOnce = useRef(false);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
@@ -344,20 +344,50 @@ export default function GananciaDiariaPage() {
   const seriesMetaCur = seriesData?.meta_currency;
   const comparable = seriesData?.ganancia_comparable;
   const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
+  const dayKeys = useMemo(() => {
+    const s = new Set<string>();
+    for (const row of days) s.add(String(row.date || '').trim());
+    return [...s].filter(Boolean).sort();
+  }, [days]);
+
+  useEffect(() => {
+    if (dayKeys.length === 0) {
+      setRangeStartIdx(0);
+      setRangeEndIdx(0);
+      return;
+    }
+    const last = dayKeys.length - 1;
+    setRangeStartIdx((prev) => Math.max(0, Math.min(prev, last)));
+    setRangeEndIdx((prev) => Math.max(0, Math.min(prev, last)));
+  }, [dayKeys]);
+
+  const effectiveRangeIdx = useMemo(() => {
+    if (dayKeys.length === 0) return { start: 0, end: 0 };
+    const last = dayKeys.length - 1;
+    const a = Math.max(0, Math.min(rangeStartIdx, last));
+    const b = Math.max(0, Math.min(rangeEndIdx, last));
+    return a <= b ? { start: a, end: b } : { start: b, end: a };
+  }, [dayKeys, rangeStartIdx, rangeEndIdx]);
+
+  const selectedRangeDates = useMemo(() => {
+    if (dayKeys.length === 0) return { from: '', to: '' };
+    return {
+      from: dayKeys[effectiveRangeIdx.start] || '',
+      to: dayKeys[effectiveRangeIdx.end] || '',
+    };
+  }, [dayKeys, effectiveRangeIdx]);
 
   const daysInRange = useMemo(() => {
-    const from = rangeFrom.trim();
-    const to = rangeTo.trim();
-    if (!from && !to) return days;
-    const lo = from && to && from > to ? to : from;
-    const hi = from && to && from > to ? from : to;
+    if (dayKeys.length === 0 || !selectedRangeDates.from || !selectedRangeDates.to) return days;
+    const lo = selectedRangeDates.from;
+    const hi = selectedRangeDates.to;
     return days.filter((row) => {
       const d = row.date;
       if (lo && d < lo) return false;
       if (hi && d > hi) return false;
       return true;
     });
-  }, [days, rangeFrom, rangeTo]);
+  }, [days, dayKeys, selectedRangeDates]);
 
   const totals = useMemo(() => {
     let v = 0;
@@ -432,7 +462,7 @@ export default function GananciaDiariaPage() {
             ) : null}
             . Los KPI y la tabla usan el/los mes(es) seleccionados; el rango de fechas acota los días mostrados.
           </p>
-          {(rangeFrom || rangeTo) && daysInRange.length !== days.length ? (
+          {dayKeys.length > 0 && daysInRange.length !== days.length ? (
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textHint }}>
               Mostrando {daysInRange.length} de {days.length} día{days.length === 1 ? '' : 's'} según el rango de fechas.
             </p>
@@ -489,50 +519,60 @@ export default function GananciaDiariaPage() {
             <div
               style={{
                 display: 'inline-flex',
-                flexWrap: 'wrap',
-                alignItems: 'center',
+                flexDirection: 'column',
+                alignItems: 'flex-start',
                 gap: 8,
                 fontSize: 12,
                 color: ds.textSecondary,
                 fontWeight: 600,
+                minWidth: 280,
               }}
             >
-              <span>Rango</span>
-              <input
-                type="date"
-                value={rangeFrom}
-                onChange={(e) => setRangeFrom(e.target.value)}
-                aria-label="Fecha desde"
+              <span>Rango (deslizador)</span>
+              <div
                 style={{
-                  padding: '7px 9px',
-                  borderRadius: 8,
+                  width: '100%',
                   border: `1px solid ${ds.borderCard}`,
+                  borderRadius: 10,
                   background: ds.bgCard,
-                  color: ds.textPrimary,
-                  fontSize: 12,
+                  padding: '8px 10px',
+                  boxSizing: 'border-box',
                 }}
-              />
-              <span style={{ fontWeight: 500, color: ds.textMuted }}>a</span>
-              <input
-                type="date"
-                value={rangeTo}
-                onChange={(e) => setRangeTo(e.target.value)}
-                aria-label="Fecha hasta"
-                style={{
-                  padding: '7px 9px',
-                  borderRadius: 8,
-                  border: `1px solid ${ds.borderCard}`,
-                  background: ds.bgCard,
-                  color: ds.textPrimary,
-                  fontSize: 12,
-                }}
-              />
+              >
+                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: ds.textHint }}>
+                  <span>{selectedRangeDates.from ? formatTableDate(selectedRangeDates.from) : '—'}</span>
+                  <span>{selectedRangeDates.to ? formatTableDate(selectedRangeDates.to) : '—'}</span>
+                </div>
+                <div style={{ position: 'relative', marginTop: 8, height: 24 }}>
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(dayKeys.length - 1, 0)}
+                    value={effectiveRangeIdx.start}
+                    onChange={(e) => setRangeStartIdx(parseInt(e.target.value, 10) || 0)}
+                    aria-label="Inicio del rango de fechas"
+                    style={{ position: 'absolute', inset: 0, width: '100%' }}
+                    disabled={dayKeys.length <= 1}
+                  />
+                  <input
+                    type="range"
+                    min={0}
+                    max={Math.max(dayKeys.length - 1, 0)}
+                    value={effectiveRangeIdx.end}
+                    onChange={(e) => setRangeEndIdx(parseInt(e.target.value, 10) || 0)}
+                    aria-label="Fin del rango de fechas"
+                    style={{ position: 'absolute', inset: 0, width: '100%' }}
+                    disabled={dayKeys.length <= 1}
+                  />
+                </div>
+              </div>
               <button
                 type="button"
-                disabled={!rangeFrom && !rangeTo}
+                disabled={dayKeys.length === 0 || (effectiveRangeIdx.start === 0 && effectiveRangeIdx.end === dayKeys.length - 1)}
                 onClick={() => {
-                  setRangeFrom('');
-                  setRangeTo('');
+                  if (dayKeys.length === 0) return;
+                  setRangeStartIdx(0);
+                  setRangeEndIdx(dayKeys.length - 1);
                 }}
                 style={{
                   padding: '6px 10px',
@@ -541,8 +581,14 @@ export default function GananciaDiariaPage() {
                   background: ds.bgSubtle,
                   fontSize: 12,
                   fontWeight: 600,
-                  cursor: !rangeFrom && !rangeTo ? 'not-allowed' : 'pointer',
-                  opacity: !rangeFrom && !rangeTo ? 0.5 : 1,
+                  cursor:
+                    dayKeys.length === 0 || (effectiveRangeIdx.start === 0 && effectiveRangeIdx.end === dayKeys.length - 1)
+                      ? 'not-allowed'
+                      : 'pointer',
+                  opacity:
+                    dayKeys.length === 0 || (effectiveRangeIdx.start === 0 && effectiveRangeIdx.end === dayKeys.length - 1)
+                      ? 0.5
+                      : 1,
                 }}
               >
                 Quitar rango
