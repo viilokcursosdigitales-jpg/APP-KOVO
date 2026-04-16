@@ -4019,7 +4019,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       const lf = localMapGanancia.get(Number(o.id));
       const estadoUnified = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
       if (isUnifiedEstadoPrueba(estadoUnified)) continue;
-      const st = String(lf?.internal_status || '')
+      const st = String(estadoUnified || '')
         .trim()
         .toLowerCase()
         .replace(/\s+/g, '_');
@@ -4261,7 +4261,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       const lf = localMapGanancia2.get(Number(o.id));
       const estadoUnified = mergeDisplayedOrderEstado(lf?.internal_status, lf?.motico_status);
       if (isUnifiedEstadoPrueba(estadoUnified)) continue;
-      const st = String(lf?.internal_status || '')
+      const st = String(estadoUnified || '')
         .trim()
         .toLowerCase()
         .replace(/\s+/g, '_');
