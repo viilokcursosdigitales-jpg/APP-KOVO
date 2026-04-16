@@ -23,7 +23,7 @@ import {
   coerceOrderInternalEstadoForSelect,
 } from '../constants/orderInternalEstado';
 
-const POLL_MS = 25_000;
+const POLL_MS = 40_000;
 const SAVE_DEBOUNCE_MS = 450;
 const SEARCH_DEBOUNCE_MS = 240;
 

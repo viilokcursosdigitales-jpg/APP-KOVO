@@ -35,7 +35,7 @@ import {
   type MoticoShippingAddress,
 } from '../utils/moticoPrintGuide';
 
-const POLL_MS = 25_000;
+const POLL_MS = 40_000;
 const SEARCH_DEBOUNCE_MS = 240;
 const MAX_LOGO_BYTES = 400_000;
 const MOTICO_STATUS_DEFAULT: OrderInternalEstadoValue = 'sin_revisar';
@@ -1040,14 +1040,13 @@ export default function MoticoPage() {
         if (dateQuery.max) qs.set('created_at_max', dateQuery.max);
         if (productId.trim()) qs.set('product_id', productId.trim());
 
-        const [ordRes, prodRes] = await Promise.all([
-          apiFetch(`/api/shopify/orders?${qs.toString()}`),
-          apiFetch('/api/shopify/products?limit=250'),
-        ]);
-
-        if (prodRes.ok) {
-          const pdata = (await prodRes.json().catch(() => ({}))) as { products?: unknown[] };
-          setProducts(normalizeShopifyProducts(pdata));
+        const ordRes = await apiFetch(`/api/shopify/orders?${qs.toString()}`);
+        if (products.length === 0) {
+          const prodRes = await apiFetch('/api/shopify/products?limit=250');
+          if (prodRes.ok) {
+            const pdata = (await prodRes.json().catch(() => ({}))) as { products?: unknown[] };
+            setProducts(normalizeShopifyProducts(pdata));
+          }
         }
 
         const data = (await ordRes.json().catch(() => ({}))) as {
@@ -1084,7 +1083,7 @@ export default function MoticoPage() {
         setRefreshing(false);
       }
     },
-    [dateQuery.min, dateQuery.max, productId],
+    [dateQuery.min, dateQuery.max, productId, products.length],
   );
 
   const patchLocalFields = useCallback(async (orderId: number, body: Record<string, unknown>) => {
