@@ -2458,6 +2458,28 @@ function shopifyDefaultTotalAPagar(o) {
   return Number.isFinite(t) && t >= 0 ? t : 0;
 }
 
+/**
+ * Mismo criterio de Pedidos para ventas:
+ * 1) price_override en local fields (si existe)
+ * 2) price_override en el objeto de orden (si existe)
+ * 3) total base del pedido
+ */
+function resolveOrderRevenueAmount(order, localFields) {
+  const ovLocal =
+    localFields?.price_override != null && Number.isFinite(Number(localFields.price_override))
+      ? Number(localFields.price_override)
+      : null;
+  if (ovLocal != null && ovLocal >= 0) return ovLocal;
+  const ovOrder =
+    order?.price_override != null && Number.isFinite(Number(order.price_override))
+      ? Number(order.price_override)
+      : null;
+  if (ovOrder != null && ovOrder >= 0) return ovOrder;
+  const baseRaw = Number.parseFloat(String(order?.shopifyTotal ?? order?.total ?? '0').replace(',', '.'));
+  if (Number.isFinite(baseRaw) && baseRaw >= 0) return baseRaw;
+  return NaN;
+}
+
 function moticoPhoneDigitsLocal(raw) {
   let d = String(raw || '').replace(/\D/g, '');
   if (d.startsWith('57') && d.length >= 10) d = d.slice(2);
@@ -4026,7 +4048,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       if (st !== 'despachado') continue;
       const fs = String(o.financialStatus || '').toLowerCase();
       if (excludeFin.has(fs)) continue;
-      const amt = parseFloat(String(o.total || '0').replace(',', '.'));
+      const amt = resolveOrderRevenueAmount(o, lf);
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasTotal += amt;
       ventasPedidos += 1;
@@ -4047,7 +4069,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       if (st !== 'despachado') continue;
       const fs = String(o?.financialStatus || '').toLowerCase();
       if (excludeFin.has(fs)) continue;
-      const amt = parseFloat(String(o?.total || '0').replace(',', '.'));
+      const amt = resolveOrderRevenueAmount(o, null);
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasTotal += amt;
       ventasPedidos += 1;
@@ -4268,7 +4290,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       if (st !== 'despachado') continue;
       const fs = String(o.financialStatus || '').toLowerCase();
       if (excludeFin.has(fs)) continue;
-      const amt = parseFloat(String(o.total || '0').replace(',', '.'));
+      const amt = resolveOrderRevenueAmount(o, lf);
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasByDay.set(key, (ventasByDay.get(key) || 0) + amt);
       pedidosByDay.set(key, (pedidosByDay.get(key) || 0) + 1);
@@ -4303,7 +4325,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       if (st !== 'despachado') continue;
       const fs = String(o?.financialStatus || '').toLowerCase();
       if (excludeFin.has(fs)) continue;
-      const amt = parseFloat(String(o?.total || '0').replace(',', '.'));
+      const amt = resolveOrderRevenueAmount(o, null);
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasByDay.set(key, (ventasByDay.get(key) || 0) + amt);
       pedidosByDay.set(key, (pedidosByDay.get(key) || 0) + 1);
