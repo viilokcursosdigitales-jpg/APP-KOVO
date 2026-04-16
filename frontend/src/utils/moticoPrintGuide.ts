@@ -363,7 +363,7 @@ function buildBatchPrintDocument(
         padding: 0;
       }
       .guide-cut-sep {
-        height: 20mm;
+        height: 10mm;
       }
     }
     /* Celda izquierda = ~18% del ancho útil de carta; altura = franja (1.88in). Sin tope estrecho para que el logo use todo el hueco. */
