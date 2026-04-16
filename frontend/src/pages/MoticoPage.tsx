@@ -365,6 +365,8 @@ type MoticoEditorDraft = {
   quantity: string;
   anticipo: string;
   line_items: {
+    /** ID de línea en Shopify (solo pedidos de tienda); vacío en manuales o líneas nuevas. */
+    shopify_line_item_id: string;
     product_id: string;
     variant_id: string;
     quantity: string;
@@ -396,6 +398,7 @@ type ManualCreateDraft = {
   anticipo: string;
   note: string;
   line_items: {
+    shopify_line_item_id?: string;
     product_id: string;
     variant_id: string;
     quantity: string;
@@ -410,6 +413,7 @@ type ManualCreateDraft = {
 
 function emptyManualLine() {
   return {
+    shopify_line_item_id: '',
     product_id: '',
     variant_id: '',
     quantity: '1',
@@ -529,6 +533,8 @@ function draftFromOrder(o: MoticoOrderRow): MoticoEditorDraft {
           const qty = Number(li.quantity);
           if (!Number.isFinite(pid) || pid <= 0) return null;
           return {
+            shopify_line_item_id:
+              li.id != null && Number.isFinite(Number(li.id)) && Number(li.id) > 0 ? String(li.id) : '',
             product_id: String(pid),
             variant_id: Number.isFinite(vid) && vid > 0 ? String(vid) : '',
             quantity: Number.isFinite(qty) && qty > 0 ? String(qty) : '1',
@@ -1555,6 +1561,7 @@ export default function MoticoPage() {
       const qt = editorDraft.quantity.trim();
       const at = editorDraft.anticipo.trim();
       const patchBody: Record<string, unknown> = { sync_to_shopify: false };
+      const isManualOrder = editorOrder.id < 0 || Boolean(editorOrder.is_motico_manual);
       const effectiveTotalForAnticipo =
         pt !== ''
           ? Number.parseFloat(pt.replace(',', '.'))
@@ -1571,18 +1578,78 @@ export default function MoticoPage() {
         patchBody.price_override = priceNum;
       }
 
-      if (qt === '') {
-        patchBody.quantity_override = null;
-      } else {
-        const qNum = parseInt(qt, 10);
-        if (!Number.isFinite(qNum) || qNum < 1) {
-          setSyncError('La cantidad debe ser al menos 1');
-          return;
+      let allowShopifySync = false;
+      if (isManualOrder) {
+        if (qt === '') {
+          patchBody.quantity_override = null;
+        } else {
+          const qNum = parseInt(qt, 10);
+          if (!Number.isFinite(qNum) || qNum < 1) {
+            setSyncError('La cantidad debe ser al menos 1');
+            return;
+          }
+          patchBody.quantity_override = qNum;
+          allowShopifySync = true;
         }
-        patchBody.quantity_override = qNum;
+      } else {
+        const normalizedShopifyLines = editorDraft.line_items
+          .map((line) => {
+            const sidStr = String(line.shopify_line_item_id || '').trim();
+            const pid = Number(line.product_id);
+            if (!Number.isFinite(pid) || pid <= 0) return null;
+            const product = productById.get(pid);
+            if (!product) return null;
+            const variants = Array.isArray(product.variants) ? product.variants : [];
+            const selectedVariant =
+              variants.find((v) => String(v.id) === String(line.variant_id)) || variants[0] || null;
+            if (!selectedVariant) return null;
+            const qty = parseInt(String(line.quantity || '1'), 10);
+            if (!Number.isFinite(qty) || qty < 1) return null;
+            const vid = Number(selectedVariant.id);
+            if (!Number.isFinite(vid) || vid <= 0) return null;
+            const sid = sidStr !== '' ? Number(sidStr) : NaN;
+            return {
+              shopify_line_item_id: Number.isFinite(sid) && sid > 0 ? sid : undefined,
+              product_id: pid,
+              variant_id: vid,
+              title: String(product.title || 'Producto').trim() || 'Producto',
+              variant_title: String(selectedVariant.title || '').trim(),
+              sku: String(selectedVariant.sku || '').trim(),
+              barcode: String(selectedVariant.barcode || '').trim(),
+              quantity: qty,
+            };
+          })
+          .filter(Boolean);
+
+        if (normalizedShopifyLines.length > 0) {
+          const sumQ = normalizedShopifyLines.reduce((s, li) => s + li.quantity, 0);
+          if (!Number.isFinite(sumQ) || sumQ < 1) {
+            setSyncError('La suma de cantidades por línea debe ser al menos 1');
+            return;
+          }
+          patchBody.line_items = normalizedShopifyLines;
+          patchBody.quantity_override = sumQ;
+          allowShopifySync = true;
+        } else if (qt === '') {
+          patchBody.quantity_override = null;
+        } else {
+          const qNum = parseInt(qt, 10);
+          if (!Number.isFinite(qNum) || qNum < 1) {
+            setSyncError('La cantidad debe ser al menos 1');
+            return;
+          }
+          patchBody.quantity_override = qNum;
+          allowShopifySync = true;
+        }
       }
 
-      if (pt !== '' && qt !== '') {
+      if (
+        !isManualOrder &&
+        pt !== '' &&
+        allowShopifySync &&
+        patchBody.quantity_override != null &&
+        Number(patchBody.quantity_override) >= 1
+      ) {
         patchBody.sync_to_shopify = true;
       }
       const anticipoNum = at === '' ? 0 : Number.parseFloat(at.replace(',', '.'));
@@ -1634,7 +1701,9 @@ export default function MoticoPage() {
       const okLocal = await patchLocalFields(editorOrder.id, patchBody);
       if (!okLocal) return;
       if (editorOrder.id < 0 || editorOrder.is_motico_manual) {
-        await loadData(true);
+        await loadData();
+      } else if (patchBody.sync_to_shopify === true) {
+        await loadData({ silent: true });
       }
 
       setEditorOrder(null);
@@ -3622,7 +3691,7 @@ export default function MoticoPage() {
             <p style={{ margin: '0 0 12px', fontSize: 11, color: ds.textMuted, lineHeight: 1.4 }}>
               {editorOrder.is_motico_manual || editorOrder.id < 0
                 ? 'Se aplican al pedido manual en KOVO. Deja vacío precio o cantidad para quitar el valor local.'
-                : 'Se aplican a la primera línea del pedido en Shopify. Deja vacío solo uno de los dos si quieres quitar el valor local (sin sincronizar).'}
+                : 'Precio total y anticipo son KOVO. Las líneas de producto se sincronizan con Shopify: el precio total se reparte en partes iguales por cada unidad (suma de cantidades de todas las líneas).'}
             </p>
             <label style={{ ...labelStyle, display: 'block' }}>
               Precio total
@@ -3634,18 +3703,25 @@ export default function MoticoPage() {
                 style={modalFieldStyle}
               />
             </label>
+            {editorOrder.is_motico_manual || editorOrder.id < 0 ? (
+              <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
+                Cantidad
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={editorDraft.quantity}
+                  onChange={(e) => setEditorDraft((d) => ({ ...d, quantity: e.target.value }))}
+                  style={modalFieldStyle}
+                />
+              </label>
+            ) : (
+              <p style={{ margin: '12px 0 0', fontSize: 11, color: ds.textMuted, lineHeight: 1.4 }}>
+                Cantidad total del pedido en Shopify = suma de las cantidades por línea (abajo). Si no hay líneas
+                válidas, se usa el campo cantidad del pedido (respaldo).
+              </p>
+            )}
             <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
-              Cantidad
-              <input
-                type="text"
-                inputMode="numeric"
-                value={editorDraft.quantity}
-                onChange={(e) => setEditorDraft((d) => ({ ...d, quantity: e.target.value }))}
-                style={modalFieldStyle}
-              />
-            </label>
-            <label style={{ ...labelStyle, display: 'block', marginTop: 14 }}>
-              Anticipo pagado
+              Pago anticipado (anticipo)
               <input
                 type="text"
                 inputMode="decimal"
@@ -3654,8 +3730,7 @@ export default function MoticoPage() {
                 style={modalFieldStyle}
               />
             </label>
-            {editorOrder.is_motico_manual || editorOrder.id < 0 ? (
-              <div style={{ marginTop: 14 }}>
+            <div style={{ marginTop: 14 }}>
                 <p
                   style={{
                     margin: '0 0 8px',
@@ -3666,8 +3741,16 @@ export default function MoticoPage() {
                     letterSpacing: '0.4px',
                   }}
                 >
-                  Productos del inventario
+                  {editorOrder.is_motico_manual || editorOrder.id < 0
+                    ? 'Productos del inventario'
+                    : 'Líneas de producto (Shopify)'}
                 </p>
+                {editorOrder.is_motico_manual || editorOrder.id < 0 ? null : (
+                  <p style={{ margin: '0 0 10px', fontSize: 11, color: ds.textMuted, lineHeight: 1.4 }}>
+                    Puedes editar todas las líneas, añadir o quitar productos. Las líneas nuevas se crean en
+                    Shopify al guardar con precio total y sincronización.
+                  </p>
+                )}
                 {editorDraft.line_items.map((line, idx) => {
                   const selectedProduct = productById.get(Number(line.product_id));
                   const variants = selectedProduct?.variants || [];
@@ -3765,7 +3848,6 @@ export default function MoticoPage() {
                   Agregar otro producto
                 </button>
               </div>
-            ) : null}
             <div style={{ display: 'flex', gap: 10, marginTop: 22, flexWrap: 'wrap' }}>
               <button
                 type="button"

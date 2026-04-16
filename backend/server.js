@@ -33,6 +33,7 @@ const {
   shopifyRequest,
   shopifySyncFirstLineItemQuantityAndPrice,
   shopifySyncFirstLineItemVariantQuantityAndPrice,
+  shopifySyncOrderLineItemsMulti,
   shopifyUpdateOrderShippingAddress,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
@@ -4713,6 +4714,37 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       total_a_pagar_override = 0;
     }
 
+    /** Borrador multi-línea (Motico → Shopify): varias variantes en un solo PUT a `orders.json`. */
+    let shopifyMultiLineDesired = null;
+    if (
+      body.sync_to_shopify === true &&
+      Array.isArray(body.line_items) &&
+      body.line_items.length > 0
+    ) {
+      const parsedMulti = [];
+      for (const raw of body.line_items) {
+        if (!raw || typeof raw !== 'object') continue;
+        const q = parseInt(String(raw.quantity != null ? raw.quantity : '0'), 10);
+        const vid = raw.variant_id != null ? Number(raw.variant_id) : NaN;
+        if (!Number.isFinite(q) || q < 1 || !Number.isFinite(vid) || vid <= 0) continue;
+        let shopify_line_item_id = null;
+        if (raw.shopify_line_item_id != null && String(raw.shopify_line_item_id).trim() !== '') {
+          const sid = Number(raw.shopify_line_item_id);
+          if (Number.isFinite(sid) && sid > 0) shopify_line_item_id = Math.floor(sid);
+        }
+        parsedMulti.push({
+          shopify_line_item_id,
+          variant_id: Math.floor(vid),
+          quantity: q,
+        });
+      }
+      if (parsedMulti.length) {
+        shopifyMultiLineDesired = parsedMulti;
+        const sumQ = parsedMulti.reduce((acc, li) => acc + li.quantity, 0);
+        if (Number.isFinite(sumQ) && sumQ > 0) quantity_override = sumQ;
+      }
+    }
+
     const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
        ON CONFLICT (organization_id, shopify_order_id) DO UPDATE SET
@@ -4753,31 +4785,43 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           error: 'Para sincronizar con Shopify envía precio y cantidad explícitos (no vacíos).',
         });
       }
-      const unit = Number(price_override) / Number(quantity_override);
-      if (!Number.isFinite(unit) || unit < 0) {
-        return res.status(400).json({ error: 'Precio o cantidad no válidos para calcular precio unitario' });
-      }
       const dbClient = await pool.connect();
       try {
         await dbClient.query('BEGIN');
         await dbClient.query(insertSql, insertParams);
-        const syncRes =
-          variant_id != null
-            ? await shopifySyncFirstLineItemVariantQuantityAndPrice(
-                conn.shop_domain,
-                conn.access_token,
-                orderId,
-                variant_id,
-                quantity_override,
-                unit,
-              )
-            : await shopifySyncFirstLineItemQuantityAndPrice(
-                conn.shop_domain,
-                conn.access_token,
-                orderId,
-                quantity_override,
-                unit,
-              );
+        let syncRes;
+        if (shopifyMultiLineDesired && shopifyMultiLineDesired.length > 0) {
+          syncRes = await shopifySyncOrderLineItemsMulti(
+            conn.shop_domain,
+            conn.access_token,
+            orderId,
+            shopifyMultiLineDesired,
+            Number(price_override),
+          );
+        } else {
+          const unit = Number(price_override) / Number(quantity_override);
+          if (!Number.isFinite(unit) || unit < 0) {
+            await dbClient.query('ROLLBACK');
+            return res.status(400).json({ error: 'Precio o cantidad no válidos para calcular precio unitario' });
+          }
+          syncRes =
+            variant_id != null
+              ? await shopifySyncFirstLineItemVariantQuantityAndPrice(
+                  conn.shop_domain,
+                  conn.access_token,
+                  orderId,
+                  variant_id,
+                  quantity_override,
+                  unit,
+                )
+              : await shopifySyncFirstLineItemQuantityAndPrice(
+                  conn.shop_domain,
+                  conn.access_token,
+                  orderId,
+                  quantity_override,
+                  unit,
+                );
+        }
         if (!syncRes.ok) {
           await dbClient.query('ROLLBACK');
           return res.status(422).json({
