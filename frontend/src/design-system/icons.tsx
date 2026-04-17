@@ -173,6 +173,16 @@ export function IconPencil({ size = 16 }: { size?: number }) {
   );
 }
 
+/** Calculadora COD / rentabilidad */
+export function IconCalculadora() {
+  return strokeSvg(
+    <>
+      <rect x="5" y="3" width="14" height="18" rx="2" />
+      <path d="M9 8h6M9 12h5M9 16h7" />
+    </>,
+  );
+}
+
 export function IconEmpty({ size = 40 }: { size?: number }) {
   return (
     <svg

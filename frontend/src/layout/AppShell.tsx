@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import { apiFetch, getStoredToken } from '../auth/api';
 import { ds } from '../design-system/ds';
 import {
+  IconCalculadora,
   IconCart,
   IconFunnel,
   IconLayout,
@@ -52,6 +53,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   ];
   const marketing: NavItem[] = [
     { to: '/meta-ads', label: 'Meta Ads', icon: <IconMegaphone />, moduleId: 'meta_ads' },
+    { to: '/calculadora-cod', label: 'Calculadora COD', icon: <IconCalculadora />, moduleId: 'calculadora_cod' },
     { to: '/ads-funnel', label: 'Ads Funnel', icon: <IconFunnel />, moduleId: 'ads_funnel' },
     { to: '/finanza', label: 'Finanza', icon: <IconTrendingUp />, moduleId: 'finanza' },
     {
@@ -113,11 +115,12 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   );
 
   if (mobile) {
+    const mktMobile = [marketingVisible[0], marketingVisible[1]].filter(Boolean) as NavItem[];
     const mobileNav: NavItem[] = [
       mainVisible[0],
       mainVisible[1],
       mainVisible[3],
-      marketingVisible[0],
+      ...mktMobile,
       account[account.length - 1],
     ].filter((it): it is NavItem => Boolean(it));
     return (

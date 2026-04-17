@@ -227,6 +227,20 @@ CREATE TABLE IF NOT EXISTS motico_manual_orders (
 
 CREATE INDEX IF NOT EXISTS idx_motico_manual_org_created ON motico_manual_orders (organization_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS calculadora_cod_calculos (
+  id SERIAL PRIMARY KEY,
+  user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
+  product_name TEXT NOT NULL,
+  inputs_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  kpis_json JSONB NOT NULL DEFAULT '{}'::jsonb,
+  currency VARCHAR(8) NOT NULL DEFAULT 'COP',
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_calc_cod_user_product ON calculadora_cod_calculos (user_id, product_name);
+CREATE INDEX IF NOT EXISTS idx_calc_cod_user_product_created ON calculadora_cod_calculos (user_id, product_name, created_at DESC);
+
 -- Hotmart webhook: optional organization columns (keep no semicolons inside -- lines: initDb splits on ;)
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'free';
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hotmart_email TEXT;

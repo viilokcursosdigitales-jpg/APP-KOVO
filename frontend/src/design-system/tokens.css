@@ -28,6 +28,9 @@
   --color-danger-bg: #fcebeb;
   --color-danger-text: #a32d2d;
 
+  /* Texto sobre fondo de marca (botones primarios, chips activos) */
+  --color-text-on-brand: #ffffff;
+
   --font-base: -apple-system, BlinkMacSystemFont, 'Inter', sans-serif;
 
   --kpi-sales-bg: #eaf3de;
@@ -77,6 +80,8 @@ html[data-theme='dark'] {
   --color-warning-text: #c9a227;
   --color-danger-bg: rgba(163, 45, 45, 0.2);
   --color-danger-text: #d96666;
+
+  --color-text-on-brand: #ffffff;
 
   --kpi-sales-bg: rgba(59, 109, 17, 0.25);
   --kpi-sales-icon: #6eb88a;

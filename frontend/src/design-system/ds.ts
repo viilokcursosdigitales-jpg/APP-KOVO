@@ -23,6 +23,7 @@ export const ds = {
   warningText: 'var(--color-warning-text)',
   dangerBg: 'var(--color-danger-bg)',
   dangerText: 'var(--color-danger-text)',
+  textOnBrand: 'var(--color-text-on-brand)',
   font: 'var(--font-base)',
   kpiSalesBg: 'var(--kpi-sales-bg)',
   kpiSalesIcon: 'var(--kpi-sales-icon)',

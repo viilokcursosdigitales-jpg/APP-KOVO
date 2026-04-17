@@ -82,6 +82,7 @@ const CONFIGURABLE_MODULE_IDS = [
   'indicadores_marketing',
   'canales',
   'ganancia_diaria',
+  'calculadora_cod',
 ];
 
 const MODULE_CATALOG_FOR_API = [
@@ -96,6 +97,7 @@ const MODULE_CATALOG_FOR_API = [
   { id: 'indicadores_marketing', label: 'Indicadores', group: 'Marketing' },
   { id: 'canales', label: 'Canales', group: 'Marketing' },
   { id: 'ganancia_diaria', label: 'Ganancia Diaria', group: 'Marketing' },
+  { id: 'calculadora_cod', label: 'Calculadora COD', group: 'Marketing' },
 ];
 
 const pool = createPool();
@@ -542,6 +544,42 @@ function requireRole(...allowed) {
 function scopeToOrganization(req, res, next) {
   req.organizationId = req.user.organizationId;
   next();
+}
+
+/** Nombre de producto estable para guardar y buscar (minúsculas, sin acentos, espacios colapsados). */
+function normalizeCalculadoraProductName(name) {
+  return String(name || '')
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .toLowerCase();
+}
+
+/** Acceso por módulo (misma lógica que module_access en sesión). null = acceso total. */
+function requireModuleAccess(moduleId) {
+  const mid = String(moduleId || '').trim();
+  return (req, res, next) => {
+    (async () => {
+      try {
+        if (!mid) {
+          return res.status(500).json({ error: 'Módulo no configurado' });
+        }
+        const roleTier = await getRoleTier(req.user.userId, req.user.organizationId);
+        const access = await resolveModuleAccessForSession(
+          req.user.organizationId,
+          req.user.role,
+          roleTier,
+        );
+        if (access === null) return next();
+        if (Array.isArray(access) && access.includes(mid)) return next();
+        return res.status(403).json({ error: 'No tienes acceso a este módulo' });
+      } catch (e) {
+        console.error('[requireModuleAccess]', e);
+        return res.status(500).json({ error: 'Error de autorización' });
+      }
+    })();
+  };
 }
 
 function normalizeEmail(email) {
@@ -5527,6 +5565,213 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     res.status(500).json({ error: 'Error al calcular la serie de ganancia diaria' });
   }
 });
+
+app.get(
+  '/api/calculadora-cod/productos',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('calculadora_cod'),
+  async (req, res) => {
+    try {
+      const { rows } = await pool.query(
+        `SELECT product_name,
+                MAX(created_at) AS last_updated,
+                COUNT(*)::int AS versions_count
+           FROM calculadora_cod_calculos
+          WHERE user_id = $1
+          GROUP BY product_name
+          ORDER BY product_name ASC`,
+        [req.user.userId],
+      );
+      res.json({
+        productos: rows.map((r) => ({
+          product_name: r.product_name,
+          last_updated: r.last_updated ? new Date(r.last_updated).toISOString() : null,
+          versions_count: Number(r.versions_count) || 0,
+        })),
+      });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Falta la tabla calculadora_cod_calculos. Reinicia el backend para ejecutar initDb.',
+        });
+      }
+      console.error('[calculadora-cod/productos]', e);
+      res.status(500).json({ error: 'Error al listar productos' });
+    }
+  },
+);
+
+app.get(
+  '/api/calculadora-cod/productos/:nombre/historico',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('calculadora_cod'),
+  async (req, res) => {
+    try {
+      const raw = req.params.nombre != null ? String(req.params.nombre) : '';
+      const productName = normalizeCalculadoraProductName(decodeURIComponent(raw.replace(/\+/g, ' ')));
+      if (!productName) {
+        return res.status(400).json({ error: 'Nombre de producto inválido' });
+      }
+      const { rows } = await pool.query(
+        `SELECT id, created_at, inputs_json, kpis_json, currency, notes
+           FROM calculadora_cod_calculos
+          WHERE user_id = $1 AND product_name = $2
+          ORDER BY created_at ASC`,
+        [req.user.userId, productName],
+      );
+      res.json({
+        historico: rows.map((r) => ({
+          id: r.id,
+          created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+          inputs_json: r.inputs_json,
+          kpis_json: r.kpis_json,
+          currency: r.currency,
+          notes: r.notes,
+        })),
+      });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Falta la tabla calculadora_cod_calculos. Reinicia el backend para ejecutar initDb.',
+        });
+      }
+      console.error('[calculadora-cod/historico]', e);
+      res.status(500).json({ error: 'Error al cargar histórico' });
+    }
+  },
+);
+
+app.get(
+  '/api/calculadora-cod/productos/:nombre/ultimo',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('calculadora_cod'),
+  async (req, res) => {
+    try {
+      const raw = req.params.nombre != null ? String(req.params.nombre) : '';
+      const productName = normalizeCalculadoraProductName(decodeURIComponent(raw.replace(/\+/g, ' ')));
+      if (!productName) {
+        return res.status(400).json({ error: 'Nombre de producto inválido' });
+      }
+      const { rows } = await pool.query(
+        `SELECT id, created_at, inputs_json, kpis_json, currency, notes
+           FROM calculadora_cod_calculos
+          WHERE user_id = $1 AND product_name = $2
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [req.user.userId, productName],
+      );
+      const row = rows[0];
+      res.json({
+        calculo: row
+          ? {
+              id: row.id,
+              created_at: row.created_at ? new Date(row.created_at).toISOString() : null,
+              inputs_json: row.inputs_json,
+              kpis_json: row.kpis_json,
+              currency: row.currency,
+              notes: row.notes,
+            }
+          : null,
+      });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Falta la tabla calculadora_cod_calculos. Reinicia el backend para ejecutar initDb.',
+        });
+      }
+      console.error('[calculadora-cod/ultimo]', e);
+      res.status(500).json({ error: 'Error al cargar el último cálculo' });
+    }
+  },
+);
+
+app.post(
+  '/api/calculadora-cod/calculos',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('calculadora_cod'),
+  async (req, res) => {
+    try {
+      const body = req.body && typeof req.body === 'object' ? req.body : {};
+      const product_name = normalizeCalculadoraProductName(body.product_name);
+      if (!product_name) {
+        return res.status(400).json({ error: 'product_name es obligatorio' });
+      }
+      if (!body.inputs_json || typeof body.inputs_json !== 'object' || Array.isArray(body.inputs_json)) {
+        return res.status(400).json({ error: 'inputs_json debe ser un objeto' });
+      }
+      if (!body.kpis_json || typeof body.kpis_json !== 'object' || Array.isArray(body.kpis_json)) {
+        return res.status(400).json({ error: 'kpis_json debe ser un objeto' });
+      }
+      const cur = String(body.currency || 'COP')
+        .trim()
+        .toUpperCase();
+      if (!['COP', 'USD', 'MXN'].includes(cur)) {
+        return res.status(400).json({ error: 'currency debe ser COP, USD o MXN' });
+      }
+      const notes = body.notes != null ? String(body.notes).slice(0, 4000) : null;
+      const { rows } = await pool.query(
+        `INSERT INTO calculadora_cod_calculos (user_id, product_name, inputs_json, kpis_json, currency, notes)
+         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6)
+         RETURNING id, created_at, inputs_json, kpis_json, currency, notes`,
+        [req.user.userId, product_name, JSON.stringify(body.inputs_json), JSON.stringify(body.kpis_json), cur, notes],
+      );
+      const row = rows[0];
+      res.status(201).json({
+        calculo: {
+          id: row.id,
+          created_at: row.created_at ? new Date(row.created_at).toISOString() : null,
+          inputs_json: row.inputs_json,
+          kpis_json: row.kpis_json,
+          currency: row.currency,
+          notes: row.notes,
+        },
+      });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Falta la tabla calculadora_cod_calculos. Reinicia el backend para ejecutar initDb.',
+        });
+      }
+      console.error('[calculadora-cod/calculos POST]', e);
+      res.status(500).json({ error: 'Error al guardar el cálculo' });
+    }
+  },
+);
+
+app.delete(
+  '/api/calculadora-cod/calculos/:id',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('calculadora_cod'),
+  async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID inválido' });
+      }
+      const del = await pool.query(
+        `DELETE FROM calculadora_cod_calculos WHERE id = $1 AND user_id = $2 RETURNING id`,
+        [id, req.user.userId],
+      );
+      if (del.rowCount === 0) {
+        return res.status(404).json({ error: 'Cálculo no encontrado' });
+      }
+      res.json({ success: true });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Falta la tabla calculadora_cod_calculos. Reinicia el backend para ejecutar initDb.',
+        });
+      }
+      console.error('[calculadora-cod/calculos DELETE]', e);
+      res.status(500).json({ error: 'Error al eliminar el cálculo' });
+    }
+  },
+);
 
 app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganization, async (req, res) => {
   try {

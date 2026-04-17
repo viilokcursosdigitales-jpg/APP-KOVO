@@ -11,6 +11,7 @@ export const APP_MODULE_IDS = [
   'indicadores_marketing',
   'canales',
   'ganancia_diaria',
+  'calculadora_cod',
 ] as const;
 
 export type AppModuleId = (typeof APP_MODULE_IDS)[number];
@@ -27,6 +28,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'indicadores_marketing', label: 'Indicadores', group: 'Marketing' },
   { id: 'canales', label: 'Canales', group: 'Marketing' },
   { id: 'ganancia_diaria', label: 'Ganancia Diaria', group: 'Marketing' },
+  { id: 'calculadora_cod', label: 'Calculadora COD', group: 'Marketing' },
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
@@ -42,6 +44,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/indicadores-marketing': 'indicadores_marketing',
   '/canales': 'canales',
   '/ganancia-diaria': 'ganancia_diaria',
+  '/calculadora-cod': 'calculadora_cod',
 };
 
 const MODULE_TO_PATH: Record<AppModuleId, string> = {
@@ -56,6 +59,7 @@ const MODULE_TO_PATH: Record<AppModuleId, string> = {
   indicadores_marketing: '/indicadores-marketing',
   canales: '/canales',
   ganancia_diaria: '/ganancia-diaria',
+  calculadora_cod: '/calculadora-cod',
 };
 
 /** Orden para “primera pantalla” tras login o al bloquear una ruta. */

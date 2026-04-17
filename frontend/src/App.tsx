@@ -13,6 +13,7 @@ const InventarioPage = lazy(() => import('./pages/InventarioPage'));
 const Login = lazy(() => import('./pages/Login'));
 const MarketingIndicatorsPage = lazy(() => import('./pages/MarketingIndicatorsPage'));
 const GananciaDiariaPage = lazy(() => import('./pages/GananciaDiariaPage'));
+const CalculadoraCodPage = lazy(() => import('./calculadora-cod/CalculadoraCodPage'));
 const MetaAdsPage = lazy(() => import('./pages/MetaAdsPage'));
 const MoticoPage = lazy(() => import('./pages/MoticoPage'));
 const PedidosPage = lazy(() => import('./pages/PedidosPage'));
@@ -53,6 +54,7 @@ export default function App() {
               <Route path="/indicadores-marketing" element={<MarketingIndicatorsPage />} />
               <Route path="/canales" element={<CanalesPage />} />
               <Route path="/ganancia-diaria" element={<GananciaDiariaPage />} />
+              <Route path="/calculadora-cod" element={<CalculadoraCodPage />} />
             </Route>
             <Route path="/profile" element={<Profile />} />
             <Route element={<AdminRoute />}>
