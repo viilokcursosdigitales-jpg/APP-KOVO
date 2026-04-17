@@ -556,6 +556,35 @@ function normalizeCalculadoraProductName(name) {
     .toLowerCase();
 }
 
+function calculadoraCalculoRowToJson(r) {
+  return {
+    id: r.id,
+    created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+    updated_at: r.updated_at != null ? new Date(r.updated_at).toISOString() : null,
+    inputs_json: r.inputs_json,
+    kpis_json: r.kpis_json,
+    currency: r.currency,
+    notes: r.notes,
+  };
+}
+
+/** KPIs de mezcla al guardar (CPA / ROAS “objetivo” ponderados, nivel embudo generado). */
+function mixObjetivoPonderadoFromKpisJson(kpisJson) {
+  try {
+    const o = kpisJson && typeof kpisJson === 'object' && !Array.isArray(kpisJson) ? kpisJson : {};
+    const mix = o.mix && typeof o.mix === 'object' && !Array.isArray(o.mix) ? o.mix : {};
+    const cpa = Number(mix.cpaPonderado);
+    const roasRaw = mix.roasPonderado;
+    const roas = roasRaw == null || roasRaw === '' ? NaN : Number(roasRaw);
+    return {
+      cpa_objetivo_ponderado: Number.isFinite(cpa) && cpa > 0 ? cpa : null,
+      roas_objetivo_ponderado: Number.isFinite(roas) && roas > 0 ? roas : null,
+    };
+  } catch {
+    return { cpa_objetivo_ponderado: null, roas_objetivo_ponderado: null };
+  }
+}
+
 /** Acceso por módulo (misma lógica que module_access en sesión). null = acceso total. */
 function requireModuleAccess(moduleId) {
   const mid = String(moduleId || '').trim();
@@ -5574,21 +5603,32 @@ app.get(
   async (req, res) => {
     try {
       const { rows } = await pool.query(
-        `SELECT product_name,
-                MAX(created_at) AS last_updated,
-                COUNT(*)::int AS versions_count
-           FROM calculadora_cod_calculos
-          WHERE user_id = $1
-          GROUP BY product_name
-          ORDER BY product_name ASC`,
+        `SELECT DISTINCT ON (c.product_name)
+                c.product_name,
+                (SELECT COUNT(*)::int FROM calculadora_cod_calculos x
+                   WHERE x.user_id = $1 AND x.product_name = c.product_name) AS versions_count,
+                GREATEST(c.created_at, COALESCE(c.updated_at, c.created_at)) AS last_updated,
+                c.kpis_json,
+                c.currency
+           FROM calculadora_cod_calculos c
+          WHERE c.user_id = $1
+          ORDER BY c.product_name, c.created_at DESC`,
         [req.user.userId],
       );
       res.json({
-        productos: rows.map((r) => ({
-          product_name: r.product_name,
-          last_updated: r.last_updated ? new Date(r.last_updated).toISOString() : null,
-          versions_count: Number(r.versions_count) || 0,
-        })),
+        productos: rows.map((r) => {
+          const mixK = mixObjetivoPonderadoFromKpisJson(r.kpis_json);
+          const cur = String(r.currency || 'COP').trim().toUpperCase();
+          const currency = ['COP', 'USD', 'MXN'].includes(cur) ? cur : 'COP';
+          return {
+            product_name: r.product_name,
+            last_updated: r.last_updated ? new Date(r.last_updated).toISOString() : null,
+            versions_count: Number(r.versions_count) || 0,
+            currency,
+            cpa_objetivo_ponderado: mixK.cpa_objetivo_ponderado,
+            roas_objetivo_ponderado: mixK.roas_objetivo_ponderado,
+          };
+        }),
       });
     } catch (e) {
       if (e && e.code === '42P01') {
@@ -5615,21 +5655,14 @@ app.get(
         return res.status(400).json({ error: 'Nombre de producto inválido' });
       }
       const { rows } = await pool.query(
-        `SELECT id, created_at, inputs_json, kpis_json, currency, notes
+        `SELECT id, created_at, updated_at, inputs_json, kpis_json, currency, notes
            FROM calculadora_cod_calculos
           WHERE user_id = $1 AND product_name = $2
           ORDER BY created_at ASC`,
         [req.user.userId, productName],
       );
       res.json({
-        historico: rows.map((r) => ({
-          id: r.id,
-          created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
-          inputs_json: r.inputs_json,
-          kpis_json: r.kpis_json,
-          currency: r.currency,
-          notes: r.notes,
-        })),
+        historico: rows.map((r) => calculadoraCalculoRowToJson(r)),
       });
     } catch (e) {
       if (e && e.code === '42P01') {
@@ -5656,7 +5689,7 @@ app.get(
         return res.status(400).json({ error: 'Nombre de producto inválido' });
       }
       const { rows } = await pool.query(
-        `SELECT id, created_at, inputs_json, kpis_json, currency, notes
+        `SELECT id, created_at, updated_at, inputs_json, kpis_json, currency, notes
            FROM calculadora_cod_calculos
           WHERE user_id = $1 AND product_name = $2
           ORDER BY created_at DESC
@@ -5665,16 +5698,7 @@ app.get(
       );
       const row = rows[0];
       res.json({
-        calculo: row
-          ? {
-              id: row.id,
-              created_at: row.created_at ? new Date(row.created_at).toISOString() : null,
-              inputs_json: row.inputs_json,
-              kpis_json: row.kpis_json,
-              currency: row.currency,
-              notes: row.notes,
-            }
-          : null,
+        calculo: row ? calculadoraCalculoRowToJson(row) : null,
       });
     } catch (e) {
       if (e && e.code === '42P01') {
@@ -5713,22 +5737,41 @@ app.post(
         return res.status(400).json({ error: 'currency debe ser COP, USD o MXN' });
       }
       const notes = body.notes != null ? String(body.notes).slice(0, 4000) : null;
-      const { rows } = await pool.query(
-        `INSERT INTO calculadora_cod_calculos (user_id, product_name, inputs_json, kpis_json, currency, notes)
-         VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6)
-         RETURNING id, created_at, inputs_json, kpis_json, currency, notes`,
-        [req.user.userId, product_name, JSON.stringify(body.inputs_json), JSON.stringify(body.kpis_json), cur, notes],
+      const inputsStr = JSON.stringify(body.inputs_json);
+      const kpisStr = JSON.stringify(body.kpis_json);
+      const { rows: prevRows } = await pool.query(
+        `SELECT id FROM calculadora_cod_calculos
+          WHERE user_id = $1 AND product_name = $2
+          ORDER BY created_at DESC
+          LIMIT 1`,
+        [req.user.userId, product_name],
       );
-      const row = rows[0];
-      res.status(201).json({
-        calculo: {
-          id: row.id,
-          created_at: row.created_at ? new Date(row.created_at).toISOString() : null,
-          inputs_json: row.inputs_json,
-          kpis_json: row.kpis_json,
-          currency: row.currency,
-          notes: row.notes,
-        },
+      const prevId = prevRows[0]?.id;
+      let row;
+      if (prevId) {
+        const upd = await pool.query(
+          `UPDATE calculadora_cod_calculos
+              SET inputs_json = $3::jsonb,
+                  kpis_json = $4::jsonb,
+                  currency = $5,
+                  notes = $6,
+                  updated_at = now()
+            WHERE id = $1 AND user_id = $2
+          RETURNING id, created_at, updated_at, inputs_json, kpis_json, currency, notes`,
+          [prevId, req.user.userId, inputsStr, kpisStr, cur, notes],
+        );
+        row = upd.rows[0];
+      } else {
+        const ins = await pool.query(
+          `INSERT INTO calculadora_cod_calculos (user_id, product_name, inputs_json, kpis_json, currency, notes)
+           VALUES ($1, $2, $3::jsonb, $4::jsonb, $5, $6)
+           RETURNING id, created_at, updated_at, inputs_json, kpis_json, currency, notes`,
+          [req.user.userId, product_name, inputsStr, kpisStr, cur, notes],
+        );
+        row = ins.rows[0];
+      }
+      res.status(prevId ? 200 : 201).json({
+        calculo: calculadoraCalculoRowToJson(row),
       });
     } catch (e) {
       if (e && e.code === '42P01') {

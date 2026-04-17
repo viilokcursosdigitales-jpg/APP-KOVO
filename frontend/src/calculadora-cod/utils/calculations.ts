@@ -272,7 +272,7 @@ function pygScenarioMix(
 
 /**
  * PyG con **ventas, costo producto y admin** ponderados por la mezcla de packs; embudo y fletes ida/dev iguales al modelo global.
- * Inversión ads = `cpaAdsPorGen` × pedidos generados (p. ej. CPA meta ponderado al nivel de embudo elegido).
+ * Inversión ads = `cpaAdsPorGen` × pedidos generados (p. ej. CPA Objetivo ponderado al nivel de embudo elegido).
  */
 export function calcPygMix(
   pedidosA: number,
@@ -340,7 +340,7 @@ export function calcPygMix(
     },
     { concepto: '= Utilidad antes de ads', total: true, a: a.utilidadAntesAds, b: b.utilidadAntesAds },
     {
-      concepto: `(−) Inversión ads · CPA meta mezcla ${
+      concepto: `(−) Inversión ads · CPA Objetivo mezcla ${
         cpaAdsPorGen > 0 ? Math.round(cpaAdsPorGen).toString() : '—'
       }`,
       negative: true,
@@ -422,7 +422,7 @@ export function calcPyg(
     },
     { concepto: '= Utilidad antes de ads', total: true, a: a.utilidadAntesAds, b: b.utilidadAntesAds },
     {
-      concepto: `(−) Inversión ads · CPA meta ${
+      concepto: `(−) Inversión ads · CPA Objetivo ${
         cpaGenMeta > 0 ? Math.round(cpaGenMeta).toString() : '—'
       }`,
       negative: true,

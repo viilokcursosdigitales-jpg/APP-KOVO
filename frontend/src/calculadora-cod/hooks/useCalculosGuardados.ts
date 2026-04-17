@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import type { CalculatorInputsState, CalculoVersion, CurrencyCode, ProductoListItem } from '../types';
+import type { CalculatorInputsState, CalculoVersion, ProductoListItem } from '../types';
 import {
   deleteCalculadoraCalculo,
   fetchCalculadoraHistorico,
@@ -93,7 +93,7 @@ export function useCalculosGuardados() {
           kpis_json: { v: 1, ...opts.kpisPayload },
           currency: opts.inputs.currency,
         });
-        setLastSavedAt(row.created_at || new Date().toISOString());
+        setLastSavedAt(row.updated_at || row.created_at || new Date().toISOString());
         await refreshProductos();
         await loadHistorico(key);
         return row;

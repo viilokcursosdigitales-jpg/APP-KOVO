@@ -166,11 +166,11 @@ export function PacksSummary(props: Props) {
             </tr>
             <tr>
               <th style={thSubNeutral}>CPA EQ.</th>
-              <th style={thSubMeta}>CPA META</th>
+              <th style={thSubMeta}>CPA Objetivo</th>
               <th style={thSubNeutral}>CPA EQ.</th>
-              <th style={thSubMeta}>CPA META</th>
+              <th style={thSubMeta}>CPA Objetivo</th>
               <th style={thSubNeutral}>CPA EQ.</th>
-              <th style={thSubMeta}>CPA META</th>
+              <th style={thSubMeta}>CPA Objetivo</th>
             </tr>
           </thead>
           <tbody>

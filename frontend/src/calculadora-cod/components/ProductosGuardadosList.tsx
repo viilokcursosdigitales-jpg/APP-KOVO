@@ -1,6 +1,6 @@
 import { ds } from '../../design-system/ds';
 import type { ProductoListItem } from '../types';
-import { relativeTimeShort } from '../utils/formatters';
+import { fmtCurrency, fmtRoasMult, relativeTimeShort } from '../utils/formatters';
 
 type Props = {
   productos: ProductoListItem[];
@@ -34,9 +34,9 @@ export function ProductosGuardadosList(props: Props) {
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 14 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--color-text-primary)' }}>Productos guardados</div>
-          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--color-text-muted)', maxWidth: 520 }}>
-            Cada fila es un producto con su último guardado. Pulsa <strong style={{ fontWeight: 700 }}>Ver</strong> para abrir la
-            calculadora con todos los datos de la última versión.
+          <div style={{ marginTop: 4, fontSize: 12, color: 'var(--color-text-muted)', maxWidth: 560 }}>
+            Cada fila muestra el último guardado (al guardar se actualiza el mismo registro, sin crear versiones nuevas). Pulsa{' '}
+            <strong style={{ fontWeight: 700 }}>Ver</strong> para abrir la calculadora con esos datos.
           </div>
         </div>
         <button
@@ -77,7 +77,8 @@ export function ProductosGuardadosList(props: Props) {
           }}
         >
           Aún no hay productos guardados. Usa <strong style={{ fontWeight: 700 }}>Nuevo cálculo</strong> para abrir la
-          calculadora y, cuando termines, guarda con <strong style={{ fontWeight: 700 }}>Guardar cálculo</strong>.
+          calculadora y, cuando termines, pulsa <strong style={{ fontWeight: 700 }}>Guardar cálculo</strong> (se crea el
+          registro la primera vez; después se actualiza el mismo).
         </div>
       ) : null}
 
@@ -104,7 +105,7 @@ export function ProductosGuardadosList(props: Props) {
                   minWidth: 0,
                 }}
               >
-                <div style={{ flex: '1 1 220px', minWidth: 0 }}>
+                <div style={{ flex: '1 1 200px', minWidth: 0 }}>
                   <div
                     style={{
                       fontSize: 14,
@@ -119,6 +120,37 @@ export function ProductosGuardadosList(props: Props) {
                   <div style={{ marginTop: 4, fontSize: 12, color: 'var(--color-text-muted)' }}>
                     {fmtVers(p.versions_count)} · Último guardado {updated}
                     <span style={{ color: 'var(--color-text-hint)' }}> ({abs})</span>
+                  </div>
+                </div>
+                <div
+                  style={{
+                    flex: '1 1 200px',
+                    minWidth: 0,
+                    display: 'flex',
+                    flexWrap: 'wrap',
+                    gap: 14,
+                    alignItems: 'center',
+                    fontSize: 12,
+                    color: 'var(--color-text-secondary)',
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-hint)', textTransform: 'uppercase' }}>
+                      ROAS objetivo ponderado
+                    </div>
+                    <div style={{ marginTop: 2, fontWeight: 800, color: 'var(--color-brand)', fontVariantNumeric: 'tabular-nums' }}>
+                      {fmtRoasMult(p.roas_objetivo_ponderado)}
+                    </div>
+                  </div>
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-hint)', textTransform: 'uppercase' }}>
+                      CPA objetivo ponderado
+                    </div>
+                    <div style={{ marginTop: 2, fontWeight: 800, color: 'var(--color-brand)', fontVariantNumeric: 'tabular-nums' }}>
+                      {p.cpa_objetivo_ponderado != null && p.cpa_objetivo_ponderado > 0
+                        ? fmtCurrency(p.cpa_objetivo_ponderado, p.currency)
+                        : '—'}
+                    </div>
                   </div>
                 </div>
                 <button

@@ -30,7 +30,7 @@ export function PygStatement(props: Props) {
     [pedA, pedB, pack, props.inputs, kpi.cpaGenMeta],
   );
 
-  /** Misma operativa del pack; ads con CPA meta ponderado de la mezcla al nivel de embudo seleccionado (Calculadora de mezcla). */
+  /** Misma operativa del pack; ads con CPA Objetivo ponderado de la mezcla al nivel de embudo seleccionado (Calculadora de mezcla). */
   const mixAtLevel = useMemo(
     () => calcMix(props.inputs.mixPct, props.inputs.packs, props.packKpis, props.mixFunnelLevel),
     [props.inputs.mixPct, props.inputs.packs, props.packKpis, props.mixFunnelLevel],
@@ -216,7 +216,7 @@ export function PygStatement(props: Props) {
         <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.45 }}>
           Mismos pedidos y embudo que arriba. <strong style={{ color: 'var(--color-text-secondary)' }}>Ventas y costo de producto</strong> usan{' '}
           <strong style={{ color: 'var(--color-text-secondary)' }}>ticket y costo unitario ponderados</strong> según tu mezcla; fletes y admin siguen el modelo global. Ads:{' '}
-          <strong style={{ color: 'var(--color-text-secondary)' }}>CPA meta ponderado</strong> ({mixLevelName.toLowerCase()}, ROAS mezcla {fmtRoasMult(mixAtLevel.roasPonderado)}).
+          <strong style={{ color: 'var(--color-text-secondary)' }}>CPA Objetivo ponderado</strong> ({mixLevelName.toLowerCase()}, ROAS mezcla {fmtRoasMult(mixAtLevel.roasPonderado)}).
         </div>
         {!mixHasPct ? (
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
@@ -296,12 +296,12 @@ export function PygStatement(props: Props) {
           </table>
         </div>
         <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-hint)' }}>
-          CPA meta mezcla ({mixLevelName}): {cpaMixLabel} · Ticket promedio mezcla{' '}
+          CPA Objetivo mezcla ({mixLevelName}): {cpaMixLabel} · Ticket promedio mezcla{' '}
           {fmtCurrency(mixAtLevel.ticketPromedio, props.inputs.currency)}
         </div>
       </div>
 
-      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-hint)' }}>CPA meta generado aplicado: {cpaLabel}</div>
+      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-hint)' }}>CPA Objetivo generado aplicado: {cpaLabel}</div>
     </div>
   );
 }

@@ -235,7 +235,8 @@ CREATE TABLE IF NOT EXISTS calculadora_cod_calculos (
   kpis_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   currency VARCHAR(8) NOT NULL DEFAULT 'COP',
   notes TEXT,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
 CREATE INDEX IF NOT EXISTS idx_calc_cod_user_product ON calculadora_cod_calculos (user_id, product_name);

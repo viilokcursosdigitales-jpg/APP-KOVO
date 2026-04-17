@@ -71,7 +71,7 @@ export function MixCalculator(props: Props) {
       </div>
 
       <div style={{ marginBottom: 14 }}>
-        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-hint)', marginBottom: 6 }}>Nivel embudo (CPA·ROAS meta)</div>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-hint)', marginBottom: 6 }}>Nivel embudo (CPA·ROAS objetivo)</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           {LEVELS.map((lv) => {
             const active = mixFunnelLevel === lv.id;
@@ -167,7 +167,7 @@ export function MixCalculator(props: Props) {
           <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--color-text-primary)' }}>
             {fmtCurrency(mixResult.cpaConservador, inputs.currency)}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA meta ({LEVELS.find((l) => l.id === mixFunnelLevel)?.label})</div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA Objetivo ({LEVELS.find((l) => l.id === mixFunnelLevel)?.label})</div>
           <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: 'var(--color-text-secondary)' }}>
             ROAS {fmtRoasMult(mixResult.roasConservador)}
           </div>
@@ -183,7 +183,7 @@ export function MixCalculator(props: Props) {
         >
           <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--color-brand)', marginBottom: 8 }}>Ponderado · ⭐ Recomendado</div>
           <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--color-brand)' }}>{fmtCurrency(mixResult.cpaPonderado, inputs.currency)}</div>
-          <div style={{ fontSize: 11, color: 'var(--color-brand)', marginTop: 4, opacity: 0.85 }}>CPA meta</div>
+          <div style={{ fontSize: 11, color: 'var(--color-brand)', marginTop: 4, opacity: 0.85 }}>CPA Objetivo</div>
           <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800, color: 'var(--color-brand)' }}>ROAS {fmtRoasMult(mixResult.roasPonderado)}</div>
           <div style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: 'var(--color-brand)' }}>
             Ticket promedio {fmtCurrency(mixResult.ticketPromedio, inputs.currency)}
@@ -202,7 +202,7 @@ export function MixCalculator(props: Props) {
           <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--color-text-primary)' }}>
             {fmtCurrency(mixResult.cpaAgresivo, inputs.currency)}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA meta ({LEVELS.find((l) => l.id === mixFunnelLevel)?.label})</div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA Objetivo ({LEVELS.find((l) => l.id === mixFunnelLevel)?.label})</div>
           <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: 'var(--color-text-secondary)' }}>
             ROAS {fmtRoasMult(mixResult.roasAgresivo)}
           </div>

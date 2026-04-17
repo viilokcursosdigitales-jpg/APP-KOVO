@@ -2,7 +2,7 @@ export type CurrencyCode = 'COP' | 'USD' | 'MXN';
 
 export type PackId = 1 | 2 | 3;
 
-/** Nivel de embudo para mezcla / tarjetas (CPA·ROAS meta). */
+/** Nivel de embudo para mezcla / tarjetas (CPA·ROAS objetivo). */
 export type FunnelMixLevel = 'gen' | 'desp' | 'entr';
 
 export interface Pack {
@@ -85,11 +85,17 @@ export interface ProductoListItem {
   product_name: string;
   last_updated: string | null;
   versions_count: number;
+  currency: CurrencyCode;
+  /** Mezcla a nivel generado (objetivo / meta en modelo). */
+  cpa_objetivo_ponderado: number | null;
+  roas_objetivo_ponderado: number | null;
 }
 
 export interface CalculoVersion {
   id: number;
   created_at: string | null;
+  /** Última modificación al guardar de nuevo el mismo cálculo. */
+  updated_at?: string | null;
   inputs_json: unknown;
   kpis_json: unknown;
   currency: string;

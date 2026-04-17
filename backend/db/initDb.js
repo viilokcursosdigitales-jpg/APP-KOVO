@@ -48,6 +48,17 @@ async function initDb(pool) {
   const sql = fs.readFileSync(schemaPath, 'utf8');
   await runSchemaStatements(pool, sql);
 
+  try {
+    await pool.query(`ALTER TABLE calculadora_cod_calculos ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ`);
+    await pool.query(`UPDATE calculadora_cod_calculos SET updated_at = created_at WHERE updated_at IS NULL`);
+    await pool.query(`ALTER TABLE calculadora_cod_calculos ALTER COLUMN updated_at SET DEFAULT now()`);
+    await pool.query(`ALTER TABLE calculadora_cod_calculos ALTER COLUMN updated_at SET NOT NULL`);
+  } catch (e) {
+    if (e && e.code !== '42P01') {
+      console.warn('[initDb] calculadora_cod_calculos.updated_at:', e && e.message);
+    }
+  }
+
   await pool.query(`
     ALTER TABLE meta_connections
     ADD COLUMN IF NOT EXISTS selected_ad_account_ids JSONB NOT NULL DEFAULT '[]'::jsonb
