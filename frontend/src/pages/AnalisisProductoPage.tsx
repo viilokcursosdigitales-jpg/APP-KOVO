@@ -374,7 +374,7 @@ export default function AnalisisProductoPage() {
           >
             K
           </div>
-          <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 30, fontWeight: 700 }}>Analisis de Producto</h1>
+          <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 30, fontWeight: 700 }}>Analisis de productos</h1>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <select

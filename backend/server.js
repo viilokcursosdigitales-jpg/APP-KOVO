@@ -83,7 +83,7 @@ const CONFIGURABLE_MODULE_IDS = [
 
 const MODULE_CATALOG_FOR_API = [
   { id: 'dashboard', label: 'Inicio', group: 'Principal' },
-  { id: 'analisis_producto', label: 'Analisis de Producto', group: 'Principal' },
+  { id: 'analisis_producto', label: 'Analisis de productos', group: 'Principal' },
   { id: 'pedidos', label: 'Pedidos', group: 'Principal' },
   { id: 'motico', label: 'Motico', group: 'Principal' },
   { id: 'inventario', label: 'Inventario', group: 'Principal' },
