@@ -54,14 +54,8 @@ function isOrderLockedByInternalStatus(internalStatus: string) {
   return LOCKED_INTERNAL_STATUSES.has(s);
 }
 
-function isOrderManagedByMotico(row: Pick<ShopifyOrderRow, 'internal_status' | 'mensajero'>) {
-  const st = String(row.internal_status || '').toLowerCase();
-  const mensajero = String(row.mensajero || '').toLowerCase();
-  return st === 'motico' || mensajero === 'motico';
-}
-
 function isOrderLockedInPedidos(row: Pick<ShopifyOrderRow, 'internal_status' | 'mensajero'>) {
-  return isOrderLockedByInternalStatus(row.internal_status) || isOrderManagedByMotico(row);
+  return isOrderLockedByInternalStatus(row.internal_status);
 }
 
 function isPedidosPruebaOrder(row: Pick<ShopifyOrderRow, 'internal_status' | 'motico_status'>) {
@@ -69,11 +63,8 @@ function isPedidosPruebaOrder(row: Pick<ShopifyOrderRow, 'internal_status' | 'mo
   return st === 'prueba';
 }
 
-/** Tooltip cuando la fila no es editable desde Pedidos (incluye gestión Motico por mensajero). */
+/** Tooltip cuando la fila no es editable desde Pedidos. */
 function pedidosRowLockTitle(row: ShopifyOrderRow, kind: 'estado' | 'mensajero' | 'precio' | 'cantidad'): string {
-  if (isOrderManagedByMotico(row)) {
-    return 'Gestionado por Motico: no editable desde Pedidos';
-  }
   if (kind === 'precio' || kind === 'cantidad') {
     return 'Pedido despachado/cancelado: edición bloqueada';
   }
@@ -746,10 +737,6 @@ export default function PedidosPage() {
       setShopifyError('Edita desde el módulo Motico.');
       return;
     }
-    if (isOrderManagedByMotico(row)) {
-      setShopifyError('Edita desde el módulo Motico.');
-      return;
-    }
     if (st === 'despachado' || st === 'cancelado') {
       setUnlockOrder(row);
       setUnlockReason('');
@@ -761,10 +748,6 @@ export default function PedidosPage() {
 
   const submitUnlockDespachado = useCallback(async () => {
     if (!unlockOrder) return;
-    if (isOrderManagedByMotico(unlockOrder)) {
-      setShopifyError('Este pedido está gestionado por Motico; desbloquea o edita desde el módulo Motico.');
-      return;
-    }
     const reason = unlockReason.trim();
     if (reason.length < 5) {
       setShopifyError('Escribe un motivo de desbloqueo (mínimo 5 caracteres).');
@@ -1567,7 +1550,7 @@ export default function PedidosPage() {
                   ? filteredShopify.map((o, i, arr) => {
                       const isLocked = isOrderLockedInPedidos(o);
                       const stLower = String(o.internal_status || '').toLowerCase();
-                      const editDisabledFromPedidos = o.id < 0 || isOrderManagedByMotico(o);
+                      const editDisabledFromPedidos = o.id < 0;
                       return (
                         <tr key={o.id}>
                           <Td
@@ -1796,7 +1779,7 @@ export default function PedidosPage() {
                               disabled={editDisabledFromPedidos}
                               aria-label={`Editar pedido ${o.orderName}`}
                               title={
-                                o.id < 0 || isOrderManagedByMotico(o)
+                                o.id < 0
                                   ? 'Edita desde el módulo Motico.'
                                   : stLower === 'despachado' || stLower === 'cancelado'
                                     ? 'Responde motivo y desbloquea para editar'

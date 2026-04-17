@@ -64,6 +64,18 @@ type MetaSpendPayload = {
   error?: string;
 };
 
+type ShopifyOrderRow = {
+  internal_status?: string;
+  motico_status?: string;
+  price_override?: number | null;
+  shopifyTotal?: string | number;
+  total?: string | number;
+};
+
+type ShopifyOrdersPayload = {
+  orders?: ShopifyOrderRow[];
+};
+
 function money(n: number): string {
   return new Intl.NumberFormat('es-CO', {
     style: 'currency',
@@ -140,6 +152,11 @@ function classifyProduct(roasReal: number, roasEq: number): ProductStatus {
   return 'perdedor';
 }
 
+function isPedidosPruebaOrder(row: Pick<ShopifyOrderRow, 'internal_status' | 'motico_status'>): boolean {
+  const st = String(row.internal_status || row.motico_status || '').trim().toLowerCase();
+  return st === 'prueba';
+}
+
 const inputStyle: CSSProperties = {
   width: '100%',
   borderRadius: 8,
@@ -174,6 +191,7 @@ export default function AnalisisProductoPage() {
   const [days, setDays] = useState<SeriesDay[]>([]);
   const [metaSpendByProductId, setMetaSpendByProductId] = useState<Record<string, number>>({});
   const [metaUnlinkedSpend, setMetaUnlinkedSpend] = useState(0);
+  const [ventasTotalesPedidos, setVentasTotalesPedidos] = useState(0);
   const [adminPercentInput, setAdminPercentInput] = useState(() => {
     try {
       return localStorage.getItem('kovo_ganancia_admin_percent') || '0';
@@ -200,12 +218,14 @@ export default function AnalisisProductoPage() {
       const cfg = periodConfig(filter);
       const monthsCsv = monthKeysForCount(cfg.months);
       const suffix = monthsCsv ? `?months=${encodeURIComponent(monthsCsv)}` : '';
-      const [seriesRes, spendRes] = await Promise.all([
+      const [seriesRes, spendRes, ordersRes] = await Promise.all([
         apiFetch(`/api/ganancia-diaria/series${suffix}`),
         apiFetch(`/api/product-analytics/meta-spend?period=${cfg.metaPeriod}`),
+        apiFetch(`/api/shopify/orders?meta_period=${cfg.metaPeriod}`),
       ]);
       const data = (await seriesRes.json().catch(() => ({}))) as SeriesPayload;
       const spendData = (await spendRes.json().catch(() => ({}))) as MetaSpendPayload;
+      const ordersData = (await ordersRes.json().catch(() => ({}))) as ShopifyOrdersPayload;
       if (!seriesRes.ok) {
         setError(typeof data.error === 'string' ? data.error : 'No se pudo cargar analisis de producto');
         setDays([]);
@@ -220,9 +240,22 @@ export default function AnalisisProductoPage() {
       setMetaUnlinkedSpend(
         spendRes.ok && Number.isFinite(Number(spendData.unlinked_spend)) ? Number(spendData.unlinked_spend) : 0,
       );
+      const orders = Array.isArray(ordersData?.orders) ? ordersData.orders : [];
+      const despachadosCalculables = orders.filter(
+        (o) => !isPedidosPruebaOrder(o) && String(o.internal_status || '').trim().toLowerCase() === 'despachado',
+      );
+      const totalVentasDespachado = despachadosCalculables.reduce((sum, o) => {
+        const raw =
+          o.price_override != null
+            ? Number(o.price_override)
+            : Number.parseFloat(String(o.shopifyTotal ?? o.total ?? '0'));
+        return sum + (Number.isFinite(raw) ? raw : 0);
+      }, 0);
+      setVentasTotalesPedidos(totalVentasDespachado);
     } catch {
       setError('Error de red');
       setDays([]);
+      setVentasTotalesPedidos(0);
     } finally {
       setLoading(false);
     }
@@ -500,7 +533,7 @@ export default function AnalisisProductoPage() {
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(150px,1fr))', gap: 10, marginBottom: 12 }}>
             <KpiCard title="Gasto Total" value={money(gastoTotal)} delta={pct(0)} />
-            <KpiCard title="Ventas Totales" value={money(ventasTotal)} delta={pct(0)} />
+            <KpiCard title="Ventas Totales" value={money(ventasTotalesPedidos)} delta={pct(0)} />
             <KpiCard title="ROAS Promedio" value={`${roasPromedio.toFixed(2)}x`} delta={pct(0)} />
           </div>
 
