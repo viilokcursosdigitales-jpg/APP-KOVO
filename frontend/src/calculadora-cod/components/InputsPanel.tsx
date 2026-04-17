@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { ds } from '../../design-system/ds';
 import type { CalculatorInputsState, PackId } from '../types';
 import { fmtPercent } from '../utils/formatters';
@@ -17,7 +17,7 @@ type Props = {
   onMetaUtilidad: (n: number) => void;
 };
 
-function card(children: ReactNode, marginBottom: number = 12) {
+function card(children: ReactNode, marginBottom: number = 12, extraStyle?: CSSProperties) {
   return (
     <div
       style={{
@@ -27,6 +27,7 @@ function card(children: ReactNode, marginBottom: number = 12) {
         padding: '14px 16px',
         marginBottom,
         minWidth: 0,
+        ...extraStyle,
       }}
     >
       {children}
@@ -132,7 +133,16 @@ export function InputsPanel(props: Props) {
           marginBottom: 12,
         }}
       >
-        <div style={{ flex: '1 1 300px', minWidth: 0 }}>
+        <div
+          style={{
+            flex: '1 1 300px',
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            gap: 20,
+            alignSelf: 'stretch',
+          }}
+        >
           {card(
             <>
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 10 }}>
@@ -181,9 +191,57 @@ export function InputsPanel(props: Props) {
               ))}
             </>,
             0,
+            { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' },
+          )}
+          {card(
+            <>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 8 }}>
+                Embudo (sobre 100 pedidos generados)
+              </div>
+              {slider('Cancelados (no despachan)', inputs.canceladosPct, 0, 80, 1, (n) => fmtPercent(n, 0), props.onCanceladosPct)}
+              {slider('Devueltos (% del despachado)', inputs.devueltosPct, 0, 80, 1, (n) => fmtPercent(n, 0), props.onDevueltosPct)}
+              <div
+                style={{
+                  marginTop: 14,
+                  display: 'grid',
+                  gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+                  gap: 8,
+                  textAlign: 'center',
+                }}
+              >
+                {[
+                  { k: 'Generados', v: nGen, hint: '100' },
+                  { k: 'Despachados', v: nDesp, hint: fmtPercent(efEnv * 100, 0) },
+                  { k: 'Entregados', v: nEnt, hint: fmtPercent(efTot * 100, 0) },
+                ].map((c) => (
+                  <div
+                    key={c.k}
+                    style={{
+                      background: 'var(--color-bg-subtle)',
+                      border: `1px solid ${ds.borderCard}`,
+                      borderRadius: 12,
+                      padding: '10px 8px',
+                    }}
+                  >
+                    <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-hint)' }}>{c.k}</div>
+                    <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--color-text-primary)', marginTop: 4 }}>{c.v}</div>
+                    <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>{c.hint} del total</div>
+                  </div>
+                ))}
+              </div>
+            </>,
+            0,
           )}
         </div>
-        <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+        <div
+          style={{
+            flex: '1 1 260px',
+            minWidth: 0,
+            display: 'flex',
+            flexDirection: 'column',
+            alignSelf: 'stretch',
+          }}
+        >
           {card(
             <>
               <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 8 }}>
@@ -219,48 +277,10 @@ export function InputsPanel(props: Props) {
               {slider('% Admin (sobre ticket)', inputs.adminPct, 0, 25, 0.5, (n) => fmtPercent(n, 1), props.onAdmin)}
             </>,
             0,
+            { flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column' },
           )}
         </div>
       </div>
-
-      {card(
-        <>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 8 }}>
-            Embudo (sobre 100 pedidos generados)
-          </div>
-          {slider('Cancelados (no despachan)', inputs.canceladosPct, 0, 80, 1, (n) => fmtPercent(n, 0), props.onCanceladosPct)}
-          {slider('Devueltos (% del despachado)', inputs.devueltosPct, 0, 80, 1, (n) => fmtPercent(n, 0), props.onDevueltosPct)}
-          <div
-            style={{
-              marginTop: 14,
-              display: 'grid',
-              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-              gap: 8,
-              textAlign: 'center',
-            }}
-          >
-            {[
-              { k: 'Generados', v: nGen, hint: '100' },
-              { k: 'Despachados', v: nDesp, hint: fmtPercent(efEnv * 100, 0) },
-              { k: 'Entregados', v: nEnt, hint: fmtPercent(efTot * 100, 0) },
-            ].map((c) => (
-              <div
-                key={c.k}
-                style={{
-                  background: 'var(--color-bg-subtle)',
-                  border: `1px solid ${ds.borderCard}`,
-                  borderRadius: 12,
-                  padding: '10px 8px',
-                }}
-              >
-                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-hint)' }}>{c.k}</div>
-                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--color-text-primary)', marginTop: 4 }}>{c.v}</div>
-                <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>{c.hint} del total</div>
-              </div>
-            ))}
-          </div>
-        </>,
-      )}
 
       <div
         style={{
