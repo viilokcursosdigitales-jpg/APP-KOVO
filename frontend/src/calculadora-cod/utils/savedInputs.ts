@@ -22,6 +22,13 @@ function clampMixTriplet(raw: unknown): [number, number, number] {
   if (![a, b, c].every(Number.isFinite)) return fallback;
   const sum = a + b + c;
   if (sum <= 0) return fallback;
+  if (sum > 100) {
+    const k = 100 / sum;
+    const ra = Math.max(0, Math.round(a * k));
+    const rb = Math.max(0, Math.round(b * k));
+    const rc = Math.max(0, 100 - ra - rb);
+    return [ra, rb, rc];
+  }
   return [a, b, c];
 }
 

@@ -124,6 +124,8 @@ export function MixCalculator(props: Props) {
         </div>
         {inputs.packs.map((p, idx) => {
           const i = idx as 0 | 1 | 2;
+          const total = inputs.mixPct[0] + inputs.mixPct[1] + inputs.mixPct[2];
+          const maxForSlider = Math.max(0, Math.min(100, Math.round(100 - total + inputs.mixPct[i])));
           return (
             <div key={p.id} style={{ marginBottom: 12 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 10, marginBottom: 4 }}>
@@ -133,7 +135,7 @@ export function MixCalculator(props: Props) {
               <input
                 type="range"
                 min={0}
-                max={100}
+                max={maxForSlider}
                 step={1}
                 value={inputs.mixPct[i]}
                 onChange={(e) => props.onMixChange(i, Number.parseFloat(e.target.value) || 0)}

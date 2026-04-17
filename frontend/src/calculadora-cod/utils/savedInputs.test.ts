@@ -79,6 +79,29 @@ describe('parseSavedCalculadoraInputs', () => {
     expect(state!.mixPct).toEqual([34, 33, 33]);
   });
 
+  it('normalizes mix when sum exceeds 100', () => {
+    const state = parseSavedCalculadoraInputs({
+      schemaVersion: 2,
+      packs: [
+        { label: 'P1', units: 1, precioVenta: 100 },
+        { label: 'P2', units: 2, precioVenta: 100 },
+        { label: 'P3', units: 3, precioVenta: 100 },
+      ],
+      mixPct: [80, 20, 10],
+      fleteIda: 0,
+      cobraFleteDevolucion: false,
+      fleteDevolucion: 0,
+      canceladosPct: 0,
+      devueltosPct: 0,
+      adminPct: 0,
+      metaUtilidadPct: 0,
+      costoUnitario: 0,
+      currency: 'COP',
+    });
+    expect(state).not.toBeNull();
+    expect(state!.mixPct[0] + state!.mixPct[1] + state!.mixPct[2]).toBe(100);
+  });
+
   it('coerces packs with bad units to fallback id', () => {
     const state = parseSavedCalculadoraInputs({
       schemaVersion: 2,

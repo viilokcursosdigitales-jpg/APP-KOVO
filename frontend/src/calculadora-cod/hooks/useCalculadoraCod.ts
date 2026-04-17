@@ -23,11 +23,23 @@ const initialInputs: CalculatorInputsState = {
   mixPct: [34, 33, 33],
 };
 
+function mixTripletCapAt100(m: [number, number, number]): [number, number, number] {
+  const a = Math.max(0, m[0]);
+  const b = Math.max(0, m[1]);
+  const c = Math.max(0, m[2]);
+  const s = a + b + c;
+  if (s <= 100 || s <= 0) return [a, b, c];
+  const k = 100 / s;
+  const ra = Math.max(0, Math.round(a * k));
+  const rb = Math.max(0, Math.round(b * k));
+  return [ra, rb, Math.max(0, 100 - ra - rb)];
+}
+
 function cloneInputs(src: CalculatorInputsState): CalculatorInputsState {
   return {
     ...src,
     packs: src.packs.map((p) => ({ ...p })) as [Pack, Pack, Pack],
-    mixPct: [...src.mixPct] as [number, number, number],
+    mixPct: mixTripletCapAt100([...src.mixPct] as [number, number, number]),
   };
 }
 
@@ -84,7 +96,10 @@ export function useCalculadoraCod() {
   const setMixPct = useCallback((idx: 0 | 1 | 2, v: number) => {
     setInputs((s) => {
       const next = [...s.mixPct] as [number, number, number];
-      next[idx] = v;
+      const raw = Math.max(0, Number.isFinite(v) ? v : 0);
+      const othersSum = next[0] + next[1] + next[2] - next[idx];
+      const maxForIdx = Math.max(0, 100 - othersSum);
+      next[idx] = Math.min(raw, maxForIdx);
       return { ...s, mixPct: next };
     });
   }, []);
