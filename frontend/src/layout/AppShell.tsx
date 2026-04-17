@@ -219,11 +219,12 @@ export function AppShell() {
 
   useEffect(() => {
     if (!getStoredToken()) return;
+    // Priorizar dato crítico para Inicio (utilidad / KPIs) desde el arranque.
+    void apiFetch('/api/ganancia-diaria/series?meta_period=3d').catch(() => {
+      /* warmup best-effort */
+    });
     const runWarmup = () => {
-      const warmupPaths = [
-        '/api/ganancia-diaria/series?meta_period=3d',
-        '/api/meta/ctr-compare?period=ayer',
-      ];
+      const warmupPaths = ['/api/meta/ctr-compare?period=ayer'];
       for (const path of warmupPaths) {
         void apiFetch(path).catch(() => {
           /* prefetch best-effort */

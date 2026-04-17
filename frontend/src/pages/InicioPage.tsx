@@ -45,6 +45,14 @@ type ProductAgg = {
   roasEq: number;
   profit: number;
 };
+type InicioUtilidadCacheEntry = {
+  adminPercent: number;
+  utilidadNeta: number;
+  utilidadDelta: number | null;
+  updatedAt: number;
+};
+type InicioUtilidadCacheMap = Partial<Record<PeriodKey, InicioUtilidadCacheEntry>>;
+const INICIO_UTILIDAD_CACHE_KEY = 'kovo_inicio_utilidad_cache_v1';
 
 function monthKeys(count: number): string {
   const now = new Date();
@@ -204,6 +212,16 @@ export default function InicioPage() {
   const [metaSpend, setMetaSpend] = useState<Record<string, number>>({});
   const [ctrCurrent, setCtrCurrent] = useState<number | null>(null);
   const [ctrPrevious, setCtrPrevious] = useState<number | null>(null);
+  const [utilidadCache, setUtilidadCache] = useState<InicioUtilidadCacheMap>(() => {
+    try {
+      const raw = localStorage.getItem(INICIO_UTILIDAD_CACHE_KEY);
+      if (!raw) return {};
+      const parsed = JSON.parse(raw) as InicioUtilidadCacheMap;
+      return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch {
+      return {};
+    }
+  });
   const loadSeqRef = useRef(0);
   const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
 
@@ -305,6 +323,16 @@ export default function InicioPage() {
   const gastoDelta = deltaPct(gastoAds, prevGastoAds);
   const roasDelta = deltaPct(roas, prevRoas);
   const utilidadDelta = deltaPct(utilidadNeta, prevUtilidadNeta);
+  const cachedUtilidad = useMemo(() => {
+    const entry = utilidadCache[period];
+    if (!entry) return null;
+    if (!Number.isFinite(entry.adminPercent) || Math.abs(entry.adminPercent - adminPercent) > 0.0001) return null;
+    if (!Number.isFinite(entry.updatedAt) || Date.now() - entry.updatedAt > 1000 * 60 * 60 * 6) return null;
+    return entry;
+  }, [utilidadCache, period, adminPercent]);
+  const hasFreshForCurrentPeriod = filtered.length > 0;
+  const utilidadNetaShown = hasFreshForCurrentPeriod ? utilidadNeta : cachedUtilidad?.utilidadNeta ?? utilidadNeta;
+  const utilidadDeltaShown = hasFreshForCurrentPeriod ? utilidadDelta : cachedUtilidad?.utilidadDelta ?? utilidadDelta;
   const roasTarget = 2.5;
 
   const salesSeries = useMemo(
@@ -378,6 +406,27 @@ export default function InicioPage() {
     if (!out.length) out.push({ text: 'Sin alertas críticas para el periodo seleccionado.', tone: 'success' });
     return out;
   }, [ctrCurrent, ctrPrevious, roas, roasTarget, topProducts]);
+
+  useEffect(() => {
+    if (!hasFreshForCurrentPeriod || !Number.isFinite(utilidadNeta)) return;
+    setUtilidadCache((prev) => {
+      const next: InicioUtilidadCacheMap = {
+        ...prev,
+        [period]: {
+          adminPercent,
+          utilidadNeta,
+          utilidadDelta,
+          updatedAt: Date.now(),
+        },
+      };
+      try {
+        localStorage.setItem(INICIO_UTILIDAD_CACHE_KEY, JSON.stringify(next));
+      } catch {
+        /* noop */
+      }
+      return next;
+    });
+  }, [hasFreshForCurrentPeriod, period, adminPercent, utilidadNeta, utilidadDelta]);
 
   return (
     <div style={{ fontFamily: ds.font, maxWidth: 1280, margin: '0 auto' }}>
@@ -489,7 +538,7 @@ export default function InicioPage() {
             </span>
           }
         />
-        <Kpi title="Utilidad Neta" value={formatMoney(utilidadNeta)} tag={deltaTag(utilidadDelta)} />
+        <Kpi title="Utilidad Neta" value={formatMoney(utilidadNetaShown)} tag={deltaTag(utilidadDeltaShown)} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
