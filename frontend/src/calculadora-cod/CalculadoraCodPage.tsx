@@ -98,7 +98,7 @@ export default function CalculadoraCodPage() {
         padding: 'var(--main-padding-y) var(--main-padding-x)',
         boxSizing: 'border-box',
         width: '100%',
-        maxWidth: 1200,
+        maxWidth: 1320,
         margin: '0 auto',
       }}
     >
@@ -144,24 +144,23 @@ export default function CalculadoraCodPage() {
       />
 
       <div style={{ marginTop: 20 }} className="calc-cod-main-grid">
-        <div style={{ minWidth: 0 }}>
-          <InputsPanel
-            inputs={calc.inputs}
-            onProductName={calc.setProductDisplayName}
-            onCostoUnitario={calc.setCostoUnitario}
-            onPackField={calc.setPackField}
-            onFleteIda={calc.setFleteIda}
-            onCobraFleteDevolucion={calc.setCobraFleteDevolucion}
-            onFleteDevolucion={calc.setFleteDevolucion}
-            onCanceladosPct={calc.setCanceladosPct}
-            onDevueltosPct={calc.setDevueltosPct}
-            onAdmin={calc.setAdminPct}
-            onMetaUtilidad={calc.setMetaUtilidadPct}
-          />
-        </div>
-        <div style={{ minWidth: 0 }}>
-          <PacksSummary currency={calc.inputs.currency} inputs={calc.inputs} packKpis={calc.packKpis} bestPackId={calc.bestId} />
-        </div>
+        <InputsPanel
+          inputs={calc.inputs}
+          onProductName={calc.setProductDisplayName}
+          onCostoUnitario={calc.setCostoUnitario}
+          onPackField={calc.setPackField}
+          onFleteIda={calc.setFleteIda}
+          onCobraFleteDevolucion={calc.setCobraFleteDevolucion}
+          onFleteDevolucion={calc.setFleteDevolucion}
+          onCanceladosPct={calc.setCanceladosPct}
+          onDevueltosPct={calc.setDevueltosPct}
+          onAdmin={calc.setAdminPct}
+          onMetaUtilidad={calc.setMetaUtilidadPct}
+        />
+      </div>
+
+      <div style={{ marginTop: 22 }}>
+        <PacksSummary currency={calc.inputs.currency} inputs={calc.inputs} packKpis={calc.packKpis} bestPackId={calc.bestId} />
       </div>
 
       <div style={{ marginTop: 22 }}>
@@ -184,15 +183,8 @@ export default function CalculadoraCodPage() {
 
       <style>{`
         .calc-cod-main-grid {
-          display: grid;
-          grid-template-columns: minmax(0, 0.4fr) minmax(0, 0.6fr);
-          gap: var(--grid-gap);
-          align-items: start;
-        }
-        @media (max-width: 900px) {
-          .calc-cod-main-grid {
-            grid-template-columns: 1fr !important;
-          }
+          display: block;
+          width: 100%;
         }
       `}</style>
     </div>
