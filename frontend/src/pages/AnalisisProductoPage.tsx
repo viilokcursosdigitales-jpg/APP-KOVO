@@ -17,6 +17,7 @@ type ProductAgg = {
   costoProducto: number;
   costoProductoEntregado: number;
   flete: number;
+  adminCost: number;
   gastoAds: number;
   cpa: number;
   roasReal: number;
@@ -72,6 +73,12 @@ function money(n: number): string {
 
 function pct(n: number): string {
   return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
+}
+
+function parsePercentInput(raw: string): number {
+  const n = Number.parseFloat(String(raw || '').replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
 }
 
 function stateBadge(status: ProductStatus): { text: string; variant: StatusBadgeVariant } {
@@ -163,8 +170,24 @@ export default function AnalisisProductoPage() {
   const [days, setDays] = useState<SeriesDay[]>([]);
   const [metaSpendByProductId, setMetaSpendByProductId] = useState<Record<string, number>>({});
   const [metaUnlinkedSpend, setMetaUnlinkedSpend] = useState(0);
+  const [adminPercentInput, setAdminPercentInput] = useState(() => {
+    try {
+      return localStorage.getItem('kovo_ganancia_admin_percent') || '0';
+    } catch {
+      return '0';
+    }
+  });
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string>('');
+  const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('kovo_ganancia_admin_percent', adminPercentInput);
+    } catch {
+      /* noop */
+    }
+  }, [adminPercentInput]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -240,6 +263,7 @@ export default function AnalisisProductoPage() {
             costoProducto,
             costoProductoEntregado,
             flete,
+            adminCost: 0,
             gastoAds: 0,
             cpa: 0,
             roasReal: 0,
@@ -255,15 +279,16 @@ export default function AnalisisProductoPage() {
         p.productId != null && Number.isFinite(Number(metaSpendByProductId[String(p.productId)]))
           ? Number(metaSpendByProductId[String(p.productId)])
           : 0;
+      p.adminCost = p.ventasEntregadas * (adminPercent / 100);
       p.cpa = p.pedidos > 0 ? p.gastoAds / p.pedidos : 0;
       p.roasReal = p.gastoAds > 0 ? p.ventas / p.gastoAds : 0;
-      const baseCost = p.costoProductoEntregado + p.flete;
-      p.roasEq = baseCost > 0 ? p.ventas / baseCost : 0;
+      const baseCost = p.costoProductoEntregado + p.flete + p.adminCost;
+      p.roasEq = p.gastoAds > 0 ? baseCost / p.gastoAds : 0;
       p.profit = p.ventas - p.gastoAds - baseCost;
       p.estado = classifyProduct(p.roasReal, p.roasEq);
     }
     return map;
-  }, [days, metaSpendByProductId]);
+  }, [days, metaSpendByProductId, adminPercent]);
 
   const products = useMemo(
     () =>
@@ -377,6 +402,15 @@ export default function AnalisisProductoPage() {
           <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 30, fontWeight: 700 }}>Analisis de productos</h1>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input
+            value={adminPercentInput}
+            onChange={(e) => setAdminPercentInput(e.target.value)}
+            inputMode="decimal"
+            aria-label="Porcentaje administrativo"
+            title="Porcentaje administrativo"
+            style={{ ...inputStyle, width: 90 }}
+          />
+          <span style={{ alignSelf: 'center', fontSize: 12, color: ds.textMuted }}>Admin %</span>
           <select
             style={inputStyle}
             value={filter}
