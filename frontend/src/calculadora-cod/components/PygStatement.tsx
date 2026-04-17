@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { ds } from '../../design-system/ds';
 import type { CalculatorInputsState, FunnelMixLevel, PackId, PackKpis } from '../types';
-import { calcMix, calcPyg } from '../utils/calculations';
+import type { MixWeights } from '../utils/calculations';
+import { calcMix, calcPyg, calcPygMix } from '../utils/calculations';
 import { fmtCurrency, fmtPercent, fmtRoasMult } from '../utils/formatters';
 
 const MIX_LEVEL_LABEL: Record<FunnelMixLevel, string> = {
@@ -35,18 +36,20 @@ export function PygStatement(props: Props) {
     [props.inputs.mixPct, props.inputs.packs, props.packKpis, props.mixFunnelLevel],
   );
 
+  const mixWeights: MixWeights = useMemo(() => {
+    if (mixAtLevel.sumaPct > 0) return mixAtLevel.weights;
+    return [1 / 3, 1 / 3, 1 / 3];
+  }, [mixAtLevel.sumaPct, mixAtLevel.weights]);
+
   const pygMix = useMemo(
-    () => calcPyg(pedA, pedB, pack, props.inputs, mixAtLevel.cpaPonderado),
-    [pedA, pedB, pack, props.inputs, mixAtLevel.cpaPonderado],
+    () => calcPygMix(pedA, pedB, props.inputs, props.inputs.packs, mixWeights, mixAtLevel.cpaPonderado),
+    [pedA, pedB, props.inputs, mixWeights, mixAtLevel.cpaPonderado],
   );
 
   const cpaLabel = kpi.cpaGenMeta > 0 ? fmtCurrency(kpi.cpaGenMeta, props.inputs.currency) : '—';
   const cpaMixLabel = mixAtLevel.cpaPonderado > 0 ? fmtCurrency(mixAtLevel.cpaPonderado, props.inputs.currency) : '—';
-  const mixViable = mixAtLevel.sumaPct > 0 && mixAtLevel.cpaPonderado > 0;
+  const mixHasPct = mixAtLevel.sumaPct > 0;
   const mixLevelName = MIX_LEVEL_LABEL[props.mixFunnelLevel];
-
-  const adsRowMix = pygMix.rows.find((r) => r.negative && r.concepto.includes('Inversión ads'));
-  const utilMixRow = pygMix.rows.find((r) => r.final);
 
   return (
     <div
@@ -208,69 +211,94 @@ export function PygStatement(props: Props) {
         }}
       >
         <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-text-primary)', marginBottom: 6 }}>
-          Ganancia con ROAS ponderado (mezcla)
+          PyG con mezcla de packs
         </div>
         <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.45 }}>
-          Misma operación del pack elegido (ventas, costos, fletes, admin). La inversión en ads usa el{' '}
-          <strong style={{ color: 'var(--color-text-secondary)' }}>CPA meta ponderado</strong> de tu mezcla actual a nivel{' '}
-          <strong style={{ color: 'var(--color-text-secondary)' }}>{mixLevelName.toLowerCase()}</strong> (ROAS mezcla {fmtRoasMult(mixAtLevel.roasPonderado)}).
+          Mismos pedidos y embudo que arriba. <strong style={{ color: 'var(--color-text-secondary)' }}>Ventas y costo de producto</strong> usan{' '}
+          <strong style={{ color: 'var(--color-text-secondary)' }}>ticket y costo unitario ponderados</strong> según tu mezcla; fletes y admin siguen el modelo global. Ads:{' '}
+          <strong style={{ color: 'var(--color-text-secondary)' }}>CPA meta ponderado</strong> ({mixLevelName.toLowerCase()}, ROAS mezcla {fmtRoasMult(mixAtLevel.roasPonderado)}).
         </div>
-        {!mixViable ? (
+        {!mixHasPct ? (
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-            Ajusta la mezcla a 100% y revisa que los CPAs meta de los packs permitan un CPA ponderado válido.
-          </div>
-        ) : (
-          <div style={{ overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 360 }}>
-              <thead>
-                <tr>
-                  <th style={{ textAlign: 'left', fontSize: 11, color: 'var(--color-text-hint)', padding: '8px 6px' }}>Concepto</th>
-                  <th style={{ textAlign: 'right', fontSize: 11, color: 'var(--color-text-hint)', padding: '8px 6px' }}>Escenario A</th>
-                  <th style={{ textAlign: 'right', fontSize: 11, color: 'var(--color-text-hint)', padding: '8px 6px' }}>Escenario B</th>
-                </tr>
-              </thead>
-              <tbody>
-                {adsRowMix ? (
-                  <tr>
-                    <td style={{ padding: '8px 6px', fontSize: 12, color: 'var(--color-text-secondary)' }}>{adsRowMix.concepto}</td>
-                    <td style={{ textAlign: 'right', padding: '8px 6px', fontSize: 13, color: 'var(--color-danger-text)' }}>
-                      {typeof adsRowMix.a === 'number' ? fmtCurrency(adsRowMix.a, props.inputs.currency) : '—'}
-                    </td>
-                    <td style={{ textAlign: 'right', padding: '8px 6px', fontSize: 13, color: 'var(--color-danger-text)' }}>
-                      {typeof adsRowMix.b === 'number' ? fmtCurrency(adsRowMix.b, props.inputs.currency) : '—'}
-                    </td>
-                  </tr>
-                ) : null}
-                {utilMixRow ? (
-                  <tr>
-                    <td style={{ padding: '8px 6px', fontSize: 13, fontWeight: 800, color: 'var(--color-brand)' }}>{utilMixRow.concepto}</td>
-                    <td style={{ textAlign: 'right', padding: '8px 6px', fontSize: 14, fontWeight: 800, color: 'var(--color-brand)' }}>
-                      {typeof utilMixRow.a === 'number' ? fmtCurrency(utilMixRow.a, props.inputs.currency) : '—'}
-                    </td>
-                    <td style={{ textAlign: 'right', padding: '8px 6px', fontSize: 14, fontWeight: 800, color: 'var(--color-brand)' }}>
-                      {typeof utilMixRow.b === 'number' ? fmtCurrency(utilMixRow.b, props.inputs.currency) : '—'}
-                    </td>
-                  </tr>
-                ) : null}
-                <tr>
-                  <td style={{ padding: '10px 6px', fontSize: 12, color: 'var(--color-text-muted)' }}>Margen neto % (mezcla)</td>
-                  <td style={{ textAlign: 'right', padding: '10px 6px', fontSize: 12, color: 'var(--color-text-muted)' }}>
-                    {fmtPercent(pygMix.margenNetoPctA, 1)}
-                  </td>
-                  <td style={{ textAlign: 'right', padding: '10px 6px', fontSize: 12, color: 'var(--color-text-muted)' }}>
-                    {fmtPercent(pygMix.margenNetoPctB, 1)}
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        )}
-        {mixViable ? (
-          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-hint)' }}>
-            CPA meta mezcla ({mixLevelName}): {cpaMixLabel} · Ticket promedio mezcla{' '}
-            {fmtCurrency(mixAtLevel.ticketPromedio, props.inputs.currency)}
+            Indica porcentajes de mezcla mayores a 0. Mientras tanto se usa reparto ⅓ cada pack solo para ilustrar.
           </div>
         ) : null}
+        <div style={{ overflowX: 'auto' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 420 }}>
+            <thead>
+              <tr>
+                <th style={{ textAlign: 'left', fontSize: 11, color: 'var(--color-text-hint)', padding: '8px 6px' }}>Concepto</th>
+                <th style={{ textAlign: 'right', fontSize: 11, color: 'var(--color-text-hint)', padding: '8px 6px' }}>Escenario A</th>
+                <th style={{ textAlign: 'right', fontSize: 11, color: 'var(--color-text-hint)', padding: '8px 6px' }}>Escenario B</th>
+              </tr>
+            </thead>
+            <tbody>
+              {pygMix.rows.map((row, idx) => {
+                const fmtCellMix = (v: number | string | null) => {
+                  if (v == null) return '—';
+                  if (typeof v === 'string') return v;
+                  return fmtCurrency(v, props.inputs.currency);
+                };
+                const neg = row.negative;
+                const bg = row.final ? 'var(--color-brand-bg)' : row.total ? 'var(--color-bg-subtle)' : 'transparent';
+                const padLeft = row.subSub ? 26 : row.sub ? 18 : 6;
+                return (
+                  <tr key={`mix-${row.concepto}-${idx}`}>
+                    <td
+                      style={{
+                        padding: '8px 6px',
+                        paddingLeft: padLeft,
+                        fontSize: row.subSub ? 11 : row.sub ? 12 : 13,
+                        fontWeight: row.final ? 800 : row.total ? 700 : 500,
+                        color: row.muted ? 'var(--color-text-muted)' : row.final ? 'var(--color-brand)' : 'var(--color-text-secondary)',
+                        background: bg,
+                      }}
+                    >
+                      {row.concepto}
+                    </td>
+                    <td
+                      style={{
+                        textAlign: 'right',
+                        padding: '8px 6px',
+                        fontSize: 13,
+                        fontWeight: row.final ? 800 : 600,
+                        color: neg ? 'var(--color-danger-text)' : row.final ? 'var(--color-brand)' : 'var(--color-text-secondary)',
+                        background: bg,
+                      }}
+                    >
+                      {fmtCellMix(row.a)}
+                    </td>
+                    <td
+                      style={{
+                        textAlign: 'right',
+                        padding: '8px 6px',
+                        fontSize: 13,
+                        fontWeight: row.final ? 800 : 600,
+                        color: neg ? 'var(--color-danger-text)' : row.final ? 'var(--color-brand)' : 'var(--color-text-secondary)',
+                        background: bg,
+                      }}
+                    >
+                      {fmtCellMix(row.b)}
+                    </td>
+                  </tr>
+                );
+              })}
+              <tr>
+                <td style={{ padding: '10px 6px', fontSize: 12, color: 'var(--color-text-muted)' }}>Margen neto % (mezcla)</td>
+                <td style={{ textAlign: 'right', padding: '10px 6px', fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  {fmtPercent(pygMix.margenNetoPctA, 1)}
+                </td>
+                <td style={{ textAlign: 'right', padding: '10px 6px', fontSize: 12, color: 'var(--color-text-muted)' }}>
+                  {fmtPercent(pygMix.margenNetoPctB, 1)}
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-hint)' }}>
+          CPA meta mezcla ({mixLevelName}): {cpaMixLabel} · Ticket promedio mezcla{' '}
+          {fmtCurrency(mixAtLevel.ticketPromedio, props.inputs.currency)}
+        </div>
       </div>
 
       <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-hint)' }}>CPA meta generado aplicado: {cpaLabel}</div>

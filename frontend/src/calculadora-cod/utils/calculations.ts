@@ -1,5 +1,8 @@
 import type { CalculatorInputsState, FunnelMixLevel, MixResult, Pack, PackKpis, PackId, PygResult } from '../types';
 
+/** Pesos de mezcla normalizados (suma 1). */
+export type MixWeights = [number, number, number];
+
 export function calcPack(pack: Pack, inputs: CalculatorInputsState): PackKpis {
   const {
     costoUnitario,
@@ -203,6 +206,154 @@ function pygScenario(
     efEntrega,
     efTotal,
     fleteDevEfectivo,
+  };
+}
+
+function pygScenarioMix(
+  pedidosGen: number,
+  inputs: CalculatorInputsState,
+  packs: [Pack, Pack, Pack],
+  weights: MixWeights,
+  cpaAdsPorGen: number,
+) {
+  const [w0, w1, w2] = weights;
+  const pCanc = inputs.canceladosPct / 100;
+  const pDev = inputs.devueltosPct / 100;
+  const efEnvios = 1 - pCanc;
+  const efEntrega = 1 - pDev;
+  const efTotal = efEnvios * efEntrega;
+
+  const cancelados = pedidosGen * pCanc;
+  const despachados = pedidosGen * efEnvios;
+  const devueltos = despachados * pDev;
+  const entregados = pedidosGen * efTotal;
+
+  const precioW =
+    w0 * packs[0].precioVenta + w1 * packs[1].precioVenta + w2 * packs[2].precioVenta;
+  const costoProdW =
+    w0 * (inputs.costoUnitario * packs[0].units) +
+    w1 * (inputs.costoUnitario * packs[1].units) +
+    w2 * (inputs.costoUnitario * packs[2].units);
+  const fleteDevEfectivo = inputs.cobraFleteDevolucion ? inputs.fleteDevolucion : 0;
+
+  const ventasBrutas = entregados * precioW;
+  const costoProductos = entregados * costoProdW;
+  const fletesIda = despachados * inputs.fleteIda;
+  const fletesDevolucion = devueltos * fleteDevEfectivo;
+  const adminTotal = ventasBrutas * (inputs.adminPct / 100);
+  const utilidadAntesAds = ventasBrutas - costoProductos - fletesIda - fletesDevolucion - adminTotal;
+  const inversionAds = cpaAdsPorGen > 0 ? cpaAdsPorGen * pedidosGen : 0;
+  const utilidadNeta = utilidadAntesAds - inversionAds;
+  const margenNetoPct = ventasBrutas > 0 ? (utilidadNeta / ventasBrutas) * 100 : 0;
+
+  return {
+    pedidosGen,
+    cancelados,
+    despachados,
+    devueltos,
+    entregados,
+    ventasBrutas,
+    costoProductos,
+    fletesIda,
+    fletesDevolucion,
+    adminTotal,
+    utilidadAntesAds,
+    inversionAds,
+    utilidadNeta,
+    margenNetoPct,
+    pCanc,
+    pDev,
+    efEnvios,
+    efEntrega,
+    efTotal,
+    fleteDevEfectivo,
+  };
+}
+
+/**
+ * PyG con **ventas, costo producto y admin** ponderados por la mezcla de packs; embudo y fletes ida/dev iguales al modelo global.
+ * Inversión ads = `cpaAdsPorGen` × pedidos generados (p. ej. CPA meta ponderado al nivel de embudo elegido).
+ */
+export function calcPygMix(
+  pedidosA: number,
+  pedidosB: number,
+  inputs: CalculatorInputsState,
+  packs: [Pack, Pack, Pack],
+  weights: MixWeights,
+  cpaAdsPorGen: number,
+): PygResult {
+  const a = pygScenarioMix(pedidosA, inputs, packs, weights, cpaAdsPorGen);
+  const b = pygScenarioMix(pedidosB, inputs, packs, weights, cpaAdsPorGen);
+
+  const rows: PygResult['rows'] = [
+    { concepto: 'Pedidos generados', a: a.pedidosGen, b: b.pedidosGen },
+    {
+      concepto: `· Cancelados (${(a.pCanc * 100).toFixed(0)}%)`,
+      sub: true,
+      muted: true,
+      a: a.cancelados,
+      b: b.cancelados,
+    },
+    {
+      concepto: `· Despachados (${(a.efEnvios * 100).toFixed(0)}%)`,
+      sub: true,
+      muted: true,
+      a: a.despachados,
+      b: b.despachados,
+    },
+    {
+      concepto: `  · Devueltos (${(a.pDev * 100).toFixed(0)}% del despachado)`,
+      sub: true,
+      subSub: true,
+      muted: true,
+      a: a.devueltos,
+      b: b.devueltos,
+    },
+    {
+      concepto: `  · Entregados (${(a.efTotal * 100).toFixed(0)}% del generado)`,
+      sub: true,
+      subSub: true,
+      muted: true,
+      a: a.entregados,
+      b: b.entregados,
+    },
+    { concepto: 'Ventas brutas (ticket mezcla)', total: true, a: a.ventasBrutas, b: b.ventasBrutas },
+    { concepto: '(−) Costo productos (mezcla)', negative: true, a: -a.costoProductos, b: -b.costoProductos },
+    { concepto: '(−) Flete ida (despachados)', negative: true, a: -a.fletesIda, b: -b.fletesIda },
+  ];
+
+  if (inputs.cobraFleteDevolucion && a.fleteDevEfectivo > 0) {
+    rows.push({
+      concepto: '(−) Flete devolución (solo devueltos)',
+      negative: true,
+      a: -a.fletesDevolucion,
+      b: -b.fletesDevolucion,
+    });
+  }
+
+  rows.push(
+    {
+      concepto: `(−) Admin (${inputs.adminPct.toFixed(0)}% sobre ventas)`,
+      negative: true,
+      a: -a.adminTotal,
+      b: -b.adminTotal,
+    },
+    { concepto: '= Utilidad antes de ads', total: true, a: a.utilidadAntesAds, b: b.utilidadAntesAds },
+    {
+      concepto: `(−) Inversión ads · CPA meta mezcla ${
+        cpaAdsPorGen > 0 ? Math.round(cpaAdsPorGen).toString() : '—'
+      }`,
+      negative: true,
+      a: -a.inversionAds,
+      b: -b.inversionAds,
+    },
+    { concepto: '= Utilidad neta', final: true, a: a.utilidadNeta, b: b.utilidadNeta },
+  );
+
+  return {
+    rows,
+    margenNetoPctA: a.margenNetoPct,
+    margenNetoPctB: b.margenNetoPct,
   };
 }
 
