@@ -3992,7 +3992,15 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       if (!(me && me.code === '42P01')) throw me;
     }
     if (mensajeroFilter === 'motico') {
-      orders = orders.filter((o) => o.mensajero === 'motico' || String(o.internal_status || '').toLowerCase() === 'motico');
+      orders = orders.filter((o) => {
+        const mensajero = String(o.mensajero || '')
+          .trim()
+          .toLowerCase();
+        const internalStatus = String(o.internal_status || '')
+          .trim()
+          .toLowerCase();
+        return mensajero === 'motico' || internalStatus === 'motico' || Boolean(o.is_motico_manual) || Number(o.id) < 0;
+      });
     }
     const productIdQ = typeof req.query.product_id === 'string' ? req.query.product_id.trim() : '';
     if (productIdQ) {
