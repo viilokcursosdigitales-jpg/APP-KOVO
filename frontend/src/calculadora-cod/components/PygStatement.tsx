@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { ds } from '../../design-system/ds';
 import type { CalculatorInputsState, PackId, PackKpis } from '../types';
-import { calcPyg } from '../utils/calculations';
-import { fmtCurrency, fmtPercent } from '../utils/formatters';
+import { calcMix, calcPyg } from '../utils/calculations';
+import { fmtCurrency, fmtPercent, fmtRoasMult } from '../utils/formatters';
 
 type Props = {
   inputs: CalculatorInputsState;
@@ -22,7 +22,23 @@ export function PygStatement(props: Props) {
     [pedA, pedB, pack, props.inputs, kpi.cpaGenMeta],
   );
 
+  /** Misma lógica operativa del pack; inversión ads con CPA meta ponderado de la mezcla (nivel generado). */
+  const mixGen = useMemo(
+    () => calcMix(props.inputs.mixPct, props.inputs.packs, props.packKpis, 'gen'),
+    [props.inputs.mixPct, props.inputs.packs, props.packKpis],
+  );
+
+  const pygMix = useMemo(
+    () => calcPyg(pedA, pedB, pack, props.inputs, mixGen.cpaPonderado),
+    [pedA, pedB, pack, props.inputs, mixGen.cpaPonderado],
+  );
+
   const cpaLabel = kpi.cpaGenMeta > 0 ? fmtCurrency(kpi.cpaGenMeta, props.inputs.currency) : '—';
+  const cpaMixLabel = mixGen.cpaPonderado > 0 ? fmtCurrency(mixGen.cpaPonderado, props.inputs.currency) : '—';
+  const mixViable = mixGen.sumaPct > 0 && mixGen.cpaPonderado > 0;
+
+  const adsRowMix = pygMix.rows.find((r) => r.negative && r.concepto.includes('Inversión ads'));
+  const utilMixRow = pygMix.rows.find((r) => r.final);
 
   return (
     <div
@@ -173,6 +189,81 @@ export function PygStatement(props: Props) {
           </tbody>
         </table>
       </div>
+
+      <div
+        style={{
+          marginTop: 16,
+          padding: '14px 14px',
+          borderRadius: 12,
+          border: `1px solid ${ds.borderCard}`,
+          background: 'var(--color-bg-subtle)',
+        }}
+      >
+        <div style={{ fontSize: 13, fontWeight: 800, color: 'var(--color-text-primary)', marginBottom: 6 }}>
+          Ganancia con ROAS ponderado (mezcla)
+        </div>
+        <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.45 }}>
+          Misma operación del pack elegido (ventas, costos, fletes, admin). La inversión en ads usa el{' '}
+          <strong style={{ color: 'var(--color-text-secondary)' }}>CPA meta ponderado</strong> de tu mezcla actual a nivel{' '}
+          <strong style={{ color: 'var(--color-text-secondary)' }}>generado</strong> (ROAS mezcla {fmtRoasMult(mixGen.roasPonderado)}).
+        </div>
+        {!mixViable ? (
+          <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
+            Ajusta la mezcla a 100% y revisa que los CPAs meta de los packs permitan un CPA ponderado válido.
+          </div>
+        ) : (
+          <div style={{ overflowX: 'auto' }}>
+            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 360 }}>
+              <thead>
+                <tr>
+                  <th style={{ textAlign: 'left', fontSize: 11, color: 'var(--color-text-hint)', padding: '8px 6px' }}>Concepto</th>
+                  <th style={{ textAlign: 'right', fontSize: 11, color: 'var(--color-text-hint)', padding: '8px 6px' }}>Escenario A</th>
+                  <th style={{ textAlign: 'right', fontSize: 11, color: 'var(--color-text-hint)', padding: '8px 6px' }}>Escenario B</th>
+                </tr>
+              </thead>
+              <tbody>
+                {adsRowMix ? (
+                  <tr>
+                    <td style={{ padding: '8px 6px', fontSize: 12, color: 'var(--color-text-secondary)' }}>{adsRowMix.concepto}</td>
+                    <td style={{ textAlign: 'right', padding: '8px 6px', fontSize: 13, color: 'var(--color-danger-text)' }}>
+                      {typeof adsRowMix.a === 'number' ? fmtCurrency(adsRowMix.a, props.inputs.currency) : '—'}
+                    </td>
+                    <td style={{ textAlign: 'right', padding: '8px 6px', fontSize: 13, color: 'var(--color-danger-text)' }}>
+                      {typeof adsRowMix.b === 'number' ? fmtCurrency(adsRowMix.b, props.inputs.currency) : '—'}
+                    </td>
+                  </tr>
+                ) : null}
+                {utilMixRow ? (
+                  <tr>
+                    <td style={{ padding: '8px 6px', fontSize: 13, fontWeight: 800, color: 'var(--color-brand)' }}>{utilMixRow.concepto}</td>
+                    <td style={{ textAlign: 'right', padding: '8px 6px', fontSize: 14, fontWeight: 800, color: 'var(--color-brand)' }}>
+                      {typeof utilMixRow.a === 'number' ? fmtCurrency(utilMixRow.a, props.inputs.currency) : '—'}
+                    </td>
+                    <td style={{ textAlign: 'right', padding: '8px 6px', fontSize: 14, fontWeight: 800, color: 'var(--color-brand)' }}>
+                      {typeof utilMixRow.b === 'number' ? fmtCurrency(utilMixRow.b, props.inputs.currency) : '—'}
+                    </td>
+                  </tr>
+                ) : null}
+                <tr>
+                  <td style={{ padding: '10px 6px', fontSize: 12, color: 'var(--color-text-muted)' }}>Margen neto % (mezcla)</td>
+                  <td style={{ textAlign: 'right', padding: '10px 6px', fontSize: 12, color: 'var(--color-text-muted)' }}>
+                    {fmtPercent(pygMix.margenNetoPctA, 1)}
+                  </td>
+                  <td style={{ textAlign: 'right', padding: '10px 6px', fontSize: 12, color: 'var(--color-text-muted)' }}>
+                    {fmtPercent(pygMix.margenNetoPctB, 1)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+        {mixViable ? (
+          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-hint)' }}>
+            CPA meta mezcla (generado): {cpaMixLabel} · Ticket promedio mezcla {fmtCurrency(mixGen.ticketPromedio, props.inputs.currency)}
+          </div>
+        ) : null}
+      </div>
+
       <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-hint)' }}>CPA meta generado aplicado: {cpaLabel}</div>
     </div>
   );
