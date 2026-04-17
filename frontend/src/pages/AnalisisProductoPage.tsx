@@ -5,6 +5,7 @@ import { ds } from '../design-system/ds';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
 
 type ProductStatus = 'ganador' | 'prueba' | 'perdedor';
+type DateFilter = 'hoy' | 'ayer' | '3d' | '7d' | '14d' | '30d' | 'custom';
 
 type ProductAgg = {
   key: string;
@@ -118,15 +119,18 @@ function monthKeysForCount(count: number): string {
   return out.join(',');
 }
 
-function monthCountFromFilter(filter: string): number {
-  if (filter === '3m') return 3;
-  if (filter === '2m') return 2;
-  return 1;
-}
-
-function metaPeriodFromFilter(filter: string): '30d' {
-  if (filter === '3m' || filter === '2m' || filter === '1m') return '30d';
-  return '30d';
+function periodConfig(filter: DateFilter): {
+  currentStart: number;
+  currentLen: number;
+  months: number;
+  metaPeriod: 'hoy' | 'ayer' | '3d' | '7d' | '14d' | '30d' | 'custom';
+} {
+  if (filter === 'hoy') return { currentStart: 0, currentLen: 1, months: 1, metaPeriod: 'hoy' };
+  if (filter === 'ayer') return { currentStart: 1, currentLen: 1, months: 1, metaPeriod: 'ayer' };
+  if (filter === '3d') return { currentStart: 0, currentLen: 3, months: 1, metaPeriod: '3d' };
+  if (filter === '7d' || filter === 'custom') return { currentStart: 0, currentLen: 7, months: 2, metaPeriod: filter };
+  if (filter === '14d') return { currentStart: 0, currentLen: 14, months: 2, metaPeriod: '14d' };
+  return { currentStart: 0, currentLen: 30, months: 3, metaPeriod: '30d' };
 }
 
 function classifyProduct(roasReal: number, roasEq: number): ProductStatus {
@@ -166,7 +170,7 @@ function KpiCard({ title, value, delta }: { title: string; value: string; delta:
 export default function AnalisisProductoPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<'1m' | '2m' | '3m'>('1m');
+  const [filter, setFilter] = useState<DateFilter>('7d');
   const [days, setDays] = useState<SeriesDay[]>([]);
   const [metaSpendByProductId, setMetaSpendByProductId] = useState<Record<string, number>>({});
   const [metaUnlinkedSpend, setMetaUnlinkedSpend] = useState(0);
@@ -193,12 +197,12 @@ export default function AnalisisProductoPage() {
     setLoading(true);
     setError(null);
     try {
-      const monthsCsv = monthKeysForCount(monthCountFromFilter(filter));
+      const cfg = periodConfig(filter);
+      const monthsCsv = monthKeysForCount(cfg.months);
       const suffix = monthsCsv ? `?months=${encodeURIComponent(monthsCsv)}` : '';
-      const metaPeriod = metaPeriodFromFilter(filter);
       const [seriesRes, spendRes] = await Promise.all([
         apiFetch(`/api/ganancia-diaria/series${suffix}`),
-        apiFetch(`/api/product-analytics/meta-spend?period=${metaPeriod}`),
+        apiFetch(`/api/product-analytics/meta-spend?period=${cfg.metaPeriod}`),
       ]);
       const data = (await seriesRes.json().catch(() => ({}))) as SeriesPayload;
       const spendData = (await spendRes.json().catch(() => ({}))) as MetaSpendPayload;
@@ -228,9 +232,14 @@ export default function AnalisisProductoPage() {
     void load();
   }, [load]);
 
+  const periodDays = useMemo(() => {
+    const cfg = periodConfig(filter);
+    return [...days].slice(cfg.currentStart, cfg.currentStart + cfg.currentLen);
+  }, [days, filter]);
+
   const productMap = useMemo(() => {
     const map = new Map<string, ProductAgg>();
-    for (const d of days) {
+    for (const d of periodDays) {
       const byp = d.by_product && typeof d.by_product === 'object' ? d.by_product : {};
       for (const [key, raw] of Object.entries(byp)) {
         const ventas = Number(raw.ventas_despachadas_total || 0);
@@ -288,7 +297,7 @@ export default function AnalisisProductoPage() {
       p.estado = classifyProduct(p.roasReal, p.roasEq);
     }
     return map;
-  }, [days, metaSpendByProductId, adminPercent]);
+  }, [periodDays, metaSpendByProductId, adminPercent]);
 
   const products = useMemo(
     () =>
@@ -319,10 +328,10 @@ export default function AnalisisProductoPage() {
   const ventasTotal = products.reduce((s, p) => s + p.ventas, 0);
   const roasPromedio = gastoTotal > 0 ? ventasTotal / gastoTotal : 0;
 
-  const salesSeries = normalizeSeries(days.map((d) => Number(d.ventas_despachadas_total || 0)));
-  const spendSeries = normalizeSeries(days.map((d) => Number(d.gasto_publicitario_total || 0)));
-  const ordersSeries = normalizeSeries(days.map((d) => Number(d.ventas_despachadas_pedidos || 0)));
-  const dayLabels = days
+  const salesSeries = normalizeSeries(periodDays.map((d) => Number(d.ventas_despachadas_total || 0)));
+  const spendSeries = normalizeSeries(periodDays.map((d) => Number(d.gasto_publicitario_total || 0)));
+  const ordersSeries = normalizeSeries(periodDays.map((d) => Number(d.ventas_despachadas_pedidos || 0)));
+  const dayLabels = periodDays
     .slice()
     .reverse()
     .slice(0, 7)
@@ -338,7 +347,7 @@ export default function AnalisisProductoPage() {
   const detailRoasSeries = useMemo(() => {
     if (!active) return [];
     const vals: number[] = [];
-    for (const d of days) {
+    for (const d of periodDays) {
       const byp = d.by_product || {};
       const p = byp[active.key];
       if (!p) {
@@ -352,12 +361,12 @@ export default function AnalisisProductoPage() {
       vals.push(ads > 0 ? ventas / ads : 0);
     }
     return normalizeSeries(vals);
-  }, [active, days]);
+  }, [active, periodDays]);
 
   const detailConvSeries = useMemo(() => {
     if (!active) return [];
     const vals: number[] = [];
-    for (const d of days) {
+    for (const d of periodDays) {
       const byp = d.by_product || {};
       const p = byp[active.key];
       if (!p) {
@@ -369,7 +378,7 @@ export default function AnalisisProductoPage() {
       vals.push(qty > 0 ? (pedidos / qty) * 100 : 0);
     }
     return normalizeSeries(vals);
-  }, [active, days]);
+  }, [active, periodDays]);
 
   return (
     <div style={{ fontFamily: ds.font, maxWidth: 1280, margin: '0 auto' }}>
@@ -414,11 +423,15 @@ export default function AnalisisProductoPage() {
           <select
             style={inputStyle}
             value={filter}
-            onChange={(e) => setFilter(e.target.value as '1m' | '2m' | '3m')}
+            onChange={(e) => setFilter(e.target.value as DateFilter)}
           >
-            <option value="1m">Mes actual</option>
-            <option value="2m">Ultimos 2 meses</option>
-            <option value="3m">Ultimos 3 meses</option>
+            <option value="hoy">Hoy</option>
+            <option value="ayer">Ayer</option>
+            <option value="3d">Ultimos 3 dias</option>
+            <option value="7d">Ultimos 7 dias</option>
+            <option value="14d">Ultimos 14 dias</option>
+            <option value="30d">Ultimos 30 dias</option>
+            <option value="custom">Custom</option>
           </select>
           <button type="button" style={{ ...inputStyle, width: 'auto', cursor: 'pointer', fontWeight: 600 }}>
             Filtro
