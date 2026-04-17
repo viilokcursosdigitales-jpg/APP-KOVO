@@ -15,6 +15,7 @@ const {
   fetchInsightsForAdAccount,
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
+  fetchMergedDailyInsightsForAdAccounts,
   fetchTotalSpendForAdAccountsTimeRange,
   fetchDailySpendByDayForAdAccountsTimeRange,
   getCampaignAdAccountId,
@@ -2331,6 +2332,146 @@ app.get('/api/meta/funnel', verifyToken, scopeToOrganization, async (req, res) =
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener embudo de Meta' });
+  }
+});
+
+/** Embudo + anuncios + serie diaria (panel Ads Funnel). */
+app.get('/api/meta/ads-funnel-panel', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const period = String(req.query.period || '7d');
+    const datePreset = datePresetFromDashboardPeriod(period);
+
+    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
+    if (!row || !String(row.access_token || '').trim()) {
+      return res.status(400).json({
+        error: 'Falta token de usuario en la conexión Meta.',
+        code: 'no_token',
+      });
+    }
+    const resolved = resolveAdAccountIdsForRequest(req.query.adAccountId, row.selected_ad_account_ids);
+    if (!resolved.ok) {
+      return res.status(400).json({
+        error: 'Esa cuenta no está entre las vinculadas en la conexión Meta.',
+        code: resolved.code || 'invalid_ad_account',
+      });
+    }
+    const actIds = resolved.actIds;
+    if (actIds.length === 0) {
+      return res.status(400).json({
+        error: 'No hay cuentas publicitarias seleccionadas.',
+        code: 'no_ad_accounts',
+      });
+    }
+
+    const partialErrors = [];
+
+    const { merged, partialErrors: funnelPartial, ok: funnelOk } = await fetchFunnelForAdAccounts(
+      actIds,
+      row.access_token,
+      datePreset,
+    );
+    if (Array.isArray(funnelPartial)) {
+      for (const e of funnelPartial) {
+        partialErrors.push({ source: 'funnel', adAccountId: e.adAccountId, error: e.error });
+      }
+    }
+    if (!funnelOk || !merged) {
+      return res.status(502).json({
+        error: 'Meta no devolvió datos de embudo para las cuentas indicadas.',
+        code: 'funnel_empty',
+        partialErrors,
+      });
+    }
+
+    const drops = [];
+    for (let i = 0; i < merged.stages.length - 1; i++) {
+      const from = merged.stages[i].people;
+      const to = merged.stages[i + 1].people;
+      drops.push(from > 0 ? ((from - to) / from) * 100 : 0);
+    }
+    const linkClicks = merged.stages[1] ? merged.stages[1].people : 0;
+    const purchases = merged.stages[merged.stages.length - 1]
+      ? merged.stages[merged.stages.length - 1].people
+      : 0;
+    const convRate = linkClicks > 0 ? (purchases / linkClicks) * 100 : 0;
+    const cpa = purchases > 0 ? merged.spend / purchases : 0;
+    const roas = merged.spend > 0 && merged.revenue > 0 ? merged.revenue / merged.spend : 0;
+
+    const funnelPayload = {
+      stages: merged.stages,
+      drops,
+      spend: merged.spend,
+      revenue: merged.revenue,
+      impressions: merged.impressions,
+      purchases,
+      linkClicks,
+      convRate,
+      cpa,
+      roas,
+    };
+
+    const allRows = [];
+    for (const actId of actIds) {
+      const norm = normalizeActId(actId);
+      const r = await fetchInsightsForAdAccount(norm, row.access_token, 'ads', datePreset);
+      if (!r.ok) {
+        partialErrors.push({ source: 'ads', adAccountId: norm, error: r.error || 'Error al leer anuncios' });
+        continue;
+      }
+      allRows.push(...r.rows);
+    }
+
+    const totals = allRows.reduce(
+      (acc, x) => ({
+        impressions: acc.impressions + x.impressions,
+        clicks: acc.clicks + x.clicks,
+        spend: acc.spend + x.spend,
+        purchases: acc.purchases + x.purchases,
+        revenue: acc.revenue + x.revenue,
+      }),
+      { impressions: 0, clicks: 0, spend: 0, purchases: 0, revenue: 0 },
+    );
+    totals.cpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
+    totals.cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
+    totals.ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
+    totals.roas = totals.spend > 0 && totals.revenue > 0 ? totals.revenue / totals.spend : 0;
+    totals.cpa = totals.purchases > 0 ? totals.spend / totals.purchases : 0;
+
+    const adsSorted = [...allRows].sort((a, b) => b.spend - a.spend).slice(0, 25);
+
+    const { series: daily, partialErrors: dailyPartial } = await fetchMergedDailyInsightsForAdAccounts(
+      actIds,
+      row.access_token,
+      datePreset,
+    );
+    if (Array.isArray(dailyPartial)) {
+      for (const e of dailyPartial) {
+        partialErrors.push({ source: 'daily', adAccountId: e.adAccountId, error: e.error });
+      }
+    }
+
+    const convSitePct = totals.clicks > 0 ? (totals.purchases / totals.clicks) * 100 : 0;
+
+    res.json({
+      live: true,
+      period,
+      datePreset,
+      adAccountId: actIds.length === 1 ? actIds[0] : null,
+      fetchedAt: new Date().toISOString(),
+      funnel: funnelPayload,
+      totals,
+      adsRows: adsSorted,
+      daily,
+      kpi: {
+        ctr: totals.ctr,
+        cpc: totals.cpc,
+        convRate: convSitePct,
+      },
+      partialErrors,
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al cargar panel Ads Funnel' });
   }
 });
 

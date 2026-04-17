@@ -1,6 +1,27 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useState, useId } from 'react';
+import { Link } from 'react-router-dom';
+import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { DataTable, Td, Th, tableBase } from '../design-system/DataTable';
+import { formatMetaMoneyWhole } from '../meta/formatMetaMoney';
+import {
+  MetaDataIssueCard,
+  MetaFetchErrorPanel,
+  MetaLiveDataStrip,
+} from '../meta/MetaApiStatusBanner';
+import type { MetaInsightPeriod } from '../meta/MetaInsightsPanel';
+import { resolveMetaDataIssue } from '../meta/metaDataIssues';
+import { useMetaInsightsReady } from '../meta/useMetaInsightsReady';
+
+const PERIOD_LABELS: Record<MetaInsightPeriod, string> = {
+  hoy: 'Hoy',
+  ayer: 'Ayer',
+  '3d': 'Últimos 3 días',
+  '7d': 'Últimos 7 días',
+  '14d': 'Últimos 14 días',
+  '30d': 'Últimos 30 días',
+  custom: 'Personalizado',
+};
 
 const selectStyle: React.CSSProperties = {
   padding: '8px 12px',
@@ -14,22 +35,23 @@ const selectStyle: React.CSSProperties = {
   cursor: 'pointer',
 };
 
-function DeltaPill({ children }: { children: string }) {
-  return (
-    <span
-      style={{
-        display: 'inline-block',
-        padding: '3px 8px',
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 600,
-        background: ds.successBg,
-        color: ds.successText,
-      }}
-    >
-      {children}
-    </span>
-  );
+function formatNumber(n: number): string {
+  return new Intl.NumberFormat('es-ES').format(Math.round(n));
+}
+
+function formatCompact(n: number): string {
+  if (!Number.isFinite(n)) return '0';
+  return new Intl.NumberFormat('es-ES', { notation: 'compact', maximumFractionDigits: 1 }).format(n);
+}
+
+function formatPct(n: number, decimals = 1): string {
+  return `${n.toFixed(decimals)} %`;
+}
+
+function hashHue(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % 360;
 }
 
 function FunnelTag({ children }: { children: string }) {
@@ -96,11 +118,11 @@ function FunnelStage({
 function KpiMiniCard({
   label,
   value,
-  deltas,
+  hint,
 }: {
   label: string;
   value: string;
-  deltas: [string, string];
+  hint?: string;
 }) {
   return (
     <div
@@ -114,11 +136,10 @@ function KpiMiniCard({
       }}
     >
       <div style={{ fontSize: 12, fontWeight: 500, color: ds.textMuted, marginBottom: 8 }}>{label}</div>
-      <div style={{ fontSize: 22, fontWeight: 700, color: ds.textPrimary, marginBottom: 10 }}>{value}</div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-        <DeltaPill>{deltas[0]}</DeltaPill>
-        <DeltaPill>{deltas[1]}</DeltaPill>
-      </div>
+      <div style={{ fontSize: 22, fontWeight: 700, color: ds.textPrimary, marginBottom: 8 }}>{value}</div>
+      {hint ? (
+        <div style={{ fontSize: 11, fontWeight: 500, color: ds.textHint }}>{hint}</div>
+      ) : null}
     </div>
   );
 }
@@ -145,7 +166,14 @@ function RoasPill({ value, tone }: { value: string; tone: 'good' | 'mid' | 'low'
   );
 }
 
-function CreativeThumb({ label, hue }: { label: string; hue: number }) {
+function roasTone(roas: number): 'good' | 'mid' | 'low' {
+  if (roas >= 3) return 'good';
+  if (roas >= 2) return 'mid';
+  return 'low';
+}
+
+function CreativeThumb({ label }: { label: string }) {
+  const hue = hashHue(label);
   return (
     <div
       style={{
@@ -164,13 +192,13 @@ function CreativeThumb({ label, hue }: { label: string; hue: number }) {
       }}
       aria-hidden
     >
-      {label.slice(0, 2).toUpperCase()}
+      {label.trim().slice(0, 2).toUpperCase() || '—'}
     </div>
   );
 }
 
-/** Normaliza 0–1; y=0 abajo del área de trazado */
 function sparkPath(ys: number[], w: number, h: number, padX: number, padY: number, close = false) {
+  if (ys.length === 0) return '';
   const innerW = w - padX * 2;
   const innerH = h - padY * 2;
   const pts = ys.map((yv, i) => {
@@ -187,12 +215,84 @@ function sparkPath(ys: number[], w: number, h: number, padX: number, padY: numbe
   return d;
 }
 
-const CHART_DAYS = ['L', 'M', 'M', 'J', 'V', 'S', 'S', 'D', 'D'];
+function normalize01(values: number[]): number[] {
+  if (values.length === 0) return [];
+  const lo = Math.min(...values);
+  const hi = Math.max(...values);
+  if (!Number.isFinite(lo) || !Number.isFinite(hi) || hi <= lo) {
+    return values.map(() => 0.5);
+  }
+  return values.map((v) => (v - lo) / (hi - lo));
+}
 
-const CPC_SERIES = [0.42, 0.38, 0.52, 0.48, 0.55, 0.5, 0.47, 0.58, 0.45, 0.5];
-const CPM_SERIES = [0.35, 0.4, 0.33, 0.36, 0.38, 0.34, 0.32, 0.37, 0.35, 0.36];
-const ROAS_SERIES = [0.62, 0.58, 0.72, 0.68, 0.78, 0.7, 0.66, 0.75, 0.6, 0.65];
-const CONV_SERIES = [0.35, 0.42, 0.38, 0.45, 0.52, 0.48, 0.55, 0.5, 0.58, 0.55];
+function dayLabel(isoDate: string): string {
+  try {
+    return new Intl.DateTimeFormat('es-ES', { weekday: 'narrow' }).format(new Date(`${isoDate}T12:00:00`));
+  } catch {
+    return '';
+  }
+}
+
+type StageApi = { key: string; label: string; people: number };
+
+type DailyRow = {
+  date_start: string;
+  cpc: number;
+  cpm: number;
+  convPct: number;
+  roas: number;
+};
+
+type AdRow = {
+  id: string;
+  name: string;
+  impressions: number;
+  clicks: number;
+  spend: number;
+  ctr: number;
+  cpc: number;
+  purchases: number;
+  revenue: number;
+  roas: number;
+  cpa: number;
+};
+
+type PanelResponse = {
+  error?: string;
+  code?: string;
+  live?: boolean;
+  period?: string;
+  datePreset?: string;
+  fetchedAt?: string;
+  funnel?: {
+    stages: StageApi[];
+    drops: number[];
+    spend: number;
+    revenue: number;
+    impressions: number;
+    purchases: number;
+    linkClicks: number;
+    convRate: number;
+    cpa: number;
+    roas: number;
+  };
+  totals?: {
+    impressions: number;
+    clicks: number;
+    spend: number;
+    purchases: number;
+    revenue: number;
+    cpm: number;
+    cpc: number;
+    ctr: number;
+    roas: number;
+    cpa: number;
+  };
+  adsRows?: AdRow[];
+  daily?: DailyRow[];
+  kpi?: { ctr: number; cpc: number; convRate: number };
+  partialErrors?: { adAccountId: string; error: string; source?: string }[];
+};
 
 function MiniLineChart({
   title,
@@ -200,12 +300,14 @@ function MiniLineChart({
   ySuffix,
   legend,
   children,
+  emptyHint,
 }: {
   title: string;
   yLabelMax: string;
   ySuffix?: string;
   legend: React.ReactNode;
   children: React.ReactNode;
+  emptyHint?: string;
 }) {
   return (
     <div
@@ -236,11 +338,19 @@ function MiniLineChart({
             paddingRight: 6,
           }}
         >
-          <span>{yLabelMax}{ySuffix ?? ''}</span>
+          <span>
+            {yLabelMax}
+            {ySuffix ?? ''}
+          </span>
           <span>{ySuffix ? `—${ySuffix}` : '—'}</span>
-          <span>0{ySuffix ?? ''}</span>
+          <span>
+            0
+            {ySuffix ?? ''}
+          </span>
         </div>
-        <div style={{ marginLeft: 34, height: 'calc(100% - 22px)' }}>{children}</div>
+        <div style={{ marginLeft: 34, height: 'calc(100% - 22px)' }}>
+          {emptyHint ? <p style={{ margin: 0, fontSize: 12, color: ds.textMuted }}>{emptyHint}</p> : children}
+        </div>
       </div>
       <div
         style={{
@@ -261,16 +371,138 @@ function MiniLineChart({
 }
 
 export default function AdsFunnelPage() {
-  const [region, setRegion] = useState('co');
-  const [range, setRange] = useState('7d');
+  const metaReady = useMetaInsightsReady();
+  const chartGradId = `adsFunnelGrad-${useId().replace(/:/g, '')}`;
+  const [period, setPeriod] = useState<MetaInsightPeriod>('7d');
+  const [filterActId, setFilterActId] = useState('');
+  const [accountOptions, setAccountOptions] = useState<{ id: string; name: string }[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [code, setCode] = useState<string | null>(null);
+  const [panel, setPanel] = useState<PanelResponse | null>(null);
+
+  useEffect(() => {
+    let c = false;
+    (async () => {
+      try {
+        const res = await apiFetch('/api/meta/selected-ad-accounts');
+        if (!res.ok || c) return;
+        const data = (await res.json()) as { accounts?: { id: string; name: string }[] };
+        if (c) return;
+        setAccountOptions(Array.isArray(data.accounts) ? data.accounts : []);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      c = true;
+    };
+  }, []);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    setCode(null);
+    try {
+      const q = new URLSearchParams({ period });
+      if (filterActId) q.set('adAccountId', filterActId);
+      const res = await apiFetch(`/api/meta/ads-funnel-panel?${q.toString()}`);
+      const data = (await res.json().catch(() => ({}))) as PanelResponse;
+      if (!res.ok) {
+        setPanel(null);
+        setError(typeof data.error === 'string' ? data.error : 'No se pudo cargar el panel');
+        setCode(typeof data.code === 'string' ? data.code : null);
+        return;
+      }
+      setPanel(data);
+    } catch {
+      setPanel(null);
+      setError('Error de red');
+      setCode(null);
+    } finally {
+      setLoading(false);
+    }
+  }, [period, filterActId]);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const stages = panel?.funnel?.stages ?? [];
+  const maxP = Math.max(...stages.map((s) => s.people), 1);
+  const funnelWidths = stages.map((s) => Math.max(38, Math.round(52 + 48 * (s.people / maxP))));
+
+  const imp0 = stages[0]?.people ?? 0;
+  const clk1 = stages[1]?.people ?? 0;
+  const ctrImp =
+    imp0 > 0 && stages.length > 1 ? formatPct((clk1 / imp0) * 100, 1) : null;
+  const atcIdx = stages.findIndex((s) => s.key === 'atc');
+  const totals = panel?.totals;
+  const cpcGlobal =
+    totals && totals.clicks > 0 ? formatMetaMoneyWhole(totals.spend / totals.clicks) : null;
+
+  const daily = panel?.daily ?? [];
+  const cpcSeries = normalize01(daily.map((d) => d.cpc));
+  const cpmSeries = normalize01(daily.map((d) => d.cpm));
+  const roasSeries = normalize01(daily.map((d) => d.roas));
+  const convSeries = normalize01(daily.map((d) => d.convPct));
+
+  const maxSpendish = Math.max(
+    ...daily.map((d) => Math.max(d.cpc, d.cpm, Number.EPSILON)),
+    1,
+  );
+  const yMoneyLabel = formatMetaMoneyWhole(maxSpendish);
+
+  const maxConv = Math.max(...daily.map((d) => d.convPct), 0.01);
+  const yConvLabel = `${maxConv.toFixed(1)} %`;
+
+  const kpi = panel?.kpi;
+  const fetchedHint = panel?.fetchedAt
+    ? `Actualizado ${new Date(panel.fetchedAt).toLocaleString('es-ES')}`
+    : undefined;
+
+  const dataIssue = resolveMetaDataIssue(
+    (panel?.partialErrors ?? []).map((e) => ({ adAccountId: e.adAccountId, error: e.error })),
+    error,
+    code,
+  );
+
+  const metaStrip = panel?.datePreset && panel?.fetchedAt
+    ? { datePreset: panel.datePreset, fetchedAt: panel.fetchedAt }
+    : null;
+
+  const adsRows = panel?.adsRows ?? [];
 
   const chartW = 320;
   const chartH = 178;
   const padX = 4;
   const padY = 8;
 
+  const periods: MetaInsightPeriod[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'custom'];
+
   return (
     <div style={{ fontFamily: ds.font, maxWidth: 1200, margin: '0 auto' }}>
+      {metaReady === 'no' && !error && (
+        <p
+          style={{
+            margin: '0 0 16px',
+            padding: '12px 14px',
+            borderRadius: 10,
+            background: ds.warningBg,
+            color: ds.warningText,
+            fontSize: 13,
+            maxWidth: 720,
+          }}
+        >
+          Conecta Meta y elige cuentas publicitarias para ver datos reales.{' '}
+          <Link to="/meta-ads?tab=conexion" style={{ color: ds.warningText, fontWeight: 700 }}>
+            Ir a Conexión Meta ADS
+          </Link>
+        </p>
+      )}
+
+      <MetaLiveDataStrip issue={dataIssue} meta={metaStrip} variant="insights" />
+
       <header
         style={{
           display: 'flex',
@@ -278,7 +510,7 @@ export default function AdsFunnelPage() {
           alignItems: 'flex-end',
           justifyContent: 'space-between',
           gap: 16,
-          marginBottom: 24,
+          marginBottom: 20,
         }}
       >
         <div>
@@ -286,41 +518,56 @@ export default function AdsFunnelPage() {
             KOVO
           </div>
           <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: ds.textPrimary }}>Ads Funnel</h1>
-          <p style={{ margin: '8px 0 0', fontSize: 13, color: ds.textSecondary, maxWidth: 480 }}>
-            Vista de embudo y creativos (datos de ejemplo alineados con tu referencia visual).
+          <p style={{ margin: '8px 0 0', fontSize: 13, color: ds.textSecondary, maxWidth: 520 }}>
+            Embudo (acciones agregadas por cuenta), anuncios con mejor gasto y tendencias diarias desde la API de Meta.
           </p>
         </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10 }}>
-          <select
-            aria-label="Ubicación"
-            value={region}
-            onChange={(e) => setRegion(e.target.value)}
-            style={selectStyle}
-          >
-            <option value="co">Colombia</option>
-          </select>
+          {accountOptions.length > 1 ? (
+            <select
+              aria-label="Cuenta publicitaria"
+              value={filterActId}
+              onChange={(e) => setFilterActId(e.target.value)}
+              style={selectStyle}
+            >
+              <option value="">Todas las cuentas</option>
+              {accountOptions.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          ) : null}
           <select
             aria-label="Rango de fechas"
-            value={range}
-            onChange={(e) => setRange(e.target.value)}
+            value={period}
+            onChange={(e) => setPeriod(e.target.value as MetaInsightPeriod)}
             style={selectStyle}
           >
-            <option value="7d">Últimos 7 días</option>
+            {periods.map((p) => (
+              <option key={p} value={p}>
+                {PERIOD_LABELS[p]}
+              </option>
+            ))}
           </select>
           <button
             type="button"
-            onClick={() => undefined}
+            onClick={() => void load()}
+            disabled={loading}
             style={{
               ...selectStyle,
               fontWeight: 600,
               background: ds.bgSubtle,
-              cursor: 'pointer',
+              cursor: loading ? 'wait' : 'pointer',
             }}
           >
-            Actualizar
+            {loading ? 'Actualizando…' : 'Actualizar'}
           </button>
         </div>
       </header>
+
+      {dataIssue && <MetaDataIssueCard issue={dataIssue} />}
+      {error && <MetaFetchErrorPanel error={error} code={code} />}
 
       <div
         style={{
@@ -341,49 +588,57 @@ export default function AdsFunnelPage() {
           }}
         >
           <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary, marginBottom: 16 }}>Embudo</div>
-          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-            <FunnelStage widthPct={100}>
-              <>
-                200.5k
-                <br />
-                <span style={{ fontSize: 12, fontWeight: 500, color: ds.textSecondary }}>Impresiones</span>
-              </>
-            </FunnelStage>
-            <FunnelArrow />
-            <FunnelStage widthPct={88} tag={<FunnelTag>CTR 2.6%</FunnelTag>}>
-              <>
-                5,200
-                <br />
-                <span style={{ fontSize: 12, fontWeight: 500, color: ds.textSecondary }}>Clics</span>
-              </>
-            </FunnelStage>
-            <FunnelArrow />
-            <FunnelStage widthPct={76} tag={<FunnelTag>CPC $231</FunnelTag>}>
-              <>
-                800
-                <br />
-                <span style={{ fontSize: 12, fontWeight: 500, color: ds.textSecondary }}>Añadir al Carrito</span>
-              </>
-            </FunnelStage>
-            <FunnelArrow />
-            <FunnelStage widthPct={64}>
-              <>
-                450
-                <br />
-                <span style={{ fontSize: 12, fontWeight: 500, color: ds.textSecondary }}>Iniciar Pago</span>
-              </>
-            </FunnelStage>
-          </div>
+          {loading && stages.length === 0 ? (
+            <p style={{ color: ds.textMuted, fontSize: 13 }}>Cargando embudo…</p>
+          ) : stages.length === 0 ? (
+            <p style={{ color: ds.textMuted, fontSize: 13 }}>Sin etapas de embudo para mostrar.</p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+              {stages.map((s, i) => (
+                <div key={s.key} style={{ width: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                  <FunnelStage
+                    widthPct={funnelWidths[i] ?? 70}
+                    tag={
+                      i === 1 && ctrImp ? (
+                        <FunnelTag>CTR {ctrImp}</FunnelTag>
+                      ) : i === atcIdx && cpcGlobal ? (
+                        <FunnelTag>CPC {cpcGlobal}</FunnelTag>
+                      ) : undefined
+                    }
+                  >
+                    <>
+                      {formatCompact(s.people)}
+                      <br />
+                      <span style={{ fontSize: 12, fontWeight: 500, color: ds.textSecondary }}>{s.label}</span>
+                    </>
+                  </FunnelStage>
+                  {i < stages.length - 1 ? <FunnelArrow /> : null}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minWidth: 0 }}>
           <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
-            <KpiMiniCard label="CTR promedio" value="2.6%" deltas={['+21%', '+11%']} />
-            <KpiMiniCard label="Costo por clic" value="$231" deltas={['+10%', '+10%']} />
-            <KpiMiniCard label="Tasa de conversión" value="4.0%" deltas={['+16%', '+16%']} />
+            <KpiMiniCard
+              label="CTR promedio (anuncios)"
+              value={kpi ? formatPct(kpi.ctr, 1) : '—'}
+              hint={fetchedHint}
+            />
+            <KpiMiniCard
+              label="Costo por clic"
+              value={kpi ? formatMetaMoneyWhole(kpi.cpc) : '—'}
+              hint="Gasto / clics (insights por anuncio)"
+            />
+            <KpiMiniCard
+              label="Tasa de conversión (compra / clic)"
+              value={kpi ? formatPct(kpi.convRate, 1) : '—'}
+              hint="Basada en compras y clics agregados de anuncios"
+            />
           </div>
 
-          <DataTable title="Rendimiento por creativo">
+          <DataTable title="Rendimiento por creativo (anuncio)">
             <table style={tableBase}>
               <thead>
                 <tr>
@@ -396,51 +651,51 @@ export default function AdsFunnelPage() {
                 </tr>
               </thead>
               <tbody>
-                <tr>
-                  <Td isLast={false}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <CreativeThumb label="Masajeador" hue={200} />
-                      <span style={{ fontWeight: 500, color: ds.textPrimary }}>Masajeador — Video 1</span>
-                    </div>
-                  </Td>
-                  <Td isLast={false}>3.2%</Td>
-                  <Td isLast={false}>$188</Td>
-                  <Td isLast={false}>$14.4k</Td>
-                  <Td isLast={false}>$14.4k</Td>
-                  <Td isLast={false}>
-                    <RoasPill value="4.8" tone="good" />
-                  </Td>
-                </tr>
-                <tr>
-                  <Td isLast={false}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <CreativeThumb label="Corrector" hue={145} />
-                      <span style={{ fontWeight: 500, color: ds.textPrimary }}>Corrector de Postura</span>
-                    </div>
-                  </Td>
-                  <Td isLast={false}>2.1%</Td>
-                  <Td isLast={false}>$252</Td>
-                  <Td isLast={false}>$20.3k</Td>
-                  <Td isLast={false}>$20.3k</Td>
-                  <Td isLast={false}>
-                    <RoasPill value="2.8" tone="mid" />
-                  </Td>
-                </tr>
-                <tr>
-                  <Td isLast>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-                      <CreativeThumb label="Mini" hue={28} />
-                      <span style={{ fontWeight: 500, color: ds.textPrimary }}>Mini Printer — Imagen 1</span>
-                    </div>
-                  </Td>
-                  <Td isLast>1.5%</Td>
-                  <Td isLast>$294</Td>
-                  <Td isLast>$31.4k</Td>
-                  <Td isLast>$31.4k</Td>
-                  <Td isLast>
-                    <RoasPill value="1.9" tone="low" />
-                  </Td>
-                </tr>
+                {adsRows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      style={{
+                        fontSize: 12,
+                        color: ds.textMuted,
+                        padding: '12px 16px',
+                        borderBottom: 'none',
+                        verticalAlign: 'middle',
+                      }}
+                    >
+                      No hay filas de anuncios para este periodo.
+                    </td>
+                  </tr>
+                ) : (
+                  adsRows.map((row, idx) => {
+                    const last = idx === adsRows.length - 1;
+                    return (
+                      <tr key={row.id}>
+                        <Td isLast={last}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <CreativeThumb label={row.name} />
+                            <span style={{ fontWeight: 500, color: ds.textPrimary }}>{row.name}</span>
+                          </div>
+                        </Td>
+                        <Td isLast={last}>{formatPct(row.ctr, 1)}</Td>
+                        <Td isLast={last}>{formatMetaMoneyWhole(row.cpc)}</Td>
+                        <Td isLast={last}>
+                          {row.revenue > 0 ? formatMetaMoneyWhole(row.revenue) : row.purchases > 0 ? formatNumber(row.purchases) : '—'}
+                        </Td>
+                        <Td isLast={last}>
+                          {row.purchases > 0 ? formatMetaMoneyWhole(row.cpa) : '—'}
+                        </Td>
+                        <Td isLast={last}>
+                          {row.roas > 0 ? (
+                            <RoasPill value={`${row.roas.toFixed(1)}×`} tone={roasTone(row.roas)} />
+                          ) : (
+                            '—'
+                          )}
+                        </Td>
+                      </tr>
+                    );
+                  })
+                )}
               </tbody>
             </table>
           </DataTable>
@@ -457,13 +712,13 @@ export default function AdsFunnelPage() {
         className="ads-funnel-charts"
       >
         <MiniLineChart
-          title="Costo por clic y CPM"
-          yLabelMax="$700"
+          title="Costo por clic y CPM (cuenta, por día)"
+          yLabelMax={yMoneyLabel}
           legend={
             <>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ width: 10, height: 3, borderRadius: 2, background: ds.brand }} />
-                CPC $231
+                CPC {kpi ? formatMetaMoneyWhole(kpi.cpc) : ''}
               </span>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ width: 8, height: 8, borderRadius: 999, background: ds.successText }} />
@@ -471,123 +726,129 @@ export default function AdsFunnelPage() {
               </span>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ width: 12, height: 2, borderRadius: 1, background: ds.dangerText }} />
-                ROAS 4.48
+                ROAS {totals && totals.roas > 0 ? `${totals.roas.toFixed(2)}×` : '—'}
               </span>
             </>
           }
+          emptyHint={daily.length === 0 ? 'Meta no devolvió serie diaria para este periodo.' : undefined}
         >
-          <svg
-            width="100%"
-            height={chartH}
-            viewBox={`0 0 ${chartW} ${chartH}`}
-            preserveAspectRatio="none"
-            role="img"
-            aria-label="Tendencia de CPC, CPM y ROAS"
-          >
-            <line
-              x1={padX}
-              y1={chartH - padY}
-              x2={chartW - padX}
-              y2={chartH - padY}
-              stroke={ds.borderRow}
-              strokeWidth={1}
-            />
-            <path
-              d={sparkPath(CPC_SERIES, chartW, chartH, padX, padY)}
-              fill="none"
-              stroke={ds.brand}
-              strokeWidth={2.2}
-              vectorEffect="non-scaling-stroke"
-            />
-            <path
-              d={sparkPath(CPM_SERIES, chartW, chartH, padX, padY)}
-              fill="none"
-              stroke={ds.successText}
-              strokeWidth={2.2}
-              vectorEffect="non-scaling-stroke"
-            />
-            <path
-              d={sparkPath(ROAS_SERIES, chartW, chartH, padX, padY)}
-              fill="none"
-              stroke={ds.dangerText}
-              strokeWidth={1.6}
-              strokeDasharray="4 3"
-              vectorEffect="non-scaling-stroke"
-            />
-            {CHART_DAYS.map((d, i) => {
-              const innerW = chartW - padX * 2;
-              const x = padX + (i / Math.max(1, CHART_DAYS.length - 1)) * innerW;
-              return (
-                <text
-                  key={`${d}-${i}`}
-                  x={x}
-                  y={chartH - 2}
-                  textAnchor="middle"
-                  fill="var(--color-text-hint)"
-                  fontSize="10"
-                >
-                  {d}
-                </text>
-              );
-            })}
-          </svg>
+          {daily.length > 0 ? (
+            <svg
+              width="100%"
+              height={chartH}
+              viewBox={`0 0 ${chartW} ${chartH}`}
+              preserveAspectRatio="none"
+              role="img"
+              aria-label="CPC, CPM y ROAS por día"
+            >
+              <line
+                x1={padX}
+                y1={chartH - padY}
+                x2={chartW - padX}
+                y2={chartH - padY}
+                stroke={ds.borderRow}
+                strokeWidth={1}
+              />
+              <path
+                d={sparkPath(cpcSeries, chartW, chartH, padX, padY)}
+                fill="none"
+                stroke={ds.brand}
+                strokeWidth={2.2}
+                vectorEffect="non-scaling-stroke"
+              />
+              <path
+                d={sparkPath(cpmSeries, chartW, chartH, padX, padY)}
+                fill="none"
+                stroke={ds.successText}
+                strokeWidth={2.2}
+                vectorEffect="non-scaling-stroke"
+              />
+              <path
+                d={sparkPath(roasSeries, chartW, chartH, padX, padY)}
+                fill="none"
+                stroke={ds.dangerText}
+                strokeWidth={1.6}
+                strokeDasharray="4 3"
+                vectorEffect="non-scaling-stroke"
+              />
+              {daily.map((d, i) => {
+                const innerW = chartW - padX * 2;
+                const x = padX + (i / Math.max(1, daily.length - 1)) * innerW;
+                return (
+                  <text
+                    key={d.date_start}
+                    x={x}
+                    y={chartH - 2}
+                    textAnchor="middle"
+                    fill="var(--color-text-hint)"
+                    fontSize="10"
+                  >
+                    {dayLabel(d.date_start)}
+                  </text>
+                );
+              })}
+            </svg>
+          ) : null}
         </MiniLineChart>
 
         <MiniLineChart
-          title="Tasa de conversión del sitio"
-          yLabelMax="5%"
+          title="Tasa de conversión del sitio (compras / clics, por día)"
+          yLabelMax={yConvLabel}
           ySuffix="%"
           legend={
             <>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ width: 10, height: 3, borderRadius: 2, background: ds.brand }} />
-                CPC $231
+                Conv. {kpi ? formatPct(kpi.convRate, 1) : ''}
               </span>
               <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
                 <span style={{ width: 12, height: 2, borderRadius: 1, background: ds.dangerText }} />
-                ROAS 1.9
+                ROAS {totals && totals.roas > 0 ? `${totals.roas.toFixed(2)}×` : '—'}
               </span>
             </>
           }
+          emptyHint={daily.length === 0 ? 'Sin datos diarios para graficar.' : undefined}
         >
-          <svg
-            width="100%"
-            height={chartH}
-            viewBox={`0 0 ${chartW} ${chartH}`}
-            preserveAspectRatio="none"
-            role="img"
-            aria-label="Tendencia de conversión del sitio"
-          >
-            <defs>
-              <linearGradient id="convFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="var(--color-brand)" stopOpacity={0.22} />
-                <stop offset="100%" stopColor="var(--color-brand)" stopOpacity={0.02} />
-              </linearGradient>
-            </defs>
-            <path
-              d={sparkPath(CONV_SERIES, chartW, chartH, padX, padY, true)}
-              fill="url(#convFill)"
-              stroke={ds.brand}
-              strokeWidth={2}
-              vectorEffect="non-scaling-stroke"
-            />
-            {CHART_DAYS.map((d, i) => {
-              const innerW = chartW - padX * 2;
-              const x = padX + (i / Math.max(1, CHART_DAYS.length - 1)) * innerW;
-              return (
-                <text
-                  key={`c-${d}-${i}`}
-                  x={x}
-                  y={chartH - 2}
-                  textAnchor="middle"
-                  fill="var(--color-text-hint)"
-                  fontSize="10"
-                >
-                  {d}
-                </text>
-              );
-            })}
-          </svg>
+          {daily.length > 0 ? (
+            <svg
+              width="100%"
+              height={chartH}
+              viewBox={`0 0 ${chartW} ${chartH}`}
+              preserveAspectRatio="none"
+              role="img"
+              aria-label="Conversión por día"
+            >
+              <defs>
+                <linearGradient id={chartGradId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--color-brand)" stopOpacity={0.22} />
+                  <stop offset="100%" stopColor="var(--color-brand)" stopOpacity={0.02} />
+                </linearGradient>
+              </defs>
+              <path
+                d={sparkPath(convSeries, chartW, chartH, padX, padY, true)}
+                fill={`url(#${chartGradId})`}
+                stroke={ds.brand}
+                strokeWidth={2}
+                vectorEffect="non-scaling-stroke"
+              />
+              {daily.map((d, i) => {
+                const innerW = chartW - padX * 2;
+                const x = padX + (i / Math.max(1, daily.length - 1)) * innerW;
+                return (
+                  <text
+                    key={`c-${d.date_start}`}
+                    x={x}
+                    y={chartH - 2}
+                    textAnchor="middle"
+                    fill="var(--color-text-hint)"
+                    fontSize="10"
+                  >
+                    {dayLabel(d.date_start)}
+                  </text>
+                );
+              })}
+            </svg>
+          ) : null}
         </MiniLineChart>
       </div>
 

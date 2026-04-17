@@ -354,6 +354,100 @@ async function fetchFunnelForAdAccounts(actIds, accessToken, datePreset) {
 }
 
 /**
+ * Insights diarios a nivel cuenta (date_preset + time_increment=1).
+ * @param {string} actId
+ * @param {string} accessToken
+ * @param {string} datePreset
+ */
+async function fetchAccountDailyInsightsForPreset(actId, accessToken, datePreset) {
+  const v = DEFAULT_VERSION;
+  const id = normalizeActId(actId);
+  if (!id) {
+    return { ok: false, rows: [], error: 'ID de cuenta no válido' };
+  }
+  const fields = 'impressions,clicks,spend,actions,action_values,date_start';
+  const base = `https://graph.facebook.com/${v}/${id}/insights?date_preset=${encodeURIComponent(datePreset)}&fields=${encodeURIComponent(fields)}&time_increment=1&limit=999&access_token=${encodeURIComponent(accessToken)}`;
+  const r = await fetchAllGraphPages(base);
+  if (!r.ok) {
+    const fb = r.data && r.data.error;
+    return {
+      ok: false,
+      rows: [],
+      error: (fb && fb.message) || 'Error al leer series diarias',
+    };
+  }
+  return { ok: true, rows: r.items, error: null };
+}
+
+function mergeDailyAccountInsightRows(rowArrays) {
+  const map = new Map();
+  for (const rows of rowArrays) {
+    if (!Array.isArray(rows)) continue;
+    for (const row of rows) {
+      const ds = row.date_start;
+      if (!ds || typeof ds !== 'string') continue;
+      const cur = map.get(ds) || {
+        date_start: ds,
+        impressions: 0,
+        clicks: 0,
+        spend: 0,
+        purchases: 0,
+        revenue: 0,
+      };
+      cur.impressions += parseNum(row.impressions);
+      cur.clicks += parseNum(row.clicks);
+      cur.spend += parseNum(row.spend);
+      cur.purchases += purchaseCountFromActions(row.actions);
+      cur.revenue += purchaseValueFromActionValues(row.action_values);
+      map.set(ds, cur);
+    }
+  }
+  const sorted = [...map.values()].sort((a, b) => a.date_start.localeCompare(b.date_start));
+  return sorted.map((v) => {
+    const cpc = v.clicks > 0 ? v.spend / v.clicks : 0;
+    const cpm = v.impressions > 0 ? (v.spend / v.impressions) * 1000 : 0;
+    const ctr = v.impressions > 0 ? (v.clicks / v.impressions) * 100 : 0;
+    const roas = v.spend > 0 && v.revenue > 0 ? v.revenue / v.spend : 0;
+    const convPct = v.clicks > 0 ? (v.purchases / v.clicks) * 100 : 0;
+    return {
+      date_start: v.date_start,
+      impressions: v.impressions,
+      clicks: v.clicks,
+      spend: v.spend,
+      purchases: v.purchases,
+      revenue: v.revenue,
+      cpc,
+      cpm,
+      ctr,
+      roas,
+      convPct,
+    };
+  });
+}
+
+/**
+ * Serie diaria agregada (suma por date_start) para todas las cuentas.
+ * @param {string[]} actIds
+ * @param {string} accessToken
+ * @param {string} datePreset
+ */
+async function fetchMergedDailyInsightsForAdAccounts(actIds, accessToken, datePreset) {
+  const partialErrors = [];
+  const rowArrays = [];
+  for (const raw of actIds) {
+    const id = normalizeActId(raw);
+    const r = await fetchAccountDailyInsightsForPreset(id, accessToken, datePreset);
+    if (!r.ok) {
+      partialErrors.push({ adAccountId: id || String(raw), error: r.error || 'Error' });
+      continue;
+    }
+    rowArrays.push(r.rows);
+  }
+  const series = mergeDailyAccountInsightRows(rowArrays);
+  return { series, partialErrors, ok: rowArrays.length > 0 };
+}
+
+/**
  * Gasto agregado de cuenta para un rango since/until (YYYY-MM-DD), API de insights de cuenta.
  * @param {string} actId
  * @param {string} accessToken
@@ -518,6 +612,7 @@ module.exports = {
   fetchInsightsForAdAccount,
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
+  fetchMergedDailyInsightsForAdAccounts,
   mergeFunnelPayloads,
   fetchAccountSpendForTimeRange,
   fetchTotalSpendForAdAccountsTimeRange,
