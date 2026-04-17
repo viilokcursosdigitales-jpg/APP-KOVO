@@ -52,6 +52,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   const marketing: NavItem[] = [
     { to: '/meta-ads', label: 'Meta Ads', icon: <IconMegaphone />, moduleId: 'meta_ads' },
     { to: '/ads-funnel', label: 'Ads Funnel', icon: <IconFunnel />, moduleId: 'ads_funnel' },
+    { to: '/finanza', label: 'Finanza', icon: <IconTrendingUp />, moduleId: 'finanza' },
     {
       to: '/indicadores-marketing',
       label: 'Indicadores',
