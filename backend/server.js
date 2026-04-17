@@ -18,6 +18,7 @@ const {
   fetchMergedDailyInsightsForAdAccounts,
   fetchTotalSpendForAdAccountsTimeRange,
   fetchDailySpendByDayForAdAccountsTimeRange,
+  fetchDailyInsightsByDayForAdAccountsTimeRange,
   getCampaignAdAccountId,
   updateCampaignStatusGraph,
 } = require('./metaMarketingApi');
@@ -65,6 +66,8 @@ const PLAN_LIMITS = {
   pro: { users: 10, metaConnections: 5 },
   enterprise: { users: Infinity, metaConnections: Infinity },
 };
+const META_SNAPSHOT_TIMEZONE =
+  String(process.env.META_SNAPSHOT_TZ || process.env.CRON_TZ || 'Europe/Madrid').trim() || 'Europe/Madrid';
 
 /** Slugs de módulos configurables (sidebar); perfil y configuración no se restringen aquí. */
 const CONFIGURABLE_MODULE_IDS = [
@@ -667,6 +670,390 @@ function resolveAdAccountIdsForRequest(queryAdAccountId, storedRawIds) {
     return { ok: false, actIds: [], code: 'invalid_ad_account' };
   }
   return { ok: true, actIds: [one] };
+}
+
+function shiftYmdString(ymdStr, deltaDays) {
+  const parsed = parseIsoDateYmd(ymdStr);
+  if (!parsed || !Number.isFinite(deltaDays)) return ymdStr;
+  const dt = new Date(Date.UTC(parsed.y, parsed.m - 1, parsed.d, 12, 0, 0, 0));
+  dt.setUTCDate(dt.getUTCDate() + Math.trunc(deltaDays));
+  return `${String(dt.getUTCFullYear()).padStart(4, '0')}-${String(dt.getUTCMonth() + 1).padStart(2, '0')}-${String(
+    dt.getUTCDate(),
+  ).padStart(2, '0')}`;
+}
+
+function metaSnapshotTodayYmd(timezone) {
+  const ymd = shopCalendarYmdFromInstant(Date.now(), timezone || META_SNAPSHOT_TIMEZONE);
+  return gananciaDiariaYmdKey(ymd);
+}
+
+function metaSnapshotTargetYmd(timezone) {
+  return shiftYmdString(metaSnapshotTodayYmd(timezone), -1);
+}
+
+function metaSnapshotRollingDaysForPeriod(periodRaw) {
+  const period = String(periodRaw || '').trim().toLowerCase();
+  if (period === 'hoy' || period === 'ayer') return 1;
+  if (period === '3d') return 3;
+  if (period === '7d' || period === 'custom') return 7;
+  if (period === '14d') return 14;
+  if (period === '30d') return 30;
+  return 7;
+}
+
+function normalizeMetaSnapshotTotals(raw) {
+  const impressions = Number(raw?.impressions) || 0;
+  const clicks = Number(raw?.clicks) || 0;
+  const spend = Number(raw?.spend) || 0;
+  const purchases = Number(raw?.purchases) || 0;
+  const revenue = Number(raw?.revenue) || 0;
+  const cpm = impressions > 0 ? (spend / impressions) * 1000 : 0;
+  const cpc = clicks > 0 ? spend / clicks : 0;
+  const ctr = impressions > 0 ? (clicks / impressions) * 100 : 0;
+  const roas = spend > 0 && revenue > 0 ? revenue / spend : 0;
+  const cpa = purchases > 0 ? spend / purchases : 0;
+  return { impressions, clicks, spend, purchases, revenue, cpm, cpc, ctr, roas, cpa };
+}
+
+function aggregateMetaSnapshotRows(rows) {
+  const base = { impressions: 0, clicks: 0, spend: 0, purchases: 0, revenue: 0 };
+  for (const row of rows || []) {
+    base.impressions += Number(row?.impressions) || 0;
+    base.clicks += Number(row?.clicks) || 0;
+    base.spend += Number(row?.spend) || 0;
+    base.purchases += Number(row?.purchases) || 0;
+    base.revenue += Number(row?.revenue) || 0;
+  }
+  return normalizeMetaSnapshotTotals(base);
+}
+
+async function upsertMetaDailySnapshotRow(organizationId, snapshotDate, payload) {
+  try {
+    const totals = normalizeMetaSnapshotTotals(payload);
+    await pool.query(
+      `INSERT INTO meta_daily_snapshots (
+         organization_id, snapshot_date, impressions, clicks, spend, purchases, revenue, cpm, cpc, ctr, roas, cpa,
+         currency, ad_account_ids, partial_errors, source, fetched_at, updated_at
+       ) VALUES (
+         $1, $2::date, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12,
+         $13, $14::jsonb, $15::jsonb, $16, now(), now()
+       )
+       ON CONFLICT (organization_id, snapshot_date) DO UPDATE SET
+         impressions = EXCLUDED.impressions,
+         clicks = EXCLUDED.clicks,
+         spend = EXCLUDED.spend,
+         purchases = EXCLUDED.purchases,
+         revenue = EXCLUDED.revenue,
+         cpm = EXCLUDED.cpm,
+         cpc = EXCLUDED.cpc,
+         ctr = EXCLUDED.ctr,
+         roas = EXCLUDED.roas,
+         cpa = EXCLUDED.cpa,
+         currency = EXCLUDED.currency,
+         ad_account_ids = EXCLUDED.ad_account_ids,
+         partial_errors = EXCLUDED.partial_errors,
+         source = EXCLUDED.source,
+         fetched_at = EXCLUDED.fetched_at,
+         updated_at = now()`,
+      [
+        organizationId,
+        String(snapshotDate),
+        totals.impressions,
+        totals.clicks,
+        totals.spend,
+        totals.purchases,
+        totals.revenue,
+        totals.cpm,
+        totals.cpc,
+        totals.ctr,
+        totals.roas,
+        totals.cpa,
+        payload?.currency ? String(payload.currency) : null,
+        JSON.stringify(Array.isArray(payload?.ad_account_ids) ? payload.ad_account_ids : []),
+        JSON.stringify(Array.isArray(payload?.partial_errors) ? payload.partial_errors : []),
+        payload?.source ? String(payload.source) : 'meta_cron',
+      ],
+    );
+    return true;
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      console.warn('[meta-snapshot] Tabla meta_daily_snapshots no existe. Reinicia para ejecutar initDb.');
+      return false;
+    }
+    throw e;
+  }
+}
+
+async function loadMetaDailySnapshotsForRange(organizationId, sinceYmd, untilYmd) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT snapshot_date, impressions, clicks, spend, purchases, revenue, cpm, cpc, ctr, roas, cpa, currency, fetched_at
+       FROM meta_daily_snapshots
+       WHERE organization_id = $1
+         AND snapshot_date >= $2::date
+         AND snapshot_date <= $3::date
+       ORDER BY snapshot_date ASC`,
+      [organizationId, String(sinceYmd), String(untilYmd)],
+    );
+    return rows.map((r) => ({
+      snapshot_date: String(r.snapshot_date).slice(0, 10),
+      impressions: Number(r.impressions) || 0,
+      clicks: Number(r.clicks) || 0,
+      spend: Number(r.spend) || 0,
+      purchases: Number(r.purchases) || 0,
+      revenue: Number(r.revenue) || 0,
+      cpm: Number(r.cpm) || 0,
+      cpc: Number(r.cpc) || 0,
+      ctr: Number(r.ctr) || 0,
+      roas: Number(r.roas) || 0,
+      cpa: Number(r.cpa) || 0,
+      currency: r.currency ? String(r.currency) : '',
+      fetched_at: r.fetched_at ? new Date(r.fetched_at).toISOString() : null,
+    }));
+  } catch (e) {
+    if (e && e.code === '42P01') return [];
+    throw e;
+  }
+}
+
+async function loadMetaLatestDailySnapshot(organizationId) {
+  try {
+    const { rows } = await pool.query(
+      `SELECT snapshot_date, impressions, clicks, spend, purchases, revenue, cpm, cpc, ctr, roas, cpa, currency, fetched_at
+       FROM meta_daily_snapshots
+       WHERE organization_id = $1
+       ORDER BY snapshot_date DESC
+       LIMIT 1`,
+      [organizationId],
+    );
+    if (!rows.length) return null;
+    const r = rows[0];
+    return {
+      snapshot_date: String(r.snapshot_date).slice(0, 10),
+      impressions: Number(r.impressions) || 0,
+      clicks: Number(r.clicks) || 0,
+      spend: Number(r.spend) || 0,
+      purchases: Number(r.purchases) || 0,
+      revenue: Number(r.revenue) || 0,
+      cpm: Number(r.cpm) || 0,
+      cpc: Number(r.cpc) || 0,
+      ctr: Number(r.ctr) || 0,
+      roas: Number(r.roas) || 0,
+      cpa: Number(r.cpa) || 0,
+      currency: r.currency ? String(r.currency) : '',
+      fetched_at: r.fetched_at ? new Date(r.fetched_at).toISOString() : null,
+    };
+  } catch (e) {
+    if (e && e.code === '42P01') return null;
+    throw e;
+  }
+}
+
+async function buildMetaSnapshotFallbackForPeriod(organizationId, period) {
+  const days = metaSnapshotRollingDaysForPeriod(period);
+  const todayYmd = metaSnapshotTodayYmd(META_SNAPSHOT_TIMEZONE);
+  let untilYmd = shiftYmdString(todayYmd, -1);
+  let sinceYmd = shiftYmdString(untilYmd, -(days - 1));
+  let rows = await loadMetaDailySnapshotsForRange(organizationId, sinceYmd, untilYmd);
+  let usedLatestFallback = false;
+  if (!rows.length) {
+    const latest = await loadMetaLatestDailySnapshot(organizationId);
+    if (latest) {
+      rows = [latest];
+      sinceYmd = latest.snapshot_date;
+      untilYmd = latest.snapshot_date;
+      usedLatestFallback = true;
+    }
+  }
+  const totals = aggregateMetaSnapshotRows(rows);
+  const fetchedAt = rows.length
+    ? rows
+        .map((r) => Date.parse(String(r.fetched_at || '')))
+        .filter((n) => Number.isFinite(n))
+        .sort((a, b) => b - a)[0]
+    : null;
+  return {
+    ok: rows.length > 0,
+    rows,
+    totals,
+    sinceYmd,
+    untilYmd,
+    usedLatestFallback,
+    fetchedAt: Number.isFinite(fetchedAt) ? new Date(fetchedAt).toISOString() : null,
+  };
+}
+
+function spendByDayFromMetaSnapshotRows(rows) {
+  const byDay = {};
+  for (const row of rows || []) {
+    const d = String(row?.snapshot_date || '').slice(0, 10);
+    if (!d) continue;
+    byDay[d] = Number(row?.spend) || 0;
+  }
+  return byDay;
+}
+
+async function runMetaDailySnapshotCron(poolArg, graphVersion, timezone) {
+  const tz = String(timezone || META_SNAPSHOT_TIMEZONE || 'Europe/Madrid');
+  const targetYmd = metaSnapshotTargetYmd(tz);
+  const { rows: orgRows } = await poolArg.query(
+    `SELECT DISTINCT organization_id
+     FROM meta_connections
+     WHERE status = 'connected'`,
+  );
+  let saved = 0;
+  let attempted = 0;
+  for (const orgRow of orgRows) {
+    const organizationId = Number(orgRow.organization_id);
+    if (!Number.isFinite(organizationId) || organizationId <= 0) continue;
+    attempted += 1;
+    try {
+      const metaRow = await ensureValidMetaTokenForOrg(poolArg, graphVersion, organizationId);
+      if (!metaRow || !String(metaRow.access_token || '').trim()) continue;
+      const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
+      if (!resolved.ok || resolved.actIds.length === 0) continue;
+
+      const [dailyRes, accountList] = await Promise.all([
+        fetchMergedDailyInsightsForAdAccounts(resolved.actIds, metaRow.access_token, 'yesterday'),
+        listAdAccounts(metaRow.access_token),
+      ]);
+      const targetSeriesRow = Array.isArray(dailyRes.series)
+        ? dailyRes.series.find((r) => String(r.date_start || '') === targetYmd)
+        : null;
+      const snapshotBase = targetSeriesRow || aggregateMetaSnapshotRows(dailyRes.series || []);
+      const totals = normalizeMetaSnapshotTotals(snapshotBase);
+      const hasData =
+        totals.impressions > 0 ||
+        totals.clicks > 0 ||
+        totals.spend > 0 ||
+        totals.purchases > 0 ||
+        totals.revenue > 0 ||
+        (Array.isArray(dailyRes.series) && dailyRes.series.length > 0);
+      if (!hasData) continue;
+
+      let currency = '';
+      if (accountList.ok && Array.isArray(accountList.accounts)) {
+        const curSet = new Set();
+        for (const aid of resolved.actIds) {
+          const n = normalizeActId(aid);
+          const hit = accountList.accounts.find((a) => normalizeActId(a.id) === n);
+          if (hit && hit.currency) curSet.add(String(hit.currency).trim());
+        }
+        if (curSet.size === 1) currency = [...curSet][0];
+        else if (curSet.size > 1) currency = [...curSet].join(', ');
+      }
+
+      const ok = await upsertMetaDailySnapshotRow(organizationId, targetYmd, {
+        ...totals,
+        currency,
+        ad_account_ids: resolved.actIds,
+        partial_errors: Array.isArray(dailyRes.partialErrors) ? dailyRes.partialErrors : [],
+        source: 'meta_cron_7am',
+      });
+      if (ok) saved += 1;
+    } catch (e) {
+      console.error(`[meta-snapshot-cron] org ${organizationId}`, e && e.message ? e.message : e);
+    }
+  }
+  console.log(`[meta-snapshot-cron] ${targetYmd} guardado para ${saved}/${attempted} organizaciones (${tz})`);
+}
+
+async function runMetaHistoricalSnapshotBackfill(poolArg, graphVersion, timezone) {
+  const tz = String(timezone || META_SNAPSHOT_TIMEZONE || 'Europe/Madrid');
+  const todayYmd = metaSnapshotTodayYmd(tz);
+  const yesterdayYmd = shiftYmdString(todayYmd, -1);
+  const parsedToday = parseIsoDateYmd(todayYmd);
+  const defaultStartYmd =
+    parsedToday != null ? `${String(parsedToday.y).padStart(4, '0')}-01-01` : shiftYmdString(yesterdayYmd, -30);
+  const envStartRaw = String(process.env.META_SNAPSHOT_BACKFILL_FROM || '').trim();
+  const envStart = parseIsoDateYmd(envStartRaw) ? envStartRaw : null;
+  const globalStartYmd = envStart || defaultStartYmd;
+  const { rows: orgRows } = await poolArg.query(
+    `SELECT DISTINCT organization_id
+     FROM meta_connections
+     WHERE status = 'connected'`,
+  );
+  let updatedDays = 0;
+  let orgsTouched = 0;
+  for (const orgRow of orgRows) {
+    const organizationId = Number(orgRow.organization_id);
+    if (!Number.isFinite(organizationId) || organizationId <= 0) continue;
+    try {
+      const metaRow = await ensureValidMetaTokenForOrg(poolArg, graphVersion, organizationId);
+      if (!metaRow || !String(metaRow.access_token || '').trim()) continue;
+      const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
+      if (!resolved.ok || resolved.actIds.length === 0) continue;
+
+      let startYmd = globalStartYmd;
+      try {
+        const latestRes = await poolArg.query(
+          `SELECT MAX(snapshot_date) AS max_date
+           FROM meta_daily_snapshots
+           WHERE organization_id = $1`,
+          [organizationId],
+        );
+        const maxDateRaw = latestRes.rows[0]?.max_date;
+        const maxDate = maxDateRaw ? String(maxDateRaw).slice(0, 10) : '';
+        if (parseIsoDateYmd(maxDate)) {
+          const nextDate = shiftYmdString(maxDate, 1);
+          if (nextDate > startYmd) startYmd = nextDate;
+        }
+      } catch (e) {
+        if (!(e && e.code === '42P01')) throw e;
+      }
+      if (startYmd > yesterdayYmd) continue;
+
+      const [dailyRes, accountList] = await Promise.all([
+        fetchDailyInsightsByDayForAdAccountsTimeRange(resolved.actIds, metaRow.access_token, startYmd, yesterdayYmd),
+        listAdAccounts(metaRow.access_token),
+      ]);
+      if (!Array.isArray(dailyRes.series) || !dailyRes.series.length) continue;
+
+      let currency = '';
+      if (accountList.ok && Array.isArray(accountList.accounts)) {
+        const curSet = new Set();
+        for (const aid of resolved.actIds) {
+          const n = normalizeActId(aid);
+          const hit = accountList.accounts.find((a) => normalizeActId(a.id) === n);
+          if (hit && hit.currency) curSet.add(String(hit.currency).trim());
+        }
+        if (curSet.size === 1) currency = [...curSet][0];
+        else if (curSet.size > 1) currency = [...curSet].join(', ');
+      }
+
+      let orgSaved = 0;
+      for (const day of dailyRes.series) {
+        const snapshotDate = String(day?.date_start || '').slice(0, 10);
+        if (!parseIsoDateYmd(snapshotDate)) continue;
+        const ok = await upsertMetaDailySnapshotRow(organizationId, snapshotDate, {
+          impressions: Number(day.impressions) || 0,
+          clicks: Number(day.clicks) || 0,
+          spend: Number(day.spend) || 0,
+          purchases: Number(day.purchases) || 0,
+          revenue: Number(day.revenue) || 0,
+          cpm: Number(day.cpm) || 0,
+          cpc: Number(day.cpc) || 0,
+          ctr: Number(day.ctr) || 0,
+          roas: Number(day.roas) || 0,
+          cpa: Number(day.cpa) || 0,
+          currency,
+          ad_account_ids: resolved.actIds,
+          partial_errors: Array.isArray(dailyRes.partialErrors) ? dailyRes.partialErrors : [],
+          source: 'meta_backfill',
+        });
+        if (ok) {
+          updatedDays += 1;
+          orgSaved += 1;
+        }
+      }
+      if (orgSaved > 0) orgsTouched += 1;
+    } catch (e) {
+      console.error(`[meta-snapshot-backfill] org ${organizationId}`, e && e.message ? e.message : e);
+    }
+  }
+  console.log(
+    `[meta-snapshot-backfill] completado (${tz}) start=${globalStartYmd} end=${yesterdayYmd}, orgs=${orgsTouched}, days=${updatedDays}`,
+  );
 }
 
 if (!hasFrontendDist) {
@@ -1858,6 +2245,32 @@ app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res)
 
     const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
     if (!row || !String(row.access_token || '').trim()) {
+      const snap = await buildMetaSnapshotFallbackForPeriod(req.organizationId, period);
+      if (snap.ok) {
+        return res.json({
+          live: false,
+          snapshot: true,
+          level,
+          datePreset,
+          period,
+          adAccountId: null,
+          fetchedAt: snap.fetchedAt || new Date().toISOString(),
+          totals: snap.totals,
+          rows: [],
+          partialErrors: [
+            {
+              source: 'meta_snapshot',
+              error: 'Meta desconectado: mostrando respaldo guardado en KOVO.',
+            },
+          ],
+          snapshot_window: {
+            since: snap.sinceYmd,
+            until: snap.untilYmd,
+            used_latest_fallback: snap.usedLatestFallback,
+          },
+          snapshot_rows: snap.rows.length,
+        });
+      }
       return res.status(400).json({
         error: 'Falta token de usuario en la conexión Meta.',
         code: 'no_token',
@@ -1906,6 +2319,36 @@ app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res)
     totals.ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
     totals.roas = totals.spend > 0 && totals.revenue > 0 ? totals.revenue / totals.spend : 0;
     totals.cpa = totals.purchases > 0 ? totals.spend / totals.purchases : 0;
+
+    if (allRows.length === 0) {
+      const snap = await buildMetaSnapshotFallbackForPeriod(req.organizationId, period);
+      if (snap.ok) {
+        return res.json({
+          live: false,
+          snapshot: true,
+          level,
+          datePreset,
+          period,
+          adAccountId: actIds.length === 1 ? actIds[0] : null,
+          fetchedAt: snap.fetchedAt || new Date().toISOString(),
+          totals: snap.totals,
+          rows: [],
+          partialErrors: [
+            ...partialErrors,
+            {
+              source: 'meta_snapshot',
+              error: 'No hubo respuesta live de Meta; se muestra respaldo guardado en KOVO.',
+            },
+          ],
+          snapshot_window: {
+            since: snap.sinceYmd,
+            until: snap.untilYmd,
+            used_latest_fallback: snap.usedLatestFallback,
+          },
+          snapshot_rows: snap.rows.length,
+        });
+      }
+    }
 
     res.json({
       live: true,
@@ -3012,9 +3455,33 @@ async function loadMoticoManualOrdersForOrgGananciaSeries(
 async function gananciaFetchMetaSpendPack(organizationId, sinceYmd, untilYmd) {
   const out = { spendByDay: {}, metaPartialErrors: [], metaCurrency: '' };
   const metaRow = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, organizationId);
-  if (!metaRow || !String(metaRow.access_token || '').trim()) return out;
+  if (!metaRow || !String(metaRow.access_token || '').trim()) {
+    const snapRows = await loadMetaDailySnapshotsForRange(organizationId, sinceYmd, untilYmd);
+    if (snapRows.length) {
+      out.spendByDay = spendByDayFromMetaSnapshotRows(snapRows);
+      const currency = snapRows.find((r) => String(r.currency || '').trim())?.currency || '';
+      if (currency) out.metaCurrency = currency;
+      out.metaPartialErrors.push({
+        source: 'meta_snapshot',
+        error: 'Meta desconectado: gasto Meta cargado desde respaldo KOVO.',
+      });
+    }
+    return out;
+  }
   const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
-  if (!resolved.ok || resolved.actIds.length === 0) return out;
+  if (!resolved.ok || resolved.actIds.length === 0) {
+    const snapRows = await loadMetaDailySnapshotsForRange(organizationId, sinceYmd, untilYmd);
+    if (snapRows.length) {
+      out.spendByDay = spendByDayFromMetaSnapshotRows(snapRows);
+      const currency = snapRows.find((r) => String(r.currency || '').trim())?.currency || '';
+      if (currency) out.metaCurrency = currency;
+      out.metaPartialErrors.push({
+        source: 'meta_snapshot',
+        error: 'Sin cuentas Meta activas: gasto Meta cargado desde respaldo KOVO.',
+      });
+    }
+    return out;
+  }
   const token = metaRow.access_token;
   const [spendRes, la] = await Promise.all([
     fetchDailySpendByDayForAdAccountsTimeRange(resolved.actIds, token, sinceYmd, untilYmd),
@@ -3032,6 +3499,20 @@ async function gananciaFetchMetaSpendPack(organizationId, sinceYmd, untilYmd) {
     if (curSet.size === 1) out.metaCurrency = [...curSet][0];
     else if (curSet.size > 1) out.metaCurrency = [...curSet].join(', ');
   }
+  if (!Object.keys(out.spendByDay).length) {
+    const snapRows = await loadMetaDailySnapshotsForRange(organizationId, sinceYmd, untilYmd);
+    if (snapRows.length) {
+      out.spendByDay = spendByDayFromMetaSnapshotRows(snapRows);
+      if (!out.metaCurrency) {
+        const currency = snapRows.find((r) => String(r.currency || '').trim())?.currency || '';
+        if (currency) out.metaCurrency = currency;
+      }
+      out.metaPartialErrors.push({
+        source: 'meta_snapshot',
+        error: 'Meta sin datos live: gasto Meta cargado desde respaldo KOVO.',
+      });
+    }
+  }
   return out;
 }
 
@@ -3039,9 +3520,33 @@ async function gananciaFetchMetaSpendPack(organizationId, sinceYmd, untilYmd) {
 async function gananciaFetchMetaSpendSingleDay(organizationId, dateStr) {
   const out = { spend: 0, metaPartialErrors: [], metaCurrency: '' };
   const metaRow = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, organizationId);
-  if (!metaRow || !String(metaRow.access_token || '').trim()) return out;
+  if (!metaRow || !String(metaRow.access_token || '').trim()) {
+    const snapRows = await loadMetaDailySnapshotsForRange(organizationId, dateStr, dateStr);
+    if (snapRows.length) {
+      out.spend = Number(snapRows[0].spend) || 0;
+      const currency = String(snapRows[0].currency || '').trim();
+      if (currency) out.metaCurrency = currency;
+      out.metaPartialErrors.push({
+        source: 'meta_snapshot',
+        error: 'Meta desconectado: gasto diario cargado desde respaldo KOVO.',
+      });
+    }
+    return out;
+  }
   const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
-  if (!resolved.ok || resolved.actIds.length === 0) return out;
+  if (!resolved.ok || resolved.actIds.length === 0) {
+    const snapRows = await loadMetaDailySnapshotsForRange(organizationId, dateStr, dateStr);
+    if (snapRows.length) {
+      out.spend = Number(snapRows[0].spend) || 0;
+      const currency = String(snapRows[0].currency || '').trim();
+      if (currency) out.metaCurrency = currency;
+      out.metaPartialErrors.push({
+        source: 'meta_snapshot',
+        error: 'Sin cuentas Meta activas: gasto diario cargado desde respaldo KOVO.',
+      });
+    }
+    return out;
+  }
   const token = metaRow.access_token;
   const [spendRes, la] = await Promise.all([
     fetchTotalSpendForAdAccountsTimeRange(resolved.actIds, token, dateStr, dateStr),
@@ -3058,6 +3563,20 @@ async function gananciaFetchMetaSpendSingleDay(organizationId, dateStr) {
     }
     if (curSet.size === 1) out.metaCurrency = [...curSet][0];
     else if (curSet.size > 1) out.metaCurrency = [...curSet].join(', ');
+  }
+  if (!(Number.isFinite(out.spend) && out.spend > 0) && Array.isArray(spendRes.partialErrors) && spendRes.partialErrors.length) {
+    const snapRows = await loadMetaDailySnapshotsForRange(organizationId, dateStr, dateStr);
+    if (snapRows.length) {
+      out.spend = Number(snapRows[0].spend) || 0;
+      if (!out.metaCurrency) {
+        const currency = String(snapRows[0].currency || '').trim();
+        if (currency) out.metaCurrency = currency;
+      }
+      out.metaPartialErrors.push({
+        source: 'meta_snapshot',
+        error: 'Meta sin datos live: gasto diario cargado desde respaldo KOVO.',
+      });
+    }
   }
   return out;
 }
@@ -6156,7 +6675,16 @@ async function start() {
     console.warn('[shopify] OAuth no configurado. Faltan:', shopifyMissingEnvKeys().join(', '));
   }
 
-  const cronTz = process.env.CRON_TZ || 'Europe/Madrid';
+  const cronTz = META_SNAPSHOT_TIMEZONE;
+  cron.schedule(
+    '0 7 * * *',
+    () => {
+      runMetaDailySnapshotCron(pool, META_GRAPH_VERSION, cronTz).catch((e) => console.error('[meta-snapshot-cron]', e));
+    },
+    { timezone: cronTz },
+  );
+  console.log(`[meta-snapshot-cron] respaldo diario 07:00 (${cronTz}, guarda métricas Meta del día anterior)`);
+
   cron.schedule(
     '0 9 * * *',
     () => {
@@ -6167,6 +6695,20 @@ async function start() {
     { timezone: cronTz },
   );
   console.log(`[meta-token-cron] renovación diaria 09:00 (${cronTz}, tokens tipo evaluator)`);
+
+  const backfillEnabled = !['0', 'false', 'no', 'off'].includes(
+    String(process.env.META_SNAPSHOT_BACKFILL_ON_START || 'true').trim().toLowerCase(),
+  );
+  if (backfillEnabled) {
+    setTimeout(() => {
+      runMetaHistoricalSnapshotBackfill(pool, META_GRAPH_VERSION, cronTz).catch((e) =>
+        console.error('[meta-snapshot-backfill]', e),
+      );
+    }, 12_000);
+    console.log('[meta-snapshot-backfill] programado al inicio (12s después del arranque)');
+  } else {
+    console.log('[meta-snapshot-backfill] desactivado por META_SNAPSHOT_BACKFILL_ON_START');
+  }
 
   const mailInfo = getMailTransportInfo();
   if (mailInfo.configured) {

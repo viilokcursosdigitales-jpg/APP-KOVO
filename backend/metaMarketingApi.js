@@ -543,6 +543,57 @@ async function fetchDailySpendByDayForAdAccountsTimeRange(actIds, accessToken, s
 }
 
 /**
+ * Insights diarios por cuenta en rango since/until (YYYY-MM-DD) con métricas completas.
+ * @param {string} actId
+ * @param {string} accessToken
+ * @param {string} since YYYY-MM-DD
+ * @param {string} until YYYY-MM-DD
+ */
+async function fetchAccountDailyInsightsForTimeRange(actId, accessToken, since, until) {
+  const v = DEFAULT_VERSION;
+  const id = normalizeActId(actId);
+  if (!id) {
+    return { ok: false, rows: [], error: 'ID de cuenta no válido' };
+  }
+  const tr = JSON.stringify({ since, until });
+  const fields = 'impressions,clicks,spend,actions,action_values,date_start';
+  const base = `https://graph.facebook.com/${v}/${id}/insights?fields=${encodeURIComponent(fields)}&time_range=${encodeURIComponent(tr)}&time_increment=1&limit=999&access_token=${encodeURIComponent(accessToken)}`;
+  const r = await fetchAllGraphPages(base);
+  if (!r.ok) {
+    const fb = r.data && r.data.error;
+    return {
+      ok: false,
+      rows: [],
+      error: (fb && fb.message) || 'Error al leer series diarias por rango',
+    };
+  }
+  return { ok: true, rows: r.items, error: null };
+}
+
+/**
+ * Serie diaria agregada (sumando cuentas) para rango since/until (YYYY-MM-DD).
+ * @param {string[]} actIds
+ * @param {string} accessToken
+ * @param {string} since YYYY-MM-DD
+ * @param {string} until YYYY-MM-DD
+ */
+async function fetchDailyInsightsByDayForAdAccountsTimeRange(actIds, accessToken, since, until) {
+  const partialErrors = [];
+  const rowArrays = [];
+  for (const raw of actIds || []) {
+    const id = normalizeActId(raw);
+    const r = await fetchAccountDailyInsightsForTimeRange(id, accessToken, since, until);
+    if (!r.ok) {
+      partialErrors.push({ adAccountId: id || String(raw || ''), error: r.error || 'Error' });
+      continue;
+    }
+    rowArrays.push(r.rows);
+  }
+  const series = mergeDailyAccountInsightRows(rowArrays);
+  return { series, partialErrors };
+}
+
+/**
  * @param {string} campaignId digits only
  * @param {string} accessToken
  * @returns {Promise<{ ok: boolean, accountId: string | null, error: string | null }>}
@@ -617,6 +668,7 @@ module.exports = {
   fetchAccountSpendForTimeRange,
   fetchTotalSpendForAdAccountsTimeRange,
   fetchDailySpendByDayForAdAccountsTimeRange,
+  fetchDailyInsightsByDayForAdAccountsTimeRange,
   getCampaignAdAccountId,
   updateCampaignStatusGraph,
 };

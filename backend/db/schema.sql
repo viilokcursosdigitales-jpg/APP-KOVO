@@ -117,6 +117,32 @@ CREATE TABLE IF NOT EXISTS meta_campaign_product_links (
 
 CREATE INDEX IF NOT EXISTS idx_meta_campaign_links_org ON meta_campaign_product_links (organization_id);
 
+CREATE TABLE IF NOT EXISTS meta_daily_snapshots (
+  id BIGSERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  snapshot_date DATE NOT NULL,
+  impressions DOUBLE PRECISION NOT NULL DEFAULT 0,
+  clicks DOUBLE PRECISION NOT NULL DEFAULT 0,
+  spend DOUBLE PRECISION NOT NULL DEFAULT 0,
+  purchases DOUBLE PRECISION NOT NULL DEFAULT 0,
+  revenue DOUBLE PRECISION NOT NULL DEFAULT 0,
+  cpm DOUBLE PRECISION NOT NULL DEFAULT 0,
+  cpc DOUBLE PRECISION NOT NULL DEFAULT 0,
+  ctr DOUBLE PRECISION NOT NULL DEFAULT 0,
+  roas DOUBLE PRECISION NOT NULL DEFAULT 0,
+  cpa DOUBLE PRECISION NOT NULL DEFAULT 0,
+  currency VARCHAR(16),
+  ad_account_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  partial_errors JSONB NOT NULL DEFAULT '[]'::jsonb,
+  source VARCHAR(32) NOT NULL DEFAULT 'meta_cron',
+  fetched_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (organization_id, snapshot_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_meta_daily_snapshots_org_date
+  ON meta_daily_snapshots (organization_id, snapshot_date DESC);
+
 CREATE TABLE IF NOT EXISTS organization_custom_roles (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
