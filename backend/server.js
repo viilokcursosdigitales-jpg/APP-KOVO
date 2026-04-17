@@ -5138,6 +5138,9 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         : 'UTC';
     const shopCurrency =
       sr.ok && sr.data && sr.data.shop && sr.data.shop.currency ? String(sr.data.shop.currency).trim() : '';
+    const productIdQ = typeof req.query.product_id === 'string' ? req.query.product_id.trim() : '';
+    const productIdFilterNum = Number.parseInt(productIdQ, 10);
+    const hasProductFilter = Number.isFinite(productIdFilterNum) && productIdFilterNum > 0;
 
     const todayYmd = shopCalendarYmdFromInstant(Date.now(), iana);
     const jan1Ymd = { y: todayYmd.y, m: 1, d: 1 };
@@ -5452,6 +5455,59 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       String(a.label).localeCompare(String(b.label), 'es', { sensitivity: 'base' }),
     );
 
+    const filteredDays = hasProductFilter
+      ? days.map((row) => {
+          const byp = row && row.by_product && typeof row.by_product === 'object' ? row.by_product : {};
+          const selected = Object.values(byp).find(
+            (x) => x && Number.isFinite(Number(x.product_id)) && Number(x.product_id) === productIdFilterNum,
+          );
+        const totalVentasDay = Number(row.ventas_despachadas_total || 0);
+        const totalGastoAdsDay = Number(row.gasto_publicitario_total || 0);
+          if (!selected) {
+            return {
+              ...row,
+              ventas_despachadas_total: 0,
+              ventas_entregadas_total: 0,
+              ventas_despachadas_pedidos: 0,
+              cantidad_producto_total: 0,
+              costo_producto_total: 0,
+              costo_producto_entregado_total: 0,
+              costo_flete_promedio_total: 0,
+              gasto_publicitario_total: 0,
+              ganancia: gananciaComparable ? 0 : null,
+              utilidad: gananciaComparable ? 0 : null,
+              by_product: {},
+            };
+          }
+          const ventasDesp = Number(selected.ventas_despachadas_total || 0);
+          const ventasEnt = Number(selected.ventas_entregadas_total || 0);
+          const pedidos = Number(selected.ventas_despachadas_pedidos || 0);
+          const qty = Number(selected.cantidad_producto_total || 0);
+          const costoProd = Number(selected.costo_producto_total || 0);
+          const costoProdEnt = Number(selected.costo_producto_entregado_total || 0);
+          const costoFlete = Number(selected.costo_flete_promedio_total || 0);
+          const shareByVentas =
+            totalVentasDay > 0 && Number.isFinite(totalVentasDay) ? Math.max(0, Math.min(1, ventasDesp / totalVentasDay)) : 0;
+          const gastoAds = Math.round(totalGastoAdsDay * shareByVentas * 100) / 100;
+          return {
+            ...row,
+            ventas_despachadas_total: Math.round(ventasDesp * 100) / 100,
+            ventas_entregadas_total: Math.round(ventasEnt * 100) / 100,
+            ventas_despachadas_pedidos: pedidos,
+            cantidad_producto_total: Math.round(qty * 100) / 100,
+            costo_producto_total: Math.round(costoProd * 100) / 100,
+            costo_producto_entregado_total: Math.round(costoProdEnt * 100) / 100,
+            costo_flete_promedio_total: Math.round(costoFlete * 100) / 100,
+            gasto_publicitario_total: gastoAds,
+            ganancia: gananciaComparable ? Math.round((ventasDesp - gastoAds) * 100) / 100 : null,
+            utilidad: gananciaComparable ? Math.round((ventasEnt - gastoAds - costoProdEnt - costoFlete) * 100) / 100 : null,
+            by_product: {
+              [String(selected.product_id ?? productIdFilterNum)]: selected,
+            },
+          };
+        })
+      : days;
+
     sendCached({
       shop_calendar_timezone: iana,
       ventas_currency: shopCurrency || null,
@@ -5461,8 +5517,10 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       meta_partial_errors: metaPartialErrors,
       available_months,
       months_applied: requested,
-      days,
+      days: filteredDays,
       product_options,
+      product_id_applied: hasProductFilter ? productIdFilterNum : null,
+      product_spend_allocation: hasProductFilter ? 'ventas_despachadas_prorrata_dia' : null,
     });
   } catch (e) {
     console.error(e);

@@ -27,6 +27,9 @@ type SeriesPayload = {
   meta_partial_errors?: { adAccountId: string; error: string }[];
   available_months?: string[];
   months_applied?: string[];
+  product_options?: { key: string; label: string; product_id: number | null }[];
+  product_id_applied?: number | null;
+  product_spend_allocation?: string | null;
   days?: SeriesDayRow[];
   error?: string;
   code?: string;
@@ -250,10 +253,12 @@ const tableStyle: CSSProperties = {
 
 export default function GananciaDiariaPage() {
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
+  const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [seriesLoading, setSeriesLoading] = useState(true);
   const [seriesError, setSeriesError] = useState('');
   const [seriesData, setSeriesData] = useState<SeriesPayload | null>(null);
   const [monthOptions, setMonthOptions] = useState<string[]>([]);
+  const [productOptions, setProductOptions] = useState<{ key: string; label: string; product_id: number | null }[]>([]);
   const [monthsPanelOpen, setMonthsPanelOpen] = useState(false);
   const [pendingMonths, setPendingMonths] = useState<string[]>([]);
   const [adminPercentInput, setAdminPercentInput] = useState(() => {
@@ -280,6 +285,9 @@ export default function GananciaDiariaPage() {
       if (!useServerDefault && selectedMonths.length > 0) {
         qs.set('months', selectedMonths.join(','));
       }
+      if (selectedProductId) {
+        qs.set('product_id', selectedProductId);
+      }
       const suffix = qs.toString() ? `?${qs}` : '';
       const res = await apiFetch(`/api/ganancia-diaria/series${suffix}`);
       const body = (await res.json().catch(() => ({}))) as SeriesPayload;
@@ -290,6 +298,7 @@ export default function GananciaDiariaPage() {
       }
       setSeriesData(body);
       if (body.available_months?.length) setMonthOptions(body.available_months);
+      if (Array.isArray(body.product_options)) setProductOptions(body.product_options);
       if (!appliedDefaultMonthsOnce.current && selectedMonths.length === 0 && body.months_applied?.length) {
         appliedDefaultMonthsOnce.current = true;
         skipSeriesEffectOnce.current = true;
@@ -301,7 +310,7 @@ export default function GananciaDiariaPage() {
     } finally {
       setSeriesLoading(false);
     }
-  }, [selectedMonths]);
+  }, [selectedMonths, selectedProductId]);
 
   useEffect(() => {
     if (skipSeriesEffectOnce.current) {
@@ -309,7 +318,7 @@ export default function GananciaDiariaPage() {
       return;
     }
     void loadSeries();
-  }, [selectedMonths, loadSeries]);
+  }, [selectedMonths, selectedProductId, loadSeries]);
 
   useEffect(() => {
     try {
@@ -336,6 +345,7 @@ export default function GananciaDiariaPage() {
   }, [seriesData]);
 
   const availableMonths = monthOptions.length > 0 ? monthOptions : seriesData?.available_months ?? [];
+  const availableProducts = productOptions.length > 0 ? productOptions : seriesData?.product_options ?? [];
 
   const openMonthsPanel = () => {
     setPendingMonths(selectedMonths.length > 0 ? [...selectedMonths] : [...(seriesData?.months_applied ?? [])]);
@@ -536,6 +546,40 @@ export default function GananciaDiariaPage() {
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: ds.textPrimary, flex: '1 1 auto' }}>
               Detalle por día
             </h2>
+            <label
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 8,
+                fontSize: 12,
+                color: ds.textSecondary,
+                fontWeight: 600,
+              }}
+            >
+              Producto
+              <select
+                value={selectedProductId}
+                onChange={(e) => setSelectedProductId(e.target.value)}
+                style={{
+                  minWidth: 220,
+                  padding: '7px 9px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  color: ds.textPrimary,
+                  fontSize: 12,
+                }}
+              >
+                <option value="">Todos</option>
+                {availableProducts
+                  .filter((p) => Number.isFinite(Number(p.product_id)) && Number(p.product_id) > 0)
+                  .map((p) => (
+                    <option key={p.key} value={String(p.product_id)}>
+                      {p.label}
+                    </option>
+                  ))}
+              </select>
+            </label>
             <label
               style={{
                 display: 'inline-flex',
@@ -828,6 +872,23 @@ export default function GananciaDiariaPage() {
 
           {seriesMetaNote ? (
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textHint }}>Meta (tabla): {seriesMetaNote}</p>
+          ) : null}
+          {seriesData?.product_id_applied && seriesData?.product_spend_allocation ? (
+            <p
+              style={{
+                margin: '0 0 12px',
+                padding: '10px 12px',
+                borderRadius: 10,
+                background: ds.bgSubtle,
+                color: ds.textSecondary,
+                fontSize: 12,
+                lineHeight: 1.45,
+                border: `1px solid ${ds.borderCard}`,
+              }}
+            >
+              Producto filtrado activo: el gasto Meta del día se prorratea por la participación de ventas despachadas
+              del producto en ese día.
+            </p>
           ) : null}
 
           <div
