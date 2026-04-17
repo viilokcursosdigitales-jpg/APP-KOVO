@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 
@@ -191,6 +191,7 @@ function Kpi({
 export default function InicioPage() {
   const [period, setPeriod] = useState<PeriodKey>('ayer');
   const [loading, setLoading] = useState(true);
+  const [secondaryReady, setSecondaryReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<SeriesDay[]>([]);
   const [adminPercentInput, setAdminPercentInput] = useState(() => {
@@ -203,6 +204,7 @@ export default function InicioPage() {
   const [metaSpend, setMetaSpend] = useState<Record<string, number>>({});
   const [ctrCurrent, setCtrCurrent] = useState<number | null>(null);
   const [ctrPrevious, setCtrPrevious] = useState<number | null>(null);
+  const loadSeqRef = useRef(0);
   const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
 
   useEffect(() => {
@@ -214,7 +216,10 @@ export default function InicioPage() {
   }, [adminPercentInput]);
 
   const load = useCallback(async () => {
+    loadSeqRef.current += 1;
+    const seq = loadSeqRef.current;
     setLoading(true);
+    setSecondaryReady(false);
     setError(null);
     setCtrCurrent(null);
     setCtrPrevious(null);
@@ -266,6 +271,9 @@ export default function InicioPage() {
       setDays([]);
     } finally {
       setLoading(false);
+      window.setTimeout(() => {
+        if (loadSeqRef.current === seq) setSecondaryReady(true);
+      }, 120);
     }
   }, [period]);
 
@@ -299,14 +307,27 @@ export default function InicioPage() {
   const utilidadDelta = deltaPct(utilidadNeta, prevUtilidadNeta);
   const roasTarget = 2.5;
 
-  const salesSeries = normalize(filteredAsc.map((d) => Number(d.ventas_despachadas_total || 0)));
-  const adsSeries = normalize(filteredAsc.map((d) => Number(d.gasto_publicitario_total || 0)));
-  const utilSeriesRaw = filteredAsc.map((d) => utilidadConAdmin(d, adminPercent));
-  const utilAbsMax = Math.max(1, ...utilSeriesRaw.map((v) => Math.abs(v)));
-  const utilBars = utilSeriesRaw.map((v) => v / utilAbsMax);
-  const labels = filteredAsc.map((d) => dayLabel(d.date));
+  const salesSeries = useMemo(
+    () => (secondaryReady ? normalize(filteredAsc.map((d) => Number(d.ventas_despachadas_total || 0))) : []),
+    [secondaryReady, filteredAsc],
+  );
+  const adsSeries = useMemo(
+    () => (secondaryReady ? normalize(filteredAsc.map((d) => Number(d.gasto_publicitario_total || 0))) : []),
+    [secondaryReady, filteredAsc],
+  );
+  const utilBars = useMemo(() => {
+    if (!secondaryReady) return [];
+    const utilSeriesRaw = filteredAsc.map((d) => utilidadConAdmin(d, adminPercent));
+    const utilAbsMax = Math.max(1, ...utilSeriesRaw.map((v) => Math.abs(v)));
+    return utilSeriesRaw.map((v) => v / utilAbsMax);
+  }, [secondaryReady, filteredAsc, adminPercent]);
+  const labels = useMemo(
+    () => (secondaryReady ? filteredAsc.map((d) => dayLabel(d.date)) : []),
+    [secondaryReady, filteredAsc],
+  );
 
   const topProducts = useMemo(() => {
+    if (!secondaryReady) return [];
     const agg = new Map<string, ProductAgg>();
     for (const d of filtered) {
       const byp = d.by_product || {};
@@ -345,6 +366,7 @@ export default function InicioPage() {
   }, [filtered, metaSpend]);
 
   const alerts = useMemo(() => {
+    if (!secondaryReady) return [{ text: 'Cargando insights secundarios...', tone: 'success' as const }];
     const out: { text: string; tone: 'warning' | 'success' }[] = [];
     const low = topProducts.find((p) => p.roas > 0 && p.roasEq > 0 && p.roas < p.roasEq);
     if (low) out.push({ text: `${low.name} bajo el ROAS de equilibrio.`, tone: 'warning' });
@@ -473,32 +495,40 @@ export default function InicioPage() {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
         <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary, marginBottom: 8 }}>Ventas vs Gasto en Ads</div>
-          <svg viewBox="0 0 420 170" width="100%" height={170} aria-hidden>
-            <path d={linePath(salesSeries, 420, 130)} fill="none" stroke={ds.brand} strokeWidth={2.2} />
-            <path d={linePath(adsSeries, 420, 130)} fill="none" stroke={ds.textHint} strokeWidth={2} />
-            {labels.map((d, i) => (
-              <text key={`a-${d}-${i}`} x={(i / Math.max(labels.length - 1, 1)) * 420} y={160} textAnchor="middle" fill="var(--color-text-hint)" fontSize="10">
-                {d}
-              </text>
-            ))}
-          </svg>
+          {!secondaryReady ? (
+            <div style={{ height: 170, borderRadius: 8, background: ds.bgApp }} />
+          ) : (
+            <svg viewBox="0 0 420 170" width="100%" height={170} aria-hidden>
+              <path d={linePath(salesSeries, 420, 130)} fill="none" stroke={ds.brand} strokeWidth={2.2} />
+              <path d={linePath(adsSeries, 420, 130)} fill="none" stroke={ds.textHint} strokeWidth={2} />
+              {labels.map((d, i) => (
+                <text key={`a-${d}-${i}`} x={(i / Math.max(labels.length - 1, 1)) * 420} y={160} textAnchor="middle" fill="var(--color-text-hint)" fontSize="10">
+                  {d}
+                </text>
+              ))}
+            </svg>
+          )}
         </div>
         <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: 12 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary, marginBottom: 8 }}>Utilidad Diaria</div>
-          <svg viewBox="0 0 420 170" width="100%" height={170} aria-hidden>
-            <line x1={0} y1={82} x2={420} y2={82} stroke={ds.borderRow} strokeWidth={1} />
-            {utilBars.map((v, i) => {
-              const x = 26 + i * (380 / Math.max(utilBars.length, 1));
-              const h = Math.abs(v) * 62;
-              const y = v >= 0 ? 82 - h : 82;
-              return <rect key={`u-${i}`} x={x} y={y} width={22} height={h} rx={3} fill={v >= 0 ? ds.successText : ds.dangerText} />;
-            })}
-            {labels.map((d, i) => (
-              <text key={`u-t-${d}-${i}`} x={38 + i * (380 / Math.max(labels.length, 1))} y={160} textAnchor="middle" fill="var(--color-text-hint)" fontSize="10">
-                {d}
-              </text>
-            ))}
-          </svg>
+          {!secondaryReady ? (
+            <div style={{ height: 170, borderRadius: 8, background: ds.bgApp }} />
+          ) : (
+            <svg viewBox="0 0 420 170" width="100%" height={170} aria-hidden>
+              <line x1={0} y1={82} x2={420} y2={82} stroke={ds.borderRow} strokeWidth={1} />
+              {utilBars.map((v, i) => {
+                const x = 26 + i * (380 / Math.max(utilBars.length, 1));
+                const h = Math.abs(v) * 62;
+                const y = v >= 0 ? 82 - h : 82;
+                return <rect key={`u-${i}`} x={x} y={y} width={22} height={h} rx={3} fill={v >= 0 ? ds.successText : ds.dangerText} />;
+              })}
+              {labels.map((d, i) => (
+                <text key={`u-t-${d}-${i}`} x={38 + i * (380 / Math.max(labels.length, 1))} y={160} textAnchor="middle" fill="var(--color-text-hint)" fontSize="10">
+                  {d}
+                </text>
+              ))}
+            </svg>
+          )}
         </div>
       </div>
 
