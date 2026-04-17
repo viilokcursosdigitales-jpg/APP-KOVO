@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
+import { apiFetch, getStoredToken } from '../auth/api';
 import { ds } from '../design-system/ds';
 import {
   IconCart,
@@ -214,6 +215,21 @@ export function AppShell() {
     fn();
     mq.addEventListener('change', fn);
     return () => mq.removeEventListener('change', fn);
+  }, []);
+
+  useEffect(() => {
+    if (!getStoredToken()) return;
+    const warmupPaths = [
+      '/api/meta/insights?period=hoy&level=campaigns',
+      '/api/meta/ads-funnel-panel?period=7d',
+      '/api/product-analytics/meta-spend?period=30d',
+      '/api/ganancia-diaria/series',
+    ];
+    for (const path of warmupPaths) {
+      void apiFetch(path).catch(() => {
+        /* prefetch best-effort */
+      });
+    }
   }, []);
 
   return (

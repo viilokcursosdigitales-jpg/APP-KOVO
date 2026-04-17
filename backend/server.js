@@ -99,6 +99,50 @@ const MODULE_CATALOG_FOR_API = [
 ];
 
 const pool = createPool();
+const RESPONSE_CACHE_TTL_MS_DEFAULT = Number(process.env.RESPONSE_CACHE_TTL_MS || 45_000);
+const responseCacheStore = new Map();
+
+function cacheTtlMs(valueMs) {
+  const n = Number(valueMs);
+  return Number.isFinite(n) && n > 0 ? n : RESPONSE_CACHE_TTL_MS_DEFAULT;
+}
+
+function cacheKeyForRequest(req, scope) {
+  const org = Number(req.organizationId) || 0;
+  const role = String(req.userRole || '');
+  const url = String(req.originalUrl || req.url || '');
+  return `${String(scope || 'default')}|org:${org}|role:${role}|${url}`;
+}
+
+function readCachedJsonResponse(key) {
+  const now = Date.now();
+  const hit = responseCacheStore.get(String(key));
+  if (!hit) return null;
+  if (!Number.isFinite(hit.expiresAt) || hit.expiresAt <= now) {
+    responseCacheStore.delete(String(key));
+    return null;
+  }
+  return hit.payload;
+}
+
+function writeCachedJsonResponse(key, payload, ttlMs) {
+  const ttl = cacheTtlMs(ttlMs);
+  responseCacheStore.set(String(key), {
+    payload,
+    expiresAt: Date.now() + ttl,
+  });
+}
+
+function cleanupExpiredResponseCache() {
+  const now = Date.now();
+  for (const [key, value] of responseCacheStore) {
+    if (!value || !Number.isFinite(value.expiresAt) || value.expiresAt <= now) {
+      responseCacheStore.delete(key);
+    }
+  }
+}
+const responseCacheGcTimer = setInterval(cleanupExpiredResponseCache, 60_000);
+if (typeof responseCacheGcTimer.unref === 'function') responseCacheGcTimer.unref();
 
 function parseCorsOrigins() {
   const devDefaults = ['http://localhost:5173', 'http://127.0.0.1:5173'];
@@ -2237,6 +2281,15 @@ app.put('/api/meta/connections/:id/ad-accounts', verifyToken, scopeToOrganizatio
 
 app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res) => {
   try {
+    const cacheKey = cacheKeyForRequest(req, 'meta_insights');
+    const cachedPayload = readCachedJsonResponse(cacheKey);
+    if (cachedPayload) {
+      return res.json(cachedPayload);
+    }
+    const sendCached = (payload) => {
+      writeCachedJsonResponse(cacheKey, payload, 45_000);
+      return res.json(payload);
+    };
     const level = ['campaigns', 'adsets', 'ads'].includes(String(req.query.level))
       ? String(req.query.level)
       : 'campaigns';
@@ -2247,7 +2300,7 @@ app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res)
     if (!row || !String(row.access_token || '').trim()) {
       const snap = await buildMetaSnapshotFallbackForPeriod(req.organizationId, period);
       if (snap.ok) {
-        return res.json({
+        return sendCached({
           live: false,
           snapshot: true,
           level,
@@ -2323,7 +2376,7 @@ app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res)
     if (allRows.length === 0) {
       const snap = await buildMetaSnapshotFallbackForPeriod(req.organizationId, period);
       if (snap.ok) {
-        return res.json({
+        return sendCached({
           live: false,
           snapshot: true,
           level,
@@ -2350,7 +2403,7 @@ app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res)
       }
     }
 
-    res.json({
+    sendCached({
       live: true,
       level,
       datePreset,
@@ -2502,6 +2555,15 @@ app.put('/api/meta/campaign-product-links', verifyToken, scopeToOrganization, as
 /** Gasto de Meta asignado por producto usando links campaña->producto (sin reparto por ventas). */
 app.get('/api/product-analytics/meta-spend', verifyToken, scopeToOrganization, async (req, res) => {
   try {
+    const cacheKey = cacheKeyForRequest(req, 'meta_product_spend');
+    const cachedPayload = readCachedJsonResponse(cacheKey);
+    if (cachedPayload) {
+      return res.json(cachedPayload);
+    }
+    const sendCached = (payload) => {
+      writeCachedJsonResponse(cacheKey, payload, 60_000);
+      return res.json(payload);
+    };
     const period = String(req.query.period || '30d');
     const datePreset = datePresetFromDashboardPeriod(period);
 
@@ -2578,7 +2640,7 @@ app.get('/api/product-analytics/meta-spend', verifyToken, scopeToOrganization, a
       }
     }
 
-    res.json({
+    sendCached({
       live: true,
       period,
       datePreset,
@@ -2890,6 +2952,15 @@ app.get('/api/meta/funnel', verifyToken, scopeToOrganization, async (req, res) =
 /** Embudo + anuncios + serie diaria (panel Ads Funnel). */
 app.get('/api/meta/ads-funnel-panel', verifyToken, scopeToOrganization, async (req, res) => {
   try {
+    const cacheKey = cacheKeyForRequest(req, 'meta_ads_funnel_panel');
+    const cachedPayload = readCachedJsonResponse(cacheKey);
+    if (cachedPayload) {
+      return res.json(cachedPayload);
+    }
+    const sendCached = (payload) => {
+      writeCachedJsonResponse(cacheKey, payload, 60_000);
+      return res.json(payload);
+    };
     const period = String(req.query.period || '7d');
     const datePreset = datePresetFromDashboardPeriod(period);
 
@@ -3004,7 +3075,7 @@ app.get('/api/meta/ads-funnel-panel', verifyToken, scopeToOrganization, async (r
 
     const convSitePct = totals.clicks > 0 ? (totals.purchases / totals.clicks) * 100 : 0;
 
-    res.json({
+    sendCached({
       live: true,
       period,
       datePreset,
@@ -4951,6 +5022,15 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
 /** Detalle por día (tabla). ?months=2026-04,2026-03 opcional; por defecto el mes calendario actual en la tienda. */
 app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (req, res) => {
   try {
+    const cacheKey = cacheKeyForRequest(req, 'ganancia_diaria_series');
+    const cachedPayload = readCachedJsonResponse(cacheKey);
+    if (cachedPayload) {
+      return res.json(cachedPayload);
+    }
+    const sendCached = (payload) => {
+      writeCachedJsonResponse(cacheKey, payload, 90_000);
+      return res.json(payload);
+    };
     const shopRow = await getActiveShopifyConnection(req.organizationId);
     if (!shopRow) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
@@ -4979,7 +5059,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
 
     const sortedAsc = gananciaDiariaExpandMonthKeysToDayStrings(requested, jan1Ymd, todayYmd);
     if (sortedAsc.length === 0) {
-      return res.json({
+      return sendCached({
         shop_calendar_timezone: iana,
         ventas_currency: shopCurrency || null,
         meta_currency: null,
@@ -5259,7 +5339,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       String(a.label).localeCompare(String(b.label), 'es', { sensitivity: 'base' }),
     );
 
-    res.json({
+    sendCached({
       shop_calendar_timezone: iana,
       ventas_currency: shopCurrency || null,
       meta_currency: metaCurrency || null,
