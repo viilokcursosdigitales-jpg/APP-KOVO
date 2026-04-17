@@ -937,6 +937,43 @@ function spendByDayFromMetaSnapshotRows(rows) {
   return byDay;
 }
 
+function ctrFromSnapshotRows(rows) {
+  let clicks = 0;
+  let impressions = 0;
+  for (const row of rows || []) {
+    clicks += Number(row?.clicks) || 0;
+    impressions += Number(row?.impressions) || 0;
+  }
+  if (!(impressions > 0)) return null;
+  return (clicks / impressions) * 100;
+}
+
+function metaCtrCompareWindows(periodRaw, timezone) {
+  const period = String(periodRaw || '').trim().toLowerCase();
+  const today = metaSnapshotTodayYmd(timezone || META_SNAPSHOT_TIMEZONE);
+  if (period === 'hoy') {
+    return {
+      current: { since: today, until: today },
+      previous: { since: shiftYmdString(today, -1), until: shiftYmdString(today, -1) },
+    };
+  }
+  if (period === 'ayer') {
+    const yesterday = shiftYmdString(today, -1);
+    const prev = shiftYmdString(today, -2);
+    return {
+      current: { since: yesterday, until: yesterday },
+      previous: { since: prev, until: prev },
+    };
+  }
+  // default 7d vs 7d anteriores
+  const currentUntil = today;
+  const currentSince = shiftYmdString(today, -6);
+  return {
+    current: { since: currentSince, until: currentUntil },
+    previous: { since: shiftYmdString(currentSince, -7), until: shiftYmdString(currentUntil, -7) },
+  };
+}
+
 async function runMetaDailySnapshotCron(poolArg, graphVersion, timezone) {
   const tz = String(timezone || META_SNAPSHOT_TIMEZONE || 'Europe/Madrid');
   const targetYmd = metaSnapshotTargetYmd(tz);
@@ -2417,6 +2454,35 @@ app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res)
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener métricas de Meta' });
+  }
+});
+
+app.get('/api/meta/ctr-compare', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const period = String(req.query.period || '7d').trim().toLowerCase();
+    const cacheKey = cacheKeyForRequest(req, 'meta_ctr_compare');
+    const cachedPayload = readCachedJsonResponse(cacheKey);
+    if (cachedPayload) return res.json(cachedPayload);
+    const windows = metaCtrCompareWindows(period, META_SNAPSHOT_TIMEZONE);
+    const [curRows, prevRows] = await Promise.all([
+      loadMetaDailySnapshotsForRange(req.organizationId, windows.current.since, windows.current.until),
+      loadMetaDailySnapshotsForRange(req.organizationId, windows.previous.since, windows.previous.until),
+    ]);
+    const payload = {
+      period,
+      source: 'meta_daily_snapshots',
+      current_ctr: ctrFromSnapshotRows(curRows),
+      previous_ctr: ctrFromSnapshotRows(prevRows),
+      current_window: windows.current,
+      previous_window: windows.previous,
+      current_days: curRows.length,
+      previous_days: prevRows.length,
+    };
+    writeCachedJsonResponse(cacheKey, payload, 90_000);
+    return res.json(payload);
+  } catch (e) {
+    console.error(e);
+    return res.status(500).json({ error: 'Error al calcular comparación CTR' });
   }
 });
 
@@ -4773,6 +4839,36 @@ function gananciaDiariaYmdKey(x) {
   return `${String(x.y).padStart(4, '0')}-${String(x.m).padStart(2, '0')}-${String(x.d).padStart(2, '0')}`;
 }
 
+function gananciaDiariaExpandYmdRange(sinceYmdStr, untilYmdStr) {
+  const a = parseIsoDateYmd(sinceYmdStr);
+  const b = parseIsoDateYmd(untilYmdStr);
+  if (!a || !b) return [];
+  const out = [];
+  let cur = gananciaDiariaYmdKey(a);
+  const end = gananciaDiariaYmdKey(b);
+  if (cur > end) return [];
+  while (cur <= end) {
+    out.push(cur);
+    cur = shiftYmdString(cur, 1);
+  }
+  return out;
+}
+
+function gananciaDiariaWindowFromMetaPeriod(periodRaw, todayYmd) {
+  const period = String(periodRaw || '').trim().toLowerCase();
+  let days = 0;
+  if (period === 'hoy') days = 1;
+  else if (period === 'ayer') days = 2;
+  else if (period === '3d') days = 3;
+  else if (period === '7d') days = 7;
+  else if (period === '14d') days = 14;
+  else if (period === '30d') days = 30;
+  if (!days) return null;
+  const until = gananciaDiariaYmdKey(todayYmd);
+  const since = shiftYmdString(until, -(days - 1));
+  return { since, until, days };
+}
+
 /** Meses YYYY-MM desde enero hasta el mes actual (calendario tienda). */
 function gananciaDiariaSelectableMonthKeys(todayYmd) {
   const keys = [];
@@ -5047,6 +5143,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     const jan1Ymd = { y: todayYmd.y, m: 1, d: 1 };
     const available_months = gananciaDiariaSelectableMonthKeys(todayYmd);
     const allowed = new Set(available_months);
+    const metaPeriodRaw = typeof req.query.meta_period === 'string' ? req.query.meta_period.trim().toLowerCase() : '';
 
     let requested = gananciaDiariaParseMonthsQuery(req.query.months);
     requested = [...new Set(requested)].filter((k) => allowed.has(k));
@@ -5057,7 +5154,23 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     }
     requested.sort();
 
-    const sortedAsc = gananciaDiariaExpandMonthKeysToDayStrings(requested, jan1Ymd, todayYmd);
+    let sortedAsc = [];
+    if (metaPeriodRaw) {
+      const win = gananciaDiariaWindowFromMetaPeriod(metaPeriodRaw, todayYmd);
+      if (win) {
+        let since = win.since;
+        const jan1 = gananciaDiariaYmdKey(jan1Ymd);
+        const today = gananciaDiariaYmdKey(todayYmd);
+        if (since < jan1) since = jan1;
+        if (since > today) since = today;
+        sortedAsc = gananciaDiariaExpandYmdRange(since, today);
+        const monthSet = new Set(sortedAsc.map((d) => String(d).slice(0, 7)).filter((m) => allowed.has(m)));
+        if (monthSet.size) requested = [...monthSet].sort();
+      }
+    }
+    if (!sortedAsc.length) {
+      sortedAsc = gananciaDiariaExpandMonthKeysToDayStrings(requested, jan1Ymd, todayYmd);
+    }
     if (sortedAsc.length === 0) {
       return sendCached({
         shop_calendar_timezone: iana,

@@ -223,7 +223,7 @@ export function AppShell() {
       '/api/meta/insights?period=hoy&level=campaigns',
       '/api/meta/ads-funnel-panel?period=7d',
       '/api/product-analytics/meta-spend?period=30d',
-      '/api/ganancia-diaria/series',
+      '/api/ganancia-diaria/series?meta_period=3d',
     ];
     for (const path of warmupPaths) {
       void apiFetch(path).catch(() => {

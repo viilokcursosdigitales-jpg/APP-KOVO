@@ -30,8 +30,9 @@ type MetaSpendPayload = {
   product_spend?: Record<string, number>;
 };
 
-type MetaInsightsPayload = {
-  totals?: { ctr?: number };
+type MetaCtrComparePayload = {
+  current_ctr?: number | null;
+  previous_ctr?: number | null;
 };
 
 type ProductAgg = {
@@ -110,16 +111,40 @@ function periodConfig(period: PeriodKey): {
   prevStart: number;
   prevLen: number;
   months: number;
+  seriesPeriod: string;
   metaPeriod: string;
-  previousMeta: string;
 } {
   if (period === 'hoy') {
-    return { currentStart: 0, currentLen: 1, prevStart: 1, prevLen: 1, months: 1, metaPeriod: 'hoy', previousMeta: 'ayer' };
+    return {
+      currentStart: 0,
+      currentLen: 1,
+      prevStart: 1,
+      prevLen: 1,
+      months: 1,
+      seriesPeriod: '3d',
+      metaPeriod: 'hoy',
+    };
   }
   if (period === 'ayer') {
-    return { currentStart: 1, currentLen: 1, prevStart: 2, prevLen: 1, months: 1, metaPeriod: 'ayer', previousMeta: 'hoy' };
+    return {
+      currentStart: 1,
+      currentLen: 1,
+      prevStart: 2,
+      prevLen: 1,
+      months: 1,
+      seriesPeriod: '3d',
+      metaPeriod: 'ayer',
+    };
   }
-  return { currentStart: 0, currentLen: 7, prevStart: 7, prevLen: 7, months: 2, metaPeriod: '7d', previousMeta: '14d' };
+  return {
+    currentStart: 0,
+    currentLen: 7,
+    prevStart: 7,
+    prevLen: 7,
+    months: 2,
+    seriesPeriod: '14d',
+    metaPeriod: '7d',
+  };
 }
 
 function deltaPct(current: number, previous: number): number | null {
@@ -194,11 +219,11 @@ export default function InicioPage() {
     try {
       const cfg = periodConfig(period);
       const monthsCsv = monthKeys(cfg.months);
-      const [seriesRes, spendRes, ctrRes, ctrPrevRes] = await Promise.all([
-        apiFetch(`/api/ganancia-diaria/series?months=${encodeURIComponent(monthsCsv)}`),
-        apiFetch(`/api/product-analytics/meta-spend?period=${cfg.metaPeriod}`),
-        apiFetch(`/api/meta/insights?period=${cfg.metaPeriod}&level=ads`),
-        apiFetch(`/api/meta/insights?period=${cfg.previousMeta}&level=ads`),
+      const [seriesRes, ctrCompareRes] = await Promise.all([
+        apiFetch(
+          `/api/ganancia-diaria/series?meta_period=${encodeURIComponent(cfg.seriesPeriod)}&months=${encodeURIComponent(monthsCsv)}`,
+        ),
+        apiFetch(`/api/meta/ctr-compare?period=${cfg.metaPeriod}`),
       ]);
 
       const seriesData = (await seriesRes.json().catch(() => ({}))) as SeriesPayload;
@@ -207,20 +232,27 @@ export default function InicioPage() {
         setDays([]);
         return;
       }
-      const spendData = (await spendRes.json().catch(() => ({}))) as MetaSpendPayload;
-      const ctrData = (await ctrRes.json().catch(() => ({}))) as MetaInsightsPayload;
-      const ctrPrevData = (await ctrPrevRes.json().catch(() => ({}))) as MetaInsightsPayload;
+      const ctrCompareData = (await ctrCompareRes.json().catch(() => ({}))) as MetaCtrComparePayload;
 
       setDays(Array.isArray(seriesData.days) ? seriesData.days : []);
-      setMetaSpend(spendRes.ok && spendData.product_spend ? spendData.product_spend : {});
       setCtrCurrent(
-        ctrRes.ok && Number.isFinite(Number(ctrData?.totals?.ctr)) ? Number(ctrData.totals?.ctr) : null,
-      );
-      setCtrPrevious(
-        ctrPrevRes.ok && Number.isFinite(Number(ctrPrevData?.totals?.ctr))
-          ? Number(ctrPrevData.totals?.ctr)
+        ctrCompareRes.ok && Number.isFinite(Number(ctrCompareData?.current_ctr))
+          ? Number(ctrCompareData.current_ctr)
           : null,
       );
+      setCtrPrevious(
+        ctrCompareRes.ok && Number.isFinite(Number(ctrCompareData?.previous_ctr))
+          ? Number(ctrCompareData.previous_ctr)
+          : null,
+      );
+      void apiFetch(`/api/product-analytics/meta-spend?period=${cfg.metaPeriod}`)
+        .then(async (spendRes) => {
+          const spendData = (await spendRes.json().catch(() => ({}))) as MetaSpendPayload;
+          setMetaSpend(spendRes.ok && spendData.product_spend ? spendData.product_spend : {});
+        })
+        .catch(() => {
+          setMetaSpend({});
+        });
     } catch {
       setError('Error de red cargando datos de Inicio');
       setDays([]);
