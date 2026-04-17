@@ -1,6 +1,7 @@
 /** Ids alineados con el backend (CONFIGURABLE_MODULE_IDS). */
 export const APP_MODULE_IDS = [
   'dashboard',
+  'analisis_producto',
   'pedidos',
   'motico',
   'inventario',
@@ -15,6 +16,7 @@ export type AppModuleId = (typeof APP_MODULE_IDS)[number];
 
 export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string }[] = [
   { id: 'dashboard', label: 'Dashboard', group: 'Principal' },
+  { id: 'analisis_producto', label: 'Analisis de Producto', group: 'Principal' },
   { id: 'pedidos', label: 'Pedidos', group: 'Principal' },
   { id: 'motico', label: 'Motico', group: 'Principal' },
   { id: 'inventario', label: 'Inventario', group: 'Principal' },
@@ -27,6 +29,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/dashboard': 'dashboard',
+  '/analisis-producto': 'analisis_producto',
   '/pedidos': 'pedidos',
   '/motico': 'motico',
   '/inventario': 'inventario',
@@ -39,6 +42,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
 
 const MODULE_TO_PATH: Record<AppModuleId, string> = {
   dashboard: '/dashboard',
+  analisis_producto: '/analisis-producto',
   pedidos: '/pedidos',
   motico: '/motico',
   inventario: '/inventario',

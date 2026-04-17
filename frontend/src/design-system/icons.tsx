@@ -57,6 +57,18 @@ export function IconPackage() {
   );
 }
 
+/** Analisis de producto */
+export function IconProduct() {
+  return strokeSvg(
+    <>
+      <rect x="4" y="4" width="7" height="7" rx="1.2" />
+      <rect x="13" y="4" width="7" height="7" rx="1.2" />
+      <path d="M4 15h16" />
+      <path d="M6 19h2M11 19h2M16 19h2" />
+    </>,
+  );
+}
+
 /** Envío / mensajería (p. ej. Motico) */
 export function IconTruck() {
   return strokeSvg(

@@ -8,6 +8,7 @@ import {
   IconLayout,
   IconMegaphone,
   IconPackage,
+  IconProduct,
   IconSettings,
   IconShare,
   IconTarget,
@@ -43,6 +44,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
 
   const main: NavItem[] = [
     { to: '/dashboard', label: 'Dashboard', icon: <IconLayout />, moduleId: 'dashboard' },
+    { to: '/analisis-producto', label: 'Productos', icon: <IconProduct />, moduleId: 'analisis_producto' },
     { to: '/pedidos', label: 'Pedidos', icon: <IconCart />, moduleId: 'pedidos' },
     { to: '/motico', label: 'Motico', icon: <IconTruck />, moduleId: 'motico' },
     { to: '/inventario', label: 'Inventario', icon: <IconPackage />, moduleId: 'inventario' },

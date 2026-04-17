@@ -69,6 +69,7 @@ const PLAN_LIMITS = {
 /** Slugs de módulos configurables (sidebar); perfil y configuración no se restringen aquí. */
 const CONFIGURABLE_MODULE_IDS = [
   'dashboard',
+  'analisis_producto',
   'pedidos',
   'motico',
   'inventario',
@@ -81,6 +82,7 @@ const CONFIGURABLE_MODULE_IDS = [
 
 const MODULE_CATALOG_FOR_API = [
   { id: 'dashboard', label: 'Dashboard', group: 'Principal' },
+  { id: 'analisis_producto', label: 'Analisis de Producto', group: 'Principal' },
   { id: 'pedidos', label: 'Pedidos', group: 'Principal' },
   { id: 'motico', label: 'Motico', group: 'Principal' },
   { id: 'inventario', label: 'Inventario', group: 'Principal' },
@@ -2049,6 +2051,111 @@ app.put('/api/meta/campaign-product-links', verifyToken, scopeToOrganization, as
     }
     console.error(e);
     res.status(500).json({ error: 'Error al guardar vínculos campaña–producto' });
+  }
+});
+
+/** Gasto de Meta asignado por producto usando links campaña->producto (sin reparto por ventas). */
+app.get('/api/product-analytics/meta-spend', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const period = String(req.query.period || '30d');
+    const datePreset = datePresetFromDashboardPeriod(period);
+
+    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
+    if (!row || !String(row.access_token || '').trim()) {
+      return res.status(400).json({
+        error: 'Falta token de usuario en la conexión Meta.',
+        code: 'no_token',
+      });
+    }
+    const resolved = resolveAdAccountIdsForRequest(req.query.adAccountId, row.selected_ad_account_ids);
+    if (!resolved.ok) {
+      return res.status(400).json({
+        error: 'Esa cuenta no está entre las vinculadas en la conexión Meta.',
+        code: resolved.code || 'invalid_ad_account',
+      });
+    }
+    const actIds = resolved.actIds;
+    if (actIds.length === 0) {
+      return res.status(400).json({
+        error: 'No hay cuentas publicitarias seleccionadas.',
+        code: 'no_ad_accounts',
+      });
+    }
+
+    const linksRows = await pool.query(
+      `SELECT meta_campaign_id, product_ids
+       FROM meta_campaign_product_links
+       WHERE organization_id = $1`,
+      [req.organizationId],
+    );
+    const linksByCampaign = new Map();
+    for (const r of linksRows.rows) {
+      const cid = String(r.meta_campaign_id || '').trim();
+      if (!cid) continue;
+      const ids = Array.isArray(r.product_ids)
+        ? r.product_ids
+            .map((x) => Number.parseInt(String(x), 10))
+            .filter((n) => Number.isFinite(n))
+        : [];
+      linksByCampaign.set(cid, ids);
+    }
+
+    const partialErrors = [];
+    const campaigns = [];
+    for (const actId of actIds) {
+      const norm = normalizeActId(actId);
+      const r = await fetchInsightsForAdAccount(norm, row.access_token, 'campaigns', datePreset);
+      if (!r.ok) {
+        partialErrors.push({ adAccountId: norm, error: r.error || 'Error al leer campañas' });
+        continue;
+      }
+      campaigns.push(...r.rows);
+    }
+
+    const productSpend = {};
+    let unlinkedSpend = 0;
+    let linkedCampaignRows = 0;
+
+    for (const c of campaigns) {
+      const cid = String(c.id || c.campaignId || '').trim();
+      const spend = Number(c.spend || 0);
+      if (!Number.isFinite(spend) || spend <= 0) continue;
+      const pids = cid ? linksByCampaign.get(cid) || [] : [];
+      if (!pids.length) {
+        unlinkedSpend += spend;
+        continue;
+      }
+      linkedCampaignRows += 1;
+      const share = spend / pids.length;
+      for (const pid of pids) {
+        const k = String(pid);
+        productSpend[k] = (productSpend[k] || 0) + share;
+      }
+    }
+
+    res.json({
+      live: true,
+      period,
+      datePreset,
+      fetchedAt: new Date().toISOString(),
+      product_spend: Object.fromEntries(
+        Object.entries(productSpend).map(([k, v]) => [k, Math.round(Number(v) * 100) / 100]),
+      ),
+      unlinked_spend: Math.round(unlinkedSpend * 100) / 100,
+      campaign_rows: campaigns.length,
+      linked_campaign_rows: linkedCampaignRows,
+      partialErrors,
+    });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error:
+          'Falta la tabla meta_campaign_product_links. Reinicia el backend o aplica backend/db/schema.sql.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    res.status(500).json({ error: 'Error al calcular gasto de Meta por producto' });
   }
 });
 

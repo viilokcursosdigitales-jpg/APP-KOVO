@@ -19,6 +19,7 @@ const PedidosPage = lazy(() => import('./pages/PedidosPage'));
 const PedidosOrderEditPage = lazy(() => import('./pages/PedidosOrderEditPage'));
 const Profile = lazy(() => import('./pages/Profile'));
 const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'));
+const AnalisisProductoPage = lazy(() => import('./pages/AnalisisProductoPage'));
 const AdsFunnelPage = lazy(() => import('./pages/AdsFunnelPage'));
 const Register = lazy(() => import('./pages/Register'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
@@ -39,6 +40,7 @@ export default function App() {
           <Route element={<AppShell />}>
             <Route element={<ModuleGuard />}>
               <Route path="/dashboard" element={<DashboardHome />} />
+              <Route path="/analisis-producto" element={<AnalisisProductoPage />} />
               <Route path="/pedidos" element={<PedidosPage />} />
               <Route path="/pedidos/editar/:orderId" element={<PedidosOrderEditPage />} />
               <Route path="/motico" element={<MoticoPage />} />
