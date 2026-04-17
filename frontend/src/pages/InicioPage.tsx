@@ -189,7 +189,7 @@ function Kpi({
 }
 
 export default function InicioPage() {
-  const [period, setPeriod] = useState<PeriodKey>('hoy');
+  const [period, setPeriod] = useState<PeriodKey>('ayer');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<SeriesDay[]>([]);
@@ -216,15 +216,15 @@ export default function InicioPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setCtrCurrent(null);
+    setCtrPrevious(null);
+    setMetaSpend({});
     try {
       const cfg = periodConfig(period);
       const monthsCsv = monthKeys(cfg.months);
-      const [seriesRes, ctrCompareRes] = await Promise.all([
-        apiFetch(
-          `/api/ganancia-diaria/series?meta_period=${encodeURIComponent(cfg.seriesPeriod)}&months=${encodeURIComponent(monthsCsv)}`,
-        ),
-        apiFetch(`/api/meta/ctr-compare?period=${cfg.metaPeriod}`),
-      ]);
+      const seriesRes = await apiFetch(
+        `/api/ganancia-diaria/series?meta_period=${encodeURIComponent(cfg.seriesPeriod)}&months=${encodeURIComponent(monthsCsv)}`,
+      );
 
       const seriesData = (await seriesRes.json().catch(() => ({}))) as SeriesPayload;
       if (!seriesRes.ok) {
@@ -232,19 +232,27 @@ export default function InicioPage() {
         setDays([]);
         return;
       }
-      const ctrCompareData = (await ctrCompareRes.json().catch(() => ({}))) as MetaCtrComparePayload;
 
       setDays(Array.isArray(seriesData.days) ? seriesData.days : []);
-      setCtrCurrent(
-        ctrCompareRes.ok && Number.isFinite(Number(ctrCompareData?.current_ctr))
-          ? Number(ctrCompareData.current_ctr)
-          : null,
-      );
-      setCtrPrevious(
-        ctrCompareRes.ok && Number.isFinite(Number(ctrCompareData?.previous_ctr))
-          ? Number(ctrCompareData.previous_ctr)
-          : null,
-      );
+      // Los secundarios no bloquean la primera pintura del dashboard.
+      void apiFetch(`/api/meta/ctr-compare?period=${cfg.metaPeriod}`)
+        .then(async (ctrCompareRes) => {
+          const ctrCompareData = (await ctrCompareRes.json().catch(() => ({}))) as MetaCtrComparePayload;
+          setCtrCurrent(
+            ctrCompareRes.ok && Number.isFinite(Number(ctrCompareData?.current_ctr))
+              ? Number(ctrCompareData.current_ctr)
+              : null,
+          );
+          setCtrPrevious(
+            ctrCompareRes.ok && Number.isFinite(Number(ctrCompareData?.previous_ctr))
+              ? Number(ctrCompareData.previous_ctr)
+              : null,
+          );
+        })
+        .catch(() => {
+          setCtrCurrent(null);
+          setCtrPrevious(null);
+        });
       void apiFetch(`/api/product-analytics/meta-spend?period=${cfg.metaPeriod}`)
         .then(async (spendRes) => {
           const spendData = (await spendRes.json().catch(() => ({}))) as MetaSpendPayload;

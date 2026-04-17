@@ -219,17 +219,23 @@ export function AppShell() {
 
   useEffect(() => {
     if (!getStoredToken()) return;
-    const warmupPaths = [
-      '/api/meta/insights?period=hoy&level=campaigns',
-      '/api/meta/ads-funnel-panel?period=7d',
-      '/api/product-analytics/meta-spend?period=30d',
-      '/api/ganancia-diaria/series?meta_period=3d',
-    ];
-    for (const path of warmupPaths) {
-      void apiFetch(path).catch(() => {
-        /* prefetch best-effort */
-      });
+    const runWarmup = () => {
+      const warmupPaths = [
+        '/api/ganancia-diaria/series?meta_period=3d',
+        '/api/meta/ctr-compare?period=ayer',
+      ];
+      for (const path of warmupPaths) {
+        void apiFetch(path).catch(() => {
+          /* prefetch best-effort */
+        });
+      }
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(runWarmup, { timeout: 1800 });
+      return () => window.cancelIdleCallback(id);
     }
+    const t = window.setTimeout(runWarmup, 900);
+    return () => window.clearTimeout(t);
   }, []);
 
   return (
