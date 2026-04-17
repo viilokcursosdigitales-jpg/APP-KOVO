@@ -15,7 +15,7 @@ export const APP_MODULE_IDS = [
 export type AppModuleId = (typeof APP_MODULE_IDS)[number];
 
 export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string }[] = [
-  { id: 'dashboard', label: 'Dashboard', group: 'Principal' },
+  { id: 'dashboard', label: 'Inicio', group: 'Principal' },
   { id: 'analisis_producto', label: 'Analisis de Producto', group: 'Principal' },
   { id: 'pedidos', label: 'Pedidos', group: 'Principal' },
   { id: 'motico', label: 'Motico', group: 'Principal' },
@@ -28,6 +28,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
+  '/inicio': 'dashboard',
   '/dashboard': 'dashboard',
   '/analisis-producto': 'analisis_producto',
   '/pedidos': 'pedidos',
@@ -41,7 +42,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
 };
 
 const MODULE_TO_PATH: Record<AppModuleId, string> = {
-  dashboard: '/dashboard',
+  dashboard: '/inicio',
   analisis_producto: '/analisis-producto',
   pedidos: '/pedidos',
   motico: '/motico',

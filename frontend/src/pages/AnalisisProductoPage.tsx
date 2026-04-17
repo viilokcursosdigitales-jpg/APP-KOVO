@@ -71,7 +71,7 @@ function money(n: number): string {
 }
 
 function pct(n: number): string {
-  return `${n >= 0 ? '+' : ''}${n}%`;
+  return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
 }
 
 function stateBadge(status: ProductStatus): { text: string; variant: StatusBadgeVariant } {

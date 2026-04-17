@@ -53,8 +53,8 @@ export function formatMoney2(n: number): string {
   return formatMetaMoneyWhole(n);
 }
 
-export function formatPct(n: number, decimals = 0): string {
-  return `${n.toFixed(decimals)} %`;
+export function formatPct(n: number, decimals = 1): string {
+  return `${n.toFixed(decimals)}%`;
 }
 
 export type CreativeMetrics = {

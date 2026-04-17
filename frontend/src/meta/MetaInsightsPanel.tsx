@@ -32,8 +32,8 @@ function formatNumber(n: number): string {
 
 const formatMoney2 = formatMetaMoneyWhole;
 
-function formatPct(n: number, decimals = 0): string {
-  return `${n.toFixed(decimals)} %`;
+function formatPct(n: number, decimals = 1): string {
+  return `${n.toFixed(decimals)}%`;
 }
 
 /** ROAS como en Meta Ads (decimales, no redondeo entero). */

@@ -45,7 +45,7 @@ function formatCompact(n: number): string {
 }
 
 function formatPct(n: number, decimals = 1): string {
-  return `${n.toFixed(decimals)} %`;
+  return `${n.toFixed(decimals)}%`;
 }
 
 function hashHue(s: string): number {
@@ -454,7 +454,7 @@ export default function AdsFunnelPage() {
   const yMoneyLabel = formatMetaMoneyWhole(maxSpendish);
 
   const maxConv = Math.max(...daily.map((d) => d.convPct), 0.01);
-  const yConvLabel = `${maxConv.toFixed(1)} %`;
+  const yConvLabel = `${maxConv.toFixed(1)}%`;
 
   const kpi = panel?.kpi;
   const fetchedHint = panel?.fetchedAt

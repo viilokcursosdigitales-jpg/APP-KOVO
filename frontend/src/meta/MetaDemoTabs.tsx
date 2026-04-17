@@ -169,10 +169,10 @@ export function TabCreativo({
     { label: 'Impresiones', value: formatNumber(metrics.impressions) },
     { label: 'Gasto publicitario', value: formatMoney2(metrics.spend) },
     { label: 'CPM', value: formatMoney2(metrics.cpm) },
-    { label: 'CTR enlace', value: formatPct(metrics.ctrLink, 0) },
+    { label: 'CTR enlace', value: formatPct(metrics.ctrLink, 1) },
     { label: 'CPC', value: formatMoney2(metrics.cpc) },
-    { label: 'Hook rate', value: formatPct(metrics.hookRate, 0) },
-    { label: 'Retención video', value: formatPct(metrics.videoRetention, 0) },
+    { label: 'Hook rate', value: formatPct(metrics.hookRate, 1) },
+    { label: 'Retención video', value: formatPct(metrics.videoRetention, 1) },
     { label: 'ROAS', value: `${Math.round(metrics.roas)}×`, highlight: true },
     { label: 'CPA', value: formatMoney2(metrics.cpa), highlight: true },
     { label: 'Compras', value: formatNumber(metrics.purchases) },
@@ -251,15 +251,15 @@ export function TabCreativo({
                   <Td isLast={idx === ads.length - 1}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <MiniBar value={row.ctrLink} max={maxCtr} />
-                      <span>{formatPct(row.ctrLink, 0)}</span>
+                      <span>{formatPct(row.ctrLink, 1)}</span>
                     </div>
                   </Td>
                   <Td isLast={idx === ads.length - 1}>{formatMoney2(row.cpc)}</Td>
-                  <Td isLast={idx === ads.length - 1}>{formatPct(row.hookRate, 0)}</Td>
+                  <Td isLast={idx === ads.length - 1}>{formatPct(row.hookRate, 1)}</Td>
                   <Td isLast={idx === ads.length - 1}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                       <MiniBar value={row.retention} max={maxRet} />
-                      <span>{formatPct(row.retention, 0)}</span>
+                      <span>{formatPct(row.retention, 1)}</span>
                     </div>
                   </Td>
                   <Td isLast={idx === ads.length - 1}>
@@ -389,7 +389,7 @@ export function TabEmbudo({
               const y = 20 + (i + 1) * (stageH + 36) - 18;
               return (
                 <text key={`drop-${i}`} x={cx + tops[i] / 2 + 8} y={y} fill={ds.dangerText} fontSize={12} fontWeight={700}>
-                  −{d.toFixed(0)} %
+                  −{d.toFixed(1)}%
                 </text>
               );
             })}

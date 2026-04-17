@@ -6,9 +6,9 @@ import { PrivateRoute } from './auth/PrivateRoute';
 import { AppShell } from './layout/AppShell';
 
 const CanalesPage = lazy(() => import('./pages/CanalesPage'));
-const DashboardHome = lazy(() => import('./pages/DashboardHome'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const Home = lazy(() => import('./pages/Home'));
+const InicioPage = lazy(() => import('./pages/InicioPage'));
 const InventarioPage = lazy(() => import('./pages/InventarioPage'));
 const Login = lazy(() => import('./pages/Login'));
 const MarketingIndicatorsPage = lazy(() => import('./pages/MarketingIndicatorsPage'));
@@ -39,7 +39,8 @@ export default function App() {
         <Route element={<PrivateRoute />}>
           <Route element={<AppShell />}>
             <Route element={<ModuleGuard />}>
-              <Route path="/dashboard" element={<DashboardHome />} />
+              <Route path="/inicio" element={<InicioPage />} />
+              <Route path="/dashboard" element={<InicioPage />} />
               <Route path="/analisis-producto" element={<AnalisisProductoPage />} />
               <Route path="/pedidos" element={<PedidosPage />} />
               <Route path="/pedidos/editar/:orderId" element={<PedidosOrderEditPage />} />

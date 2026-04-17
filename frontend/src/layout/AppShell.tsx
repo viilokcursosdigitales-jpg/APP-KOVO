@@ -43,7 +43,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   const { canManageOrg, canAccessModule } = useAuth();
 
   const main: NavItem[] = [
-    { to: '/dashboard', label: 'Dashboard', icon: <IconLayout />, moduleId: 'dashboard' },
+    { to: '/inicio', label: 'Inicio', icon: <IconLayout />, moduleId: 'dashboard' },
     { to: '/analisis-producto', label: 'Productos', icon: <IconProduct />, moduleId: 'analisis_producto' },
     { to: '/pedidos', label: 'Pedidos', icon: <IconCart />, moduleId: 'pedidos' },
     { to: '/motico', label: 'Motico', icon: <IconTruck />, moduleId: 'motico' },
@@ -102,7 +102,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
       key={item.to}
       to={item.to}
       className="kovo-sidebar-link"
-      end={item.to === '/dashboard'}
+      end={item.to === '/inicio'}
       style={({ isActive }) => linkStyle(isActive)}
     >
       <span style={{ color: 'inherit', display: 'flex' }}>{item.icon}</span>
@@ -137,7 +137,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
           <NavLink
             key={item.to}
             to={item.to}
-            end={item.to === '/dashboard'}
+            end={item.to === '/inicio'}
             style={({ isActive }) => ({
               display: 'flex',
               flexDirection: 'column',
@@ -174,7 +174,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
       }}
     >
       <NavLink
-        to="/dashboard"
+        to="/inicio"
         style={{
           display: 'flex',
           alignItems: 'center',

@@ -23,8 +23,8 @@ function formatNumber(n: number): string {
 
 const formatMoney2 = formatMetaMoneyWhole;
 
-function formatPct(n: number, decimals = 0): string {
-  return `${n.toFixed(decimals)} %`;
+function formatPct(n: number, decimals = 1): string {
+  return `${n.toFixed(decimals)}%`;
 }
 
 type Stage = { key: string; label: string; people: number };
@@ -320,7 +320,7 @@ export function MetaFunnelPanel({
                     fontSize={11}
                     fontWeight={700}
                   >
-                    −{d.toFixed(0)} %
+                    −{d.toFixed(1)}%
                   </text>
                 );
               })}
