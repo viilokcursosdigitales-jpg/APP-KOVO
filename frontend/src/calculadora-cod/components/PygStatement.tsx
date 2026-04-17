@@ -1,12 +1,19 @@
 import { useMemo, useState } from 'react';
 import { ds } from '../../design-system/ds';
-import type { CalculatorInputsState, PackId, PackKpis } from '../types';
+import type { CalculatorInputsState, FunnelMixLevel, PackId, PackKpis } from '../types';
 import { calcMix, calcPyg } from '../utils/calculations';
 import { fmtCurrency, fmtPercent, fmtRoasMult } from '../utils/formatters';
+
+const MIX_LEVEL_LABEL: Record<FunnelMixLevel, string> = {
+  gen: 'Generado',
+  desp: 'Despachado',
+  entr: 'Entregado',
+};
 
 type Props = {
   inputs: CalculatorInputsState;
   packKpis: [PackKpis, PackKpis, PackKpis];
+  mixFunnelLevel: FunnelMixLevel;
 };
 
 export function PygStatement(props: Props) {
@@ -22,20 +29,21 @@ export function PygStatement(props: Props) {
     [pedA, pedB, pack, props.inputs, kpi.cpaGenMeta],
   );
 
-  /** Misma lógica operativa del pack; inversión ads con CPA meta ponderado de la mezcla (nivel generado). */
-  const mixGen = useMemo(
-    () => calcMix(props.inputs.mixPct, props.inputs.packs, props.packKpis, 'gen'),
-    [props.inputs.mixPct, props.inputs.packs, props.packKpis],
+  /** Misma operativa del pack; ads con CPA meta ponderado de la mezcla al nivel de embudo seleccionado (Calculadora de mezcla). */
+  const mixAtLevel = useMemo(
+    () => calcMix(props.inputs.mixPct, props.inputs.packs, props.packKpis, props.mixFunnelLevel),
+    [props.inputs.mixPct, props.inputs.packs, props.packKpis, props.mixFunnelLevel],
   );
 
   const pygMix = useMemo(
-    () => calcPyg(pedA, pedB, pack, props.inputs, mixGen.cpaPonderado),
-    [pedA, pedB, pack, props.inputs, mixGen.cpaPonderado],
+    () => calcPyg(pedA, pedB, pack, props.inputs, mixAtLevel.cpaPonderado),
+    [pedA, pedB, pack, props.inputs, mixAtLevel.cpaPonderado],
   );
 
   const cpaLabel = kpi.cpaGenMeta > 0 ? fmtCurrency(kpi.cpaGenMeta, props.inputs.currency) : '—';
-  const cpaMixLabel = mixGen.cpaPonderado > 0 ? fmtCurrency(mixGen.cpaPonderado, props.inputs.currency) : '—';
-  const mixViable = mixGen.sumaPct > 0 && mixGen.cpaPonderado > 0;
+  const cpaMixLabel = mixAtLevel.cpaPonderado > 0 ? fmtCurrency(mixAtLevel.cpaPonderado, props.inputs.currency) : '—';
+  const mixViable = mixAtLevel.sumaPct > 0 && mixAtLevel.cpaPonderado > 0;
+  const mixLevelName = MIX_LEVEL_LABEL[props.mixFunnelLevel];
 
   const adsRowMix = pygMix.rows.find((r) => r.negative && r.concepto.includes('Inversión ads'));
   const utilMixRow = pygMix.rows.find((r) => r.final);
@@ -205,7 +213,7 @@ export function PygStatement(props: Props) {
         <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 12, lineHeight: 1.45 }}>
           Misma operación del pack elegido (ventas, costos, fletes, admin). La inversión en ads usa el{' '}
           <strong style={{ color: 'var(--color-text-secondary)' }}>CPA meta ponderado</strong> de tu mezcla actual a nivel{' '}
-          <strong style={{ color: 'var(--color-text-secondary)' }}>generado</strong> (ROAS mezcla {fmtRoasMult(mixGen.roasPonderado)}).
+          <strong style={{ color: 'var(--color-text-secondary)' }}>{mixLevelName.toLowerCase()}</strong> (ROAS mezcla {fmtRoasMult(mixAtLevel.roasPonderado)}).
         </div>
         {!mixViable ? (
           <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
@@ -259,7 +267,8 @@ export function PygStatement(props: Props) {
         )}
         {mixViable ? (
           <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-hint)' }}>
-            CPA meta mezcla (generado): {cpaMixLabel} · Ticket promedio mezcla {fmtCurrency(mixGen.ticketPromedio, props.inputs.currency)}
+            CPA meta mezcla ({mixLevelName}): {cpaMixLabel} · Ticket promedio mezcla{' '}
+            {fmtCurrency(mixAtLevel.ticketPromedio, props.inputs.currency)}
           </div>
         ) : null}
       </div>

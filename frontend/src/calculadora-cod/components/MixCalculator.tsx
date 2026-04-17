@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import { ds } from '../../design-system/ds';
 import type { CalculatorInputsState, FunnelMixLevel, PackKpis } from '../types';
 import { calcMix } from '../utils/calculations';
@@ -8,6 +8,8 @@ type Props = {
   inputs: CalculatorInputsState;
   packKpis: [PackKpis, PackKpis, PackKpis];
   onMixChange: (idx: 0 | 1 | 2, v: number) => void;
+  mixFunnelLevel: FunnelMixLevel;
+  onMixFunnelLevelChange: (level: FunnelMixLevel) => void;
 };
 
 const LEVELS: { id: FunnelMixLevel; label: string }[] = [
@@ -17,12 +19,11 @@ const LEVELS: { id: FunnelMixLevel; label: string }[] = [
 ];
 
 export function MixCalculator(props: Props) {
-  const { inputs, packKpis } = props;
-  const [level, setLevel] = useState<FunnelMixLevel>('gen');
+  const { inputs, packKpis, mixFunnelLevel, onMixFunnelLevelChange } = props;
 
   const mixResult = useMemo(
-    () => calcMix(inputs.mixPct, inputs.packs, packKpis, level),
-    [inputs.mixPct, inputs.packs, packKpis, level],
+    () => calcMix(inputs.mixPct, inputs.packs, packKpis, mixFunnelLevel),
+    [inputs.mixPct, inputs.packs, packKpis, mixFunnelLevel],
   );
 
   const sumOk = Math.abs(mixResult.sumaPct - 100) < 0.5;
@@ -73,12 +74,12 @@ export function MixCalculator(props: Props) {
         <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-hint)', marginBottom: 6 }}>Nivel embudo (CPA·ROAS meta)</div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
           {LEVELS.map((lv) => {
-            const active = level === lv.id;
+            const active = mixFunnelLevel === lv.id;
             return (
               <button
                 key={lv.id}
                 type="button"
-                onClick={() => setLevel(lv.id)}
+                onClick={() => onMixFunnelLevelChange(lv.id)}
                 style={{
                   padding: '8px 14px',
                   borderRadius: 999,
@@ -164,7 +165,7 @@ export function MixCalculator(props: Props) {
           <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--color-text-primary)' }}>
             {fmtCurrency(mixResult.cpaConservador, inputs.currency)}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA meta ({LEVELS.find((l) => l.id === level)?.label})</div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA meta ({LEVELS.find((l) => l.id === mixFunnelLevel)?.label})</div>
           <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: 'var(--color-text-secondary)' }}>
             ROAS {fmtRoasMult(mixResult.roasConservador)}
           </div>
@@ -199,7 +200,7 @@ export function MixCalculator(props: Props) {
           <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--color-text-primary)' }}>
             {fmtCurrency(mixResult.cpaAgresivo, inputs.currency)}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA meta ({LEVELS.find((l) => l.id === level)?.label})</div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA meta ({LEVELS.find((l) => l.id === mixFunnelLevel)?.label})</div>
           <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: 'var(--color-text-secondary)' }}>
             ROAS {fmtRoasMult(mixResult.roasAgresivo)}
           </div>

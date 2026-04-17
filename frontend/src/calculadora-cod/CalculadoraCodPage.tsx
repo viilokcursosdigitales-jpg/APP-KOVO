@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { PageHeader } from '../design-system/PageHeader';
 import { ds } from '../design-system/ds';
-import type { CurrencyCode } from './types';
+import type { CurrencyCode, FunnelMixLevel } from './types';
 import { SaveBar } from './components/SaveBar';
 import { InputsPanel } from './components/InputsPanel';
 import { PacksSummary } from './components/PacksSummary';
@@ -17,6 +17,7 @@ export default function CalculadoraCodPage() {
   const saved = useCalculosGuardados();
   const [saveSearch, setSaveSearch] = useState('');
   const [selectedVersionId, setSelectedVersionId] = useState<number | null>(null);
+  const [mixFunnelLevel, setMixFunnelLevel] = useState<FunnelMixLevel>('gen');
 
   useEffect(() => {
     void saved.refreshProductos();
@@ -168,11 +169,17 @@ export default function CalculadoraCodPage() {
       </div>
 
       <div style={{ marginTop: 22 }}>
-        <PygStatement inputs={calc.inputs} packKpis={calc.packKpis} />
+        <PygStatement inputs={calc.inputs} packKpis={calc.packKpis} mixFunnelLevel={mixFunnelLevel} />
       </div>
 
       <div style={{ marginTop: 22 }}>
-        <MixCalculator inputs={calc.inputs} packKpis={calc.packKpis} onMixChange={calc.setMixPct} />
+        <MixCalculator
+          inputs={calc.inputs}
+          packKpis={calc.packKpis}
+          onMixChange={calc.setMixPct}
+          mixFunnelLevel={mixFunnelLevel}
+          onMixFunnelLevelChange={setMixFunnelLevel}
+        />
       </div>
 
       <style>{`
