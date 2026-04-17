@@ -34,6 +34,10 @@ type SeriesPayload = {
   error?: string;
   code?: string;
 };
+type SeriesCacheEntry = { updatedAt: number; payload: SeriesPayload };
+type SeriesCacheStore = Record<string, SeriesCacheEntry>;
+const GANANCIA_SERIES_CACHE_KEY = 'kovo_ganancia_series_cache_v1';
+const GANANCIA_SERIES_CACHE_TTL_MS = 1000 * 60 * 10;
 
 function formatMoney(n: number, currency: string | null | undefined): string {
   if (!Number.isFinite(n)) return '—';
@@ -271,46 +275,95 @@ export default function GananciaDiariaPage() {
   const [rangeStartIdx, setRangeStartIdx] = useState(0);
   const [rangeEndIdx, setRangeEndIdx] = useState(0);
   const [draggingRangeThumb, setDraggingRangeThumb] = useState<'start' | 'end' | null>(null);
+  const hasHydratedFromCache = useRef(false);
   const skipSeriesEffectOnce = useRef(false);
   const appliedDefaultMonthsOnce = useRef(false);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
   const rangeSliderTrackRef = useRef<HTMLDivElement>(null);
 
+  const readSeriesCache = useCallback((key: string): SeriesPayload | null => {
+    try {
+      const raw = localStorage.getItem(GANANCIA_SERIES_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw) as SeriesCacheStore;
+      if (!parsed || typeof parsed !== 'object') return null;
+      const hit = parsed[key];
+      if (!hit || typeof hit !== 'object') return null;
+      if (!Number.isFinite(hit.updatedAt) || Date.now() - hit.updatedAt > GANANCIA_SERIES_CACHE_TTL_MS) return null;
+      const payload = hit.payload;
+      return payload && typeof payload === 'object' ? payload : null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  const writeSeriesCache = useCallback((key: string, payload: SeriesPayload) => {
+    try {
+      const raw = localStorage.getItem(GANANCIA_SERIES_CACHE_KEY);
+      const parsed = raw ? ((JSON.parse(raw) as SeriesCacheStore) ?? {}) : {};
+      const next: SeriesCacheStore = { ...parsed, [key]: { updatedAt: Date.now(), payload } };
+      const keys = Object.keys(next).sort((a, b) => (next[b]?.updatedAt || 0) - (next[a]?.updatedAt || 0));
+      const limited: SeriesCacheStore = {};
+      for (const k of keys.slice(0, 10)) limited[k] = next[k];
+      localStorage.setItem(GANANCIA_SERIES_CACHE_KEY, JSON.stringify(limited));
+    } catch {
+      /* noop */
+    }
+  }, []);
+
   const loadSeries = useCallback(async () => {
-    setSeriesLoading(true);
+    const useServerDefault = !appliedDefaultMonthsOnce.current && selectedMonths.length === 0;
+    const qs = new URLSearchParams();
+    if (!useServerDefault && selectedMonths.length > 0) {
+      qs.set('months', selectedMonths.join(','));
+    }
+    if (selectedProductId) {
+      qs.set('product_id', selectedProductId);
+    }
+    const suffix = qs.toString() ? `?${qs}` : '';
+    const cacheKey = suffix || '__default__';
+    const cached = readSeriesCache(cacheKey);
+    if (cached && !hasHydratedFromCache.current) {
+      hasHydratedFromCache.current = true;
+      setSeriesData(cached);
+      if (cached.available_months?.length) setMonthOptions(cached.available_months);
+      if (Array.isArray(cached.product_options)) setProductOptions(cached.product_options);
+      if (selectedMonths.length === 0 && cached.months_applied?.length) {
+        appliedDefaultMonthsOnce.current = true;
+        skipSeriesEffectOnce.current = true;
+        setSelectedMonths(cached.months_applied);
+      }
+      setSeriesLoading(false);
+    } else {
+      setSeriesLoading(true);
+    }
     setSeriesError('');
     try {
-      const useServerDefault = !appliedDefaultMonthsOnce.current && selectedMonths.length === 0;
-      const qs = new URLSearchParams();
-      if (!useServerDefault && selectedMonths.length > 0) {
-        qs.set('months', selectedMonths.join(','));
-      }
-      if (selectedProductId) {
-        qs.set('product_id', selectedProductId);
-      }
-      const suffix = qs.toString() ? `?${qs}` : '';
       const res = await apiFetch(`/api/ganancia-diaria/series${suffix}`);
       const body = (await res.json().catch(() => ({}))) as SeriesPayload;
       if (!res.ok) {
-        setSeriesData(null);
+        if (!cached) setSeriesData(null);
         setSeriesError(typeof body.error === 'string' ? body.error : 'No se pudo cargar la tabla');
         return;
       }
       setSeriesData(body);
       if (body.available_months?.length) setMonthOptions(body.available_months);
       if (Array.isArray(body.product_options)) setProductOptions(body.product_options);
+      writeSeriesCache(cacheKey, body);
       if (!appliedDefaultMonthsOnce.current && selectedMonths.length === 0 && body.months_applied?.length) {
         appliedDefaultMonthsOnce.current = true;
         skipSeriesEffectOnce.current = true;
         setSelectedMonths(body.months_applied);
       }
     } catch {
-      setSeriesData(null);
-      setSeriesError('Error de red');
+      if (!cached) {
+        setSeriesData(null);
+        setSeriesError('Error de red');
+      }
     } finally {
       setSeriesLoading(false);
     }
-  }, [selectedMonths, selectedProductId]);
+  }, [selectedMonths, selectedProductId, readSeriesCache, writeSeriesCache]);
 
   useEffect(() => {
     if (skipSeriesEffectOnce.current) {

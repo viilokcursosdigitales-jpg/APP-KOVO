@@ -5124,7 +5124,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       return res.json(cachedPayload);
     }
     const sendCached = (payload) => {
-      writeCachedJsonResponse(cacheKey, payload, 90_000);
+      writeCachedJsonResponse(cacheKey, payload, 300_000);
       return res.json(payload);
     };
     const shopRow = await getActiveShopifyConnection(req.organizationId);
