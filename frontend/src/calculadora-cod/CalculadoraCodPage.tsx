@@ -41,10 +41,14 @@ export default function CalculadoraCodPage() {
     const row = list.find((h) => h.id === chosenId);
     if (!row) return;
     const parsed = saved.applyCalculoToInputs(row);
-    if (parsed) {
-      calc.replaceInputs(parsed);
-      setSaveSearch(parsed.productDisplayName || key);
+    if (!parsed) {
+      saved.setError(
+        'Esta versión tiene datos incompletos o dañados y no se pudo cargar. Elige otra versión del historial o revisa el registro en base de datos.',
+      );
+      return;
     }
+    calc.replaceInputs(parsed);
+    setSaveSearch(parsed.productDisplayName || key);
   }, [calc, saveSearch, saved, selectedVersionId]);
 
   const onSave = useCallback(async () => {
