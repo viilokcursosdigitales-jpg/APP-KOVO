@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { MetaDataIssueCard, MetaFetchErrorPanel, MetaLiveDataStrip } from './MetaApiStatusBanner';
@@ -34,6 +34,41 @@ const formatMoney2 = formatMetaMoneyWhole;
 
 function formatPct(n: number, decimals = 1): string {
   return `${n.toFixed(decimals)}%`;
+}
+
+function readMetaInsightsCache(key: string): MetaInsightsCacheEntry | null {
+  try {
+    const raw = localStorage.getItem(META_INSIGHTS_CACHE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as MetaInsightsCacheStore;
+    if (!parsed || typeof parsed !== 'object') return null;
+    const hit = parsed[key];
+    if (!hit || typeof hit !== 'object') return null;
+    if (!Number.isFinite(hit.updatedAt) || Date.now() - hit.updatedAt > META_INSIGHTS_CACHE_TTL_MS) return null;
+    return hit;
+  } catch {
+    return null;
+  }
+}
+
+function writeMetaInsightsCache(key: string, entry: Omit<MetaInsightsCacheEntry, 'updatedAt'>) {
+  try {
+    const raw = localStorage.getItem(META_INSIGHTS_CACHE_KEY);
+    const parsed = raw ? ((JSON.parse(raw) as MetaInsightsCacheStore) ?? {}) : {};
+    const next: MetaInsightsCacheStore = {
+      ...parsed,
+      [key]: {
+        updatedAt: Date.now(),
+        ...entry,
+      },
+    };
+    const keys = Object.keys(next).sort((a, b) => (next[b]?.updatedAt || 0) - (next[a]?.updatedAt || 0));
+    const limited: MetaInsightsCacheStore = {};
+    for (const k of keys.slice(0, 12)) limited[k] = next[k];
+    localStorage.setItem(META_INSIGHTS_CACHE_KEY, JSON.stringify(limited));
+  } catch {
+    /* noop */
+  }
 }
 
 /** ROAS como en Meta Ads (decimales, no redondeo entero). */
@@ -82,6 +117,16 @@ type Totals = {
   roas: number;
   cpa: number;
 };
+type MetaInsightsCacheEntry = {
+  updatedAt: number;
+  rows: InsightRow[];
+  totals: Totals | null;
+  partialErrors: { adAccountId: string; error: string }[];
+  meta: { datePreset: string; fetchedAt: string } | null;
+};
+type MetaInsightsCacheStore = Record<string, MetaInsightsCacheEntry>;
+const META_INSIGHTS_CACHE_KEY = 'kovo_meta_insights_cache_v1';
+const META_INSIGHTS_CACHE_TTL_MS = 1000 * 60 * 10;
 
 type ShopifyOrderAttribution = {
   productIds?: number[];
@@ -716,6 +761,7 @@ export function MetaInsightsPanel({
   const [shopifyComprasByAd, setShopifyComprasByAd] = useState<Record<string, number>>({});
   const [shopifyVentasByLevel, setShopifyVentasByLevel] = useState<Record<string, number>>({});
   const [shopifyPedidosAvailable, setShopifyPedidosAvailable] = useState(false);
+  const hydratedCacheKeyRef = useRef('');
 
   useEffect(() => {
     let c = false;
@@ -889,7 +935,23 @@ export function MetaInsightsPanel({
   }, [period, campaignProductLinks, rows, level]);
 
   useEffect(() => {
-    void loadShopifyPedidosCounts();
+    let cancelled = false;
+    const run = () => {
+      if (cancelled) return;
+      void loadShopifyPedidosCounts();
+    };
+    if (typeof window.requestIdleCallback === 'function') {
+      const id = window.requestIdleCallback(run, { timeout: 1200 });
+      return () => {
+        cancelled = true;
+        window.cancelIdleCallback(id);
+      };
+    }
+    const t = window.setTimeout(run, 420);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
   }, [loadShopifyPedidosCounts]);
 
   const filteredRows = useMemo(() => {
@@ -940,7 +1002,18 @@ export function MetaInsightsPanel({
   );
 
   const load = useCallback(async () => {
-    setLoading(true);
+    const cacheKey = `${level}|${period}|${filterActId || 'all'}`;
+    const cached = readMetaInsightsCache(cacheKey);
+    if (cached && hydratedCacheKeyRef.current !== cacheKey) {
+      hydratedCacheKeyRef.current = cacheKey;
+      setRows(Array.isArray(cached.rows) ? cached.rows : []);
+      setTotals(cached.totals ?? null);
+      setPartialErrors(Array.isArray(cached.partialErrors) ? cached.partialErrors : []);
+      setMeta(cached.meta ?? null);
+      setLoading(false);
+    } else {
+      setLoading(true);
+    }
     setError(null);
     setCode(null);
     try {
@@ -973,10 +1046,21 @@ export function MetaInsightsPanel({
           ? { datePreset: data.datePreset, fetchedAt: data.fetchedAt }
           : null,
       );
+      writeMetaInsightsCache(cacheKey, {
+        rows: Array.isArray(data.rows) ? data.rows : [],
+        totals: data.totals ?? null,
+        partialErrors: Array.isArray(data.partialErrors) ? data.partialErrors : [],
+        meta:
+          data.datePreset && data.fetchedAt
+            ? { datePreset: data.datePreset, fetchedAt: data.fetchedAt }
+            : null,
+      });
     } catch {
-      setError('Error de red al consultar Meta');
-      setRows([]);
-      setTotals(null);
+      if (!cached) {
+        setError('Error de red al consultar Meta');
+        setRows([]);
+        setTotals(null);
+      }
     } finally {
       setLoading(false);
     }

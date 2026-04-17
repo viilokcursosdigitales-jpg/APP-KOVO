@@ -224,7 +224,11 @@ export function AppShell() {
       /* warmup best-effort */
     });
     const runWarmup = () => {
-      const warmupPaths = ['/api/meta/ctr-compare?period=ayer'];
+      const warmupPaths = [
+        '/api/meta/ctr-compare?period=ayer',
+        '/api/meta/insights?period=ayer&level=campaigns',
+        '/api/meta/selected-ad-accounts',
+      ];
       for (const path of warmupPaths) {
         void apiFetch(path).catch(() => {
           /* prefetch best-effort */
