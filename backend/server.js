@@ -2913,13 +2913,51 @@ async function loadMoticoManualOrdersForOrg(organizationId, minIso, maxIso) {
   let sql = `SELECT * FROM motico_manual_orders
              WHERE organization_id = $1
              AND COALESCE(LOWER(NULLIF(BTRIM(shipping_json->>'removed_from_motico'), '')), 'false') <> 'true'`;
-  if (minIso) {
+  if (minIso && maxIso) {
     params.push(String(minIso));
-    sql += ` AND created_at >= $${params.length}::timestamptz`;
-  }
-  if (maxIso) {
+    const minPos = params.length;
     params.push(String(maxIso));
-    sql += ` AND created_at <= $${params.length}::timestamptz`;
+    const maxPos = params.length;
+    params.push(String(minIso).slice(0, 10));
+    const minYmdPos = params.length;
+    params.push(String(maxIso).slice(0, 10));
+    const maxYmdPos = params.length;
+    sql += ` AND (
+      (created_at >= $${minPos}::timestamptz AND created_at <= $${maxPos}::timestamptz)
+      OR (
+        COALESCE(
+          NULLIF(BTRIM(shipping_json->>'assigned_date'), ''),
+          NULLIF(BTRIM(shipping_json->>'fecha_asignada'), ''),
+          NULLIF(BTRIM(shipping_json->>'assignedDate'), '')
+        ) BETWEEN $${minYmdPos} AND $${maxYmdPos}
+      )
+    )`;
+  } else if (minIso) {
+    params.push(String(minIso));
+    const minPos = params.length;
+    params.push(String(minIso).slice(0, 10));
+    const minYmdPos = params.length;
+    sql += ` AND (
+      created_at >= $${minPos}::timestamptz
+      OR COALESCE(
+        NULLIF(BTRIM(shipping_json->>'assigned_date'), ''),
+        NULLIF(BTRIM(shipping_json->>'fecha_asignada'), ''),
+        NULLIF(BTRIM(shipping_json->>'assignedDate'), '')
+      ) >= $${minYmdPos}
+    )`;
+  } else if (maxIso) {
+    params.push(String(maxIso));
+    const maxPos = params.length;
+    params.push(String(maxIso).slice(0, 10));
+    const maxYmdPos = params.length;
+    sql += ` AND (
+      created_at <= $${maxPos}::timestamptz
+      OR COALESCE(
+        NULLIF(BTRIM(shipping_json->>'assigned_date'), ''),
+        NULLIF(BTRIM(shipping_json->>'fecha_asignada'), ''),
+        NULLIF(BTRIM(shipping_json->>'assignedDate'), '')
+      ) <= $${maxYmdPos}
+    )`;
   }
   sql += ` ORDER BY created_at DESC`;
   const { rows } = await pool.query(sql, params);
@@ -4911,6 +4949,13 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         if (unlockReason.length >= 5) shipping_json.removed_from_motico_reason = unlockReason;
       } else if (body.mensajero === 'motico') {
         shipping_json.removed_from_motico = false;
+        // Para pedidos manuales antiguos, registrar la fecha de asignación permite que entren por filtro de fecha en Motico.
+        const assignedDateRaw = String(
+          shipping_json.assigned_date || shipping_json.fecha_asignada || shipping_json.assignedDate || '',
+        ).trim();
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(assignedDateRaw)) {
+          shipping_json.assigned_date = new Date().toISOString().slice(0, 10);
+        }
         delete shipping_json.removed_from_motico_at;
         delete shipping_json.removed_from_motico_reason;
       }
