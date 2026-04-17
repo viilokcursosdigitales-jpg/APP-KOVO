@@ -4,6 +4,7 @@ import { useAuth } from '../auth/AuthContext';
 import { ds } from '../design-system/ds';
 import {
   IconCart,
+  IconFunnel,
   IconLayout,
   IconMegaphone,
   IconPackage,
@@ -48,6 +49,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   ];
   const marketing: NavItem[] = [
     { to: '/meta-ads', label: 'Meta Ads', icon: <IconMegaphone />, moduleId: 'meta_ads' },
+    { to: '/ads-funnel', label: 'Ads Funnel', icon: <IconFunnel />, moduleId: 'ads_funnel' },
     {
       to: '/indicadores-marketing',
       label: 'Indicadores',

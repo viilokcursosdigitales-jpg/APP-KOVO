@@ -80,6 +80,17 @@ export function IconMegaphone() {
 }
 
 /** Objetivos / indicadores de marketing */
+/** Embudo de ads / conversión */
+export function IconFunnel() {
+  return strokeSvg(
+    <>
+      <path d="M4 3h16l-2 6H6L4 3z" />
+      <path d="M6 9h12l-2 6H8L6 9z" />
+      <path d="M8 15h8l-2 7h-4l-2-7z" />
+    </>,
+  );
+}
+
 export function IconTarget() {
   return strokeSvg(
     <>
