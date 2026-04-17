@@ -52,6 +52,11 @@ function formatPercent(numerator: number, denominator: number): string {
   return `${pct.toFixed(2)}%`;
 }
 
+function formatRoas(value: number | null): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `${value.toFixed(2)}x`;
+}
+
 function formatMonthLabel(ym: string): string {
   const m = ym.match(/^(\d{4})-(\d{2})$/);
   if (!m) return ym;
@@ -902,6 +907,9 @@ export default function GananciaDiariaPage() {
                         Publicidad
                       </th>
                       <th style={thColHeadRight}>Utilidad</th>
+                      <th style={thColHeadRight}>ROAS</th>
+                      <th style={thColHeadRight}>ROAS Real</th>
+                      <th style={thColHeadRight}>ROAS Equilibrio</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -909,6 +917,15 @@ export default function GananciaDiariaPage() {
                       const ventasEntregadasRow = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
                       const costoProductoEntregadoRow =
                         row.costo_producto_entregado_total || row.costo_producto_total || 0;
+                      const gastoMetaRow = row.gasto_publicitario_total || 0;
+                      const gastoAdminRow = ventasEntregadasRow * (adminPercent / 100);
+                      const roasRow = gastoMetaRow > 0 ? row.ventas_despachadas_total / gastoMetaRow : null;
+                      const roasRealRow = gastoMetaRow > 0 ? ventasEntregadasRow / gastoMetaRow : null;
+                      const roasEquilibrioRow =
+                        gastoMetaRow > 0
+                          ? (costoProductoEntregadoRow + (row.costo_flete_promedio_total || 0) + gastoAdminRow) /
+                            gastoMetaRow
+                          : null;
                       const utilidadRow = utilidadMostradaPorDia(row, comparable, adminPercent);
                       const rowBg =
                         utilidadRow == null
@@ -952,16 +969,19 @@ export default function GananciaDiariaPage() {
                           {formatPercent(row.costo_flete_promedio_total || 0, ventasEntregadasRow)}
                         </td>
                         <td style={tdColRight}>
-                          {formatMoney(row.gasto_publicitario_total, seriesMetaCur || seriesVentasCur)}
+                          {formatMoney(gastoMetaRow, seriesMetaCur || seriesVentasCur)}
                         </td>
                         <td style={tdColRight}>
-                          {formatPercent(row.gasto_publicitario_total || 0, row.ventas_despachadas_total || 0)}
+                          {formatPercent(gastoMetaRow, row.ventas_despachadas_total || 0)}
                         </td>
                         <td style={tdColRight}>
                           {utilidadRow != null && Number.isFinite(utilidadRow)
                             ? formatMoney(utilidadRow, seriesVentasCur)
                             : '—'}
                         </td>
+                        <td style={tdColRight}>{formatRoas(roasRow)}</td>
+                        <td style={tdColRight}>{formatRoas(roasRealRow)}</td>
+                        <td style={tdColRight}>{formatRoas(roasEquilibrioRow)}</td>
                         </tr>
                       );
                     })}
@@ -1007,6 +1027,20 @@ export default function GananciaDiariaPage() {
                       </td>
                       <td style={{ ...tdColRight, fontWeight: 700 }}>
                         {totals.utilidad != null ? formatMoney(totals.utilidad, seriesVentasCur) : '—'}
+                      </td>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
+                        {formatRoas(totals.gasto > 0 ? totals.ventas / totals.gasto : null)}
+                      </td>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
+                        {formatRoas(totals.gasto > 0 ? totals.ventasEntregadas / totals.gasto : null)}
+                      </td>
+                      <td style={{ ...tdColRight, fontWeight: 700 }}>
+                        {formatRoas(
+                          totals.gasto > 0
+                            ? (totals.costoProductoEntregado + totals.costoFletePromedio + totals.gastoAdministrativo) /
+                                totals.gasto
+                            : null,
+                        )}
                       </td>
                     </tr>
                   </tfoot>
