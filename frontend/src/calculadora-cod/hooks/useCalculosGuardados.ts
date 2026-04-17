@@ -14,14 +14,32 @@ type SavedInputsV1 = {
   productDisplayName?: string;
   costoUnitario?: number;
   packs?: CalculatorInputsState['packs'];
-  fleteEntrega?: number;
+  /** Schema nuevo */
+  fleteIda?: number;
+  cobraFleteDevolucion?: boolean;
   fleteDevolucion?: number;
-  adminPct?: number;
+  canceladosPct?: number;
+  devueltosPct?: number;
+  /** Schema viejo (migración) */
+  fleteEntrega?: number;
   efectividadPct?: number;
+  adminPct?: number;
   metaUtilidadPct?: number;
   currency?: CurrencyCode;
   mixPct?: [number, number, number];
 };
+
+function migrateInputs(raw: Record<string, unknown>): Record<string, unknown> {
+  if ('fleteIda' in raw) return { ...raw };
+  return {
+    ...raw,
+    fleteIda: raw.fleteEntrega ?? 0,
+    cobraFleteDevolucion: (raw.fleteDevolucion ?? 0) > 0,
+    fleteDevolucion: raw.fleteDevolucion ?? 0,
+    canceladosPct: 0,
+    devueltosPct: raw.efectividadPct != null ? Math.max(0, 100 - Number(raw.efectividadPct)) : 20,
+  };
+}
 
 function coercePack(p: unknown, idx: 0 | 1 | 2): Pack {
   const o = p && typeof p === 'object' && !Array.isArray(p) ? (p as Record<string, unknown>) : {};
@@ -36,7 +54,7 @@ function coercePack(p: unknown, idx: 0 | 1 | 2): Pack {
 
 function parseInputsJson(raw: unknown): CalculatorInputsState | null {
   if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
-  const o = raw as SavedInputsV1;
+  const o = migrateInputs(raw as Record<string, unknown>) as SavedInputsV1;
   if (!Array.isArray(o.packs) || o.packs.length !== 3) return null;
   const packs = [coercePack(o.packs[0], 0), coercePack(o.packs[1], 1), coercePack(o.packs[2], 2)] as [
     Pack,
@@ -48,14 +66,17 @@ function parseInputsJson(raw: unknown): CalculatorInputsState | null {
     Array.isArray(o.mixPct) && o.mixPct.length === 3
       ? ([Number(o.mixPct[0]), Number(o.mixPct[1]), Number(o.mixPct[2])] as [number, number, number])
       : ([34, 33, 33] as [number, number, number]);
+
   return {
     productDisplayName: typeof o.productDisplayName === 'string' ? o.productDisplayName : '',
     costoUnitario: Number.isFinite(Number(o.costoUnitario)) ? Number(o.costoUnitario) : 0,
     packs,
-    fleteEntrega: Number.isFinite(Number(o.fleteEntrega)) ? Number(o.fleteEntrega) : 0,
+    fleteIda: Number.isFinite(Number(o.fleteIda)) ? Number(o.fleteIda) : 0,
+    cobraFleteDevolucion: Boolean(o.cobraFleteDevolucion),
     fleteDevolucion: Number.isFinite(Number(o.fleteDevolucion)) ? Number(o.fleteDevolucion) : 0,
+    canceladosPct: Number.isFinite(Number(o.canceladosPct)) ? Number(o.canceladosPct) : 20,
+    devueltosPct: Number.isFinite(Number(o.devueltosPct)) ? Number(o.devueltosPct) : 20,
     adminPct: Number.isFinite(Number(o.adminPct)) ? Number(o.adminPct) : 0,
-    efectividadPct: Number.isFinite(Number(o.efectividadPct)) ? Number(o.efectividadPct) : 0,
     metaUtilidadPct: Number.isFinite(Number(o.metaUtilidadPct)) ? Number(o.metaUtilidadPct) : 0,
     currency: cur,
     mixPct: mix,

@@ -8,10 +8,12 @@ type Props = {
   onProductName: (v: string) => void;
   onCostoUnitario: (n: number) => void;
   onPackField: (id: PackId, field: 'units' | 'precioVenta' | 'label', value: number | string) => void;
-  onFleteEntrega: (n: number) => void;
+  onFleteIda: (n: number) => void;
+  onCobraFleteDevolucion: (v: boolean) => void;
   onFleteDevolucion: (n: number) => void;
+  onCanceladosPct: (n: number) => void;
+  onDevueltosPct: (n: number) => void;
   onAdmin: (n: number) => void;
-  onEfectividad: (n: number) => void;
   onMetaUtilidad: (n: number) => void;
 };
 
@@ -31,10 +33,11 @@ function card(children: ReactNode) {
   );
 }
 
-function numInput(value: number, onChange: (n: number) => void) {
+function numInput(value: number, onChange: (n: number) => void, disabled?: boolean) {
   return (
     <input
       type="number"
+      disabled={disabled}
       value={Number.isFinite(value) ? value : 0}
       onChange={(e) => onChange(Number.parseFloat(e.target.value) || 0)}
       style={{
@@ -43,9 +46,10 @@ function numInput(value: number, onChange: (n: number) => void) {
         padding: '8px 10px',
         borderRadius: 8,
         border: `1px solid ${ds.borderCard}`,
-        background: 'var(--color-bg-app)',
+        background: disabled ? 'var(--color-bg-subtle)' : 'var(--color-bg-app)',
         color: 'var(--color-text-primary)',
         fontSize: 13,
+        opacity: disabled ? 0.65 : 1,
       }}
     />
   );
@@ -81,6 +85,15 @@ function slider(
 
 export function InputsPanel(props: Props) {
   const { inputs } = props;
+  const pCanc = inputs.canceladosPct / 100;
+  const pDev = inputs.devueltosPct / 100;
+  const efEnv = 1 - pCanc;
+  const efEnt = 1 - pDev;
+  const efTot = efEnv * efEnt;
+  const nGen = 100;
+  const nDesp = Math.round(nGen * efEnv);
+  const nEnt = Math.round(nGen * efTot);
+
   return (
     <div>
       {card(
@@ -162,18 +175,73 @@ export function InputsPanel(props: Props) {
           <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 8 }}>
             Costos operativos
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 10 }}>
-            <div>
-              <label style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Flete entrega</label>
-              {numInput(inputs.fleteEntrega, props.onFleteEntrega)}
-            </div>
-            <div>
-              <label style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Flete devolución</label>
-              {numInput(inputs.fleteDevolucion, props.onFleteDevolucion)}
-            </div>
+          <div style={{ marginBottom: 10 }}>
+            <label style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Flete ida (por despacho)</label>
+            {numInput(inputs.fleteIda, props.onFleteIda)}
           </div>
-          {slider('% Admin', inputs.adminPct, 0, 25, 0.5, (n) => fmtPercent(n, 1), props.onAdmin)}
-          {slider('Efectividad entrega', inputs.efectividadPct, 0, 100, 1, (n) => fmtPercent(n, 0), props.onEfectividad)}
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 10,
+              fontSize: 12,
+              fontWeight: 600,
+              color: 'var(--color-text-secondary)',
+              cursor: 'pointer',
+              marginBottom: 8,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={inputs.cobraFleteDevolucion}
+              onChange={(e) => props.onCobraFleteDevolucion(e.target.checked)}
+            />
+            Cobrar flete de devolución (devueltos)
+          </label>
+          <div>
+            <label style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Flete devolución</label>
+            {numInput(inputs.fleteDevolucion, props.onFleteDevolucion, !inputs.cobraFleteDevolucion)}
+          </div>
+          {slider('% Admin (sobre ticket)', inputs.adminPct, 0, 25, 0.5, (n) => fmtPercent(n, 1), props.onAdmin)}
+        </>,
+      )}
+
+      {card(
+        <>
+          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 8 }}>
+            Embudo (sobre 100 pedidos generados)
+          </div>
+          {slider('Cancelados (no despachan)', inputs.canceladosPct, 0, 80, 1, (n) => fmtPercent(n, 0), props.onCanceladosPct)}
+          {slider('Devueltos (% del despachado)', inputs.devueltosPct, 0, 80, 1, (n) => fmtPercent(n, 0), props.onDevueltosPct)}
+          <div
+            style={{
+              marginTop: 14,
+              display: 'grid',
+              gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
+              gap: 8,
+              textAlign: 'center',
+            }}
+          >
+            {[
+              { k: 'Generados', v: nGen, hint: '100' },
+              { k: 'Despachados', v: nDesp, hint: fmtPercent(efEnv * 100, 0) },
+              { k: 'Entregados', v: nEnt, hint: fmtPercent(efTot * 100, 0) },
+            ].map((c) => (
+              <div
+                key={c.k}
+                style={{
+                  background: 'var(--color-bg-subtle)',
+                  border: `1px solid ${ds.borderCard}`,
+                  borderRadius: 12,
+                  padding: '10px 8px',
+                }}
+              >
+                <div style={{ fontSize: 10, fontWeight: 700, color: 'var(--color-text-hint)' }}>{c.k}</div>
+                <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--color-text-primary)', marginTop: 4 }}>{c.v}</div>
+                <div style={{ fontSize: 10, color: 'var(--color-text-muted)', marginTop: 2 }}>{c.hint} del total</div>
+              </div>
+            ))}
+          </div>
         </>,
       )}
 
@@ -186,7 +254,7 @@ export function InputsPanel(props: Props) {
         }}
       >
         <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-brand)', marginBottom: 8 }}>Meta de utilidad</div>
-        {slider('Meta utilidad / ticket', inputs.metaUtilidadPct, 0, 40, 0.5, (n) => fmtPercent(n, 1), props.onMetaUtilidad)}
+        {slider('Meta utilidad / ticket (sobre ventas efectivas)', inputs.metaUtilidadPct, 0, 40, 0.5, (n) => fmtPercent(n, 1), props.onMetaUtilidad)}
         <div style={{ marginTop: 10, fontSize: 22, fontWeight: 800, color: 'var(--color-brand)' }}>
           {fmtPercent(inputs.metaUtilidadPct, 1)}
         </div>

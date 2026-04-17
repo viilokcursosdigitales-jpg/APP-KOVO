@@ -18,22 +18,11 @@ export function PygStatement(props: Props) {
   const kpi = useMemo(() => props.packKpis.find((k) => k.packId === packId)!, [props.packKpis, packId]);
 
   const pyg = useMemo(
-    () =>
-      calcPyg(
-        pedA,
-        pedB,
-        pack,
-        props.inputs.costoUnitario,
-        props.inputs.fleteEntrega,
-        props.inputs.fleteDevolucion,
-        props.inputs.adminPct,
-        props.inputs.efectividadPct,
-        kpi.cpaMeta,
-      ),
-    [pedA, pedB, pack, props.inputs, kpi.cpaMeta],
+    () => calcPyg(pedA, pedB, pack, props.inputs, kpi.cpaGenMeta),
+    [pedA, pedB, pack, props.inputs, kpi.cpaGenMeta],
   );
 
-  const cpaLabel = kpi.cpaMeta > 0 ? fmtCurrency(kpi.cpaMeta, props.inputs.currency) : '—';
+  const cpaLabel = kpi.cpaGenMeta > 0 ? fmtCurrency(kpi.cpaGenMeta, props.inputs.currency) : '—';
 
   return (
     <div
@@ -130,14 +119,14 @@ export function PygStatement(props: Props) {
               };
               const neg = row.negative;
               const bg = row.final ? 'var(--color-brand-bg)' : row.total ? 'var(--color-bg-subtle)' : 'transparent';
-              const padLeft = row.sub ? 18 : 6;
+              const padLeft = row.subSub ? 26 : row.sub ? 18 : 6;
               return (
                 <tr key={`${row.concepto}-${idx}`}>
                   <td
                     style={{
                       padding: '8px 6px',
                       paddingLeft: padLeft,
-                      fontSize: row.sub ? 12 : 13,
+                      fontSize: row.subSub ? 11 : row.sub ? 12 : 13,
                       fontWeight: row.final ? 800 : row.total ? 700 : 500,
                       color: row.muted ? 'var(--color-text-muted)' : row.final ? 'var(--color-brand)' : 'var(--color-text-secondary)',
                       background: bg,
@@ -184,7 +173,7 @@ export function PygStatement(props: Props) {
           </tbody>
         </table>
       </div>
-      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-hint)' }}>CPA meta aplicado: {cpaLabel}</div>
+      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--color-text-hint)' }}>CPA meta generado aplicado: {cpaLabel}</div>
     </div>
   );
 }

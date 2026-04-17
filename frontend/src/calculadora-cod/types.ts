@@ -2,6 +2,9 @@ export type CurrencyCode = 'COP' | 'USD' | 'MXN';
 
 export type PackId = 1 | 2 | 3;
 
+/** Nivel de embudo para mezcla / tarjetas (CPA·ROAS meta). */
+export type FunnelMixLevel = 'gen' | 'desp' | 'entr';
+
 export interface Pack {
   id: PackId;
   label: string;
@@ -13,10 +16,12 @@ export interface CalculatorInputsState {
   productDisplayName: string;
   costoUnitario: number;
   packs: [Pack, Pack, Pack];
-  fleteEntrega: number;
+  fleteIda: number;
+  cobraFleteDevolucion: boolean;
   fleteDevolucion: number;
+  canceladosPct: number;
+  devueltosPct: number;
   adminPct: number;
-  efectividadPct: number;
   metaUtilidadPct: number;
   currency: CurrencyCode;
   mixPct: [number, number, number];
@@ -25,24 +30,31 @@ export interface CalculatorInputsState {
 export interface PackKpis {
   packId: PackId;
   label: string;
-  precioVenta: number;
-  costoProducto: number;
-  adminMonto: number;
-  gananciaSiEntrega: number;
-  perdidaSiDevuelve: number;
-  efectividad: number;
-  gananciaEsperada: number;
-  cpaEquilibrio: number;
-  roasEquilibrio: number | null;
-  utilidadDeseada: number;
-  cpaMeta: number;
-  roasMeta: number | null;
-  margenReal: number;
+  precio: number;
+  unidades: number;
+  gananciaBruta: number;
+  margen: number;
+  efEnvios: number;
+  efEntrega: number;
+  efTotal: number;
+  cpaGenEq: number;
+  roasGenEq: number | null;
+  cpaDespEq: number;
+  roasDespEq: number | null;
+  cpaEntrEq: number;
+  roasEntrEq: number | null;
+  cpaGenMeta: number;
+  roasGenMeta: number | null;
+  cpaDespMeta: number;
+  roasDespMeta: number | null;
+  cpaEntrMeta: number;
+  roasEntrMeta: number | null;
 }
 
 export interface PygRow {
   concepto: string;
   sub?: boolean;
+  subSub?: boolean;
   muted?: boolean;
   negative?: boolean;
   total?: boolean;

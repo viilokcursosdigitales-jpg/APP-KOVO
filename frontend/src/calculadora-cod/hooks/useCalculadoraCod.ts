@@ -12,10 +12,12 @@ const initialInputs: CalculatorInputsState = {
   productDisplayName: '',
   costoUnitario: 23_000,
   packs: defaultPacks,
-  fleteEntrega: 20_000,
+  fleteIda: 20_000,
+  cobraFleteDevolucion: true,
   fleteDevolucion: 20_000,
+  canceladosPct: 20,
+  devueltosPct: 20,
   adminPct: 4,
-  efectividadPct: 80,
   metaUtilidadPct: 10,
   currency: 'COP',
   mixPct: [34, 33, 33],
@@ -51,20 +53,28 @@ export function useCalculadoraCod() {
     }));
   }, []);
 
-  const setFleteEntrega = useCallback((n: number) => {
-    setInputs((s) => ({ ...s, fleteEntrega: n }));
+  const setFleteIda = useCallback((n: number) => {
+    setInputs((s) => ({ ...s, fleteIda: n }));
+  }, []);
+
+  const setCobraFleteDevolucion = useCallback((v: boolean) => {
+    setInputs((s) => ({ ...s, cobraFleteDevolucion: v }));
   }, []);
 
   const setFleteDevolucion = useCallback((n: number) => {
     setInputs((s) => ({ ...s, fleteDevolucion: n }));
   }, []);
 
-  const setAdminPct = useCallback((n: number) => {
-    setInputs((s) => ({ ...s, adminPct: n }));
+  const setCanceladosPct = useCallback((n: number) => {
+    setInputs((s) => ({ ...s, canceladosPct: n }));
   }, []);
 
-  const setEfectividadPct = useCallback((n: number) => {
-    setInputs((s) => ({ ...s, efectividadPct: n }));
+  const setDevueltosPct = useCallback((n: number) => {
+    setInputs((s) => ({ ...s, devueltosPct: n }));
+  }, []);
+
+  const setAdminPct = useCallback((n: number) => {
+    setInputs((s) => ({ ...s, adminPct: n }));
   }, []);
 
   const setMetaUtilidadPct = useCallback((n: number) => {
@@ -88,18 +98,14 @@ export function useCalculadoraCod() {
   }, []);
 
   const packKpis: [PackKpis, PackKpis, PackKpis] = useMemo(() => {
-    const { costoUnitario, packs, fleteEntrega, fleteDevolucion, adminPct, efectividadPct, metaUtilidadPct } = inputs;
-    return [
-      calcPack(costoUnitario, packs[0], fleteEntrega, fleteDevolucion, adminPct, efectividadPct, metaUtilidadPct),
-      calcPack(costoUnitario, packs[1], fleteEntrega, fleteDevolucion, adminPct, efectividadPct, metaUtilidadPct),
-      calcPack(costoUnitario, packs[2], fleteEntrega, fleteDevolucion, adminPct, efectividadPct, metaUtilidadPct),
-    ];
+    const { packs } = inputs;
+    return [calcPack(packs[0], inputs), calcPack(packs[1], inputs), calcPack(packs[2], inputs)];
   }, [inputs]);
 
   const bestId = useMemo(() => bestPackId([...packKpis]), [packKpis]);
 
   const mixResult = useMemo(
-    () => calcMix(inputs.mixPct, [inputs.packs[0], inputs.packs[1], inputs.packs[2]], packKpis),
+    () => calcMix(inputs.mixPct, inputs.packs, packKpis, 'gen'),
     [inputs.mixPct, inputs.packs, packKpis],
   );
 
@@ -122,10 +128,12 @@ export function useCalculadoraCod() {
     setProductDisplayName,
     setCostoUnitario,
     setPackField,
-    setFleteEntrega,
+    setFleteIda,
+    setCobraFleteDevolucion,
     setFleteDevolucion,
+    setCanceladosPct,
+    setDevueltosPct,
     setAdminPct,
-    setEfectividadPct,
     setMetaUtilidadPct,
     setMixPct,
     replaceInputs,

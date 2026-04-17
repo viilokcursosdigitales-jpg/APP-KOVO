@@ -145,15 +145,17 @@ export default function CalculadoraCodPage() {
             onProductName={calc.setProductDisplayName}
             onCostoUnitario={calc.setCostoUnitario}
             onPackField={calc.setPackField}
-            onFleteEntrega={calc.setFleteEntrega}
+            onFleteIda={calc.setFleteIda}
+            onCobraFleteDevolucion={calc.setCobraFleteDevolucion}
             onFleteDevolucion={calc.setFleteDevolucion}
+            onCanceladosPct={calc.setCanceladosPct}
+            onDevueltosPct={calc.setDevueltosPct}
             onAdmin={calc.setAdminPct}
-            onEfectividad={calc.setEfectividadPct}
             onMetaUtilidad={calc.setMetaUtilidadPct}
           />
         </div>
         <div style={{ minWidth: 0 }}>
-          <PacksSummary currency={calc.inputs.currency} packKpis={calc.packKpis} bestPackId={calc.bestId} />
+          <PacksSummary currency={calc.inputs.currency} inputs={calc.inputs} packKpis={calc.packKpis} bestPackId={calc.bestId} />
         </div>
       </div>
 
@@ -166,7 +168,7 @@ export default function CalculadoraCodPage() {
       </div>
 
       <div style={{ marginTop: 22 }}>
-        <MixCalculator inputs={calc.inputs} packKpis={calc.packKpis} mixResult={calc.mixResult} onMixChange={calc.setMixPct} />
+        <MixCalculator inputs={calc.inputs} packKpis={calc.packKpis} onMixChange={calc.setMixPct} />
       </div>
 
       <style>{`

@@ -1,10 +1,12 @@
+import type { ReactNode } from 'react';
 import { ds } from '../../design-system/ds';
-import type { CurrencyCode, PackId, PackKpis } from '../types';
+import type { CalculatorInputsState, CurrencyCode, PackId, PackKpis } from '../types';
 import { packHealth } from '../utils/calculations';
 import { fmtCurrency, fmtPercent, fmtRoasMult } from '../utils/formatters';
 
 type Props = {
   currency: CurrencyCode;
+  inputs: CalculatorInputsState;
   packKpis: [PackKpis, PackKpis, PackKpis];
   bestPackId: PackId;
 };
@@ -49,121 +51,238 @@ function healthLabel(h: ReturnType<typeof packHealth>) {
   return 'Crítico';
 }
 
+function th(text: string, align: 'left' | 'right' = 'left') {
+  return (
+    <th
+      style={{
+        textAlign: align,
+        fontSize: 11,
+        fontWeight: 800,
+        color: 'var(--color-text-hint)',
+        padding: '10px 8px',
+        borderBottom: `1px solid ${ds.borderCard}`,
+        whiteSpace: 'nowrap',
+      }}
+    >
+      {text}
+    </th>
+  );
+}
+
 export function PacksSummary(props: Props) {
-  const { currency, packKpis, bestPackId } = props;
+  const { currency, inputs, packKpis, bestPackId } = props;
+  const k0 = packKpis[0];
+  const nGen = 100;
+  const nDesp = Math.round(nGen * k0.efEnvios);
+  const nEnt = Math.round(nGen * k0.efTotal);
+
+  const rows: { label: string; sub?: boolean; cells: (k: PackKpis) => ReactNode; bold?: boolean; accent?: boolean }[] = [
+    {
+      label: 'Precio venta',
+      cells: (k) => fmtCurrency(k.precio, currency),
+    },
+    {
+      label: 'Unidades',
+      cells: (k) => k.unidades,
+    },
+    {
+      label: 'Ganancia bruta / pedido gen.',
+      bold: true,
+      cells: (k) => (
+        <span style={{ color: k.gananciaBruta >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)' }}>
+          {fmtCurrency(k.gananciaBruta, currency)}
+        </span>
+      ),
+    },
+    {
+      label: 'Margen % (s/ ventas efectivas)',
+      cells: (k) => fmtPercent(k.margen, 1),
+    },
+    {
+      label: 'CPA equilibrio · generado',
+      sub: true,
+      cells: (k) => fmtCurrency(k.cpaGenEq, currency),
+    },
+    {
+      label: 'ROAS equilibrio · generado',
+      sub: true,
+      cells: (k) => fmtRoasMult(k.roasGenEq),
+    },
+    {
+      label: 'CPA equilibrio · despachado',
+      sub: true,
+      cells: (k) => fmtCurrency(k.cpaDespEq, currency),
+    },
+    {
+      label: 'ROAS equilibrio · despachado',
+      sub: true,
+      cells: (k) => fmtRoasMult(k.roasDespEq),
+    },
+    {
+      label: 'CPA equilibrio · entregado',
+      sub: true,
+      cells: (k) => fmtCurrency(k.cpaEntrEq, currency),
+    },
+    {
+      label: 'ROAS equilibrio · entregado',
+      sub: true,
+      cells: (k) => fmtRoasMult(k.roasEntrEq),
+    },
+    {
+      label: 'CPA meta · generado',
+      accent: true,
+      cells: (k) => fmtCurrency(k.cpaGenMeta, currency),
+    },
+    {
+      label: 'ROAS meta · generado',
+      accent: true,
+      cells: (k) => fmtRoasMult(k.roasGenMeta),
+    },
+    {
+      label: 'CPA meta · despachado',
+      accent: true,
+      cells: (k) => fmtCurrency(k.cpaDespMeta, currency),
+    },
+    {
+      label: 'ROAS meta · despachado',
+      accent: true,
+      cells: (k) => fmtRoasMult(k.roasDespMeta),
+    },
+    {
+      label: 'CPA meta · entregado',
+      accent: true,
+      cells: (k) => fmtCurrency(k.cpaEntrMeta, currency),
+    },
+    {
+      label: 'ROAS meta · entregado',
+      accent: true,
+      cells: (k) => fmtRoasMult(k.roasEntrMeta),
+    },
+  ];
+
   return (
     <div
       style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(3, minmax(0, 1fr))',
-        gap: 'var(--grid-gap)',
+        background: 'var(--color-bg-card)',
+        border: `1px solid ${ds.borderCard}`,
+        borderRadius: 14,
+        padding: '14px 14px 12px',
       }}
-      className="calc-cod-pack-grid"
     >
-      {packKpis.map((k) => {
-        const h = packHealth(k.margenReal);
-        const isBest = k.packId === bestPackId;
-        const gainColor = k.gananciaEsperada >= 0 ? 'var(--color-success-text)' : 'var(--color-danger-text)';
-        return (
-          <div
-            key={k.packId}
-            style={{
-              background: 'var(--color-bg-card)',
-              borderRadius: 16,
-              border: isBest ? `2px solid var(--color-brand)` : `1px solid ${ds.borderCard}`,
-              padding: '14px 14px 12px',
-              boxShadow: isBest ? `0 0 0 6px var(--color-brand-bg)` : undefined,
-            }}
-          >
-            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, marginBottom: 6 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-                <span
-                  aria-hidden
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 10, marginBottom: 10 }}>
+        <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--color-text-primary)' }}>Resumen por pack</div>
+        <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--color-text-muted)' }}>
+          100 generados → {nDesp} despachados → {nEnt} entregados
+        </div>
+      </div>
+      <div style={{ fontSize: 11, color: 'var(--color-text-hint)', marginBottom: 10 }}>
+        Embudo actual: {fmtPercent(inputs.canceladosPct, 0)} cancelados · {fmtPercent(inputs.devueltosPct, 0)} devueltos del despachado
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
+          <thead>
+            <tr>
+              {th('Métrica')}
+              {packKpis.map((k) => {
+                const h = packHealth(k.margen);
+                const isBest = k.packId === bestPackId;
+                return (
+                  <th
+                    key={k.packId}
+                    style={{
+                      textAlign: 'center',
+                      fontSize: 12,
+                      fontWeight: 800,
+                      color: 'var(--color-text-primary)',
+                      padding: '10px 8px',
+                      borderBottom: `1px solid ${ds.borderCard}`,
+                      background: isBest ? 'var(--color-brand-bg)' : 'transparent',
+                      borderLeft: isBest ? '2px solid var(--color-brand)' : `1px solid ${ds.borderRow}`,
+                      borderRight: isBest ? '2px solid var(--color-brand)' : undefined,
+                      borderTop: isBest ? '2px solid var(--color-brand)' : undefined,
+                      borderTopLeftRadius: isBest ? 10 : 0,
+                      borderTopRightRadius: isBest ? 10 : 0,
+                    }}
+                  >
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 6 }}>
+                      <span>{k.label}</span>
+                      <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap', justifyContent: 'center' }}>
+                        {isBest ? badge('⭐ Mejor', 'brand') : badge(healthLabel(h), h)}
+                      </span>
+                    </div>
+                  </th>
+                );
+              })}
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td
+                style={{
+                  fontSize: 11,
+                  fontWeight: 700,
+                  color: 'var(--color-text-hint)',
+                  padding: '8px 8px',
+                  borderBottom: `1px solid ${ds.borderRow}`,
+                }}
+              >
+                Ef. envíos / entrega / total
+              </td>
+              {packKpis.map((k) => (
+                <td
+                  key={k.packId}
                   style={{
-                    width: 8,
-                    height: 8,
-                    borderRadius: 99,
-                    background:
-                      h === 'success'
-                        ? 'var(--color-success-text)'
-                        : h === 'warning'
-                          ? 'var(--color-warning-text)'
-                          : 'var(--color-danger-text)',
-                    flexShrink: 0,
-                  }}
-                />
-                <div
-                  style={{
-                    fontSize: 15,
-                    fontWeight: 800,
-                    color: 'var(--color-text-primary)',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
+                    textAlign: 'center',
+                    fontSize: 12,
+                    fontWeight: 700,
+                    color: 'var(--color-text-secondary)',
+                    padding: '8px 8px',
+                    borderBottom: `1px solid ${ds.borderRow}`,
                   }}
                 >
-                  {k.label}
-                </div>
-              </div>
-              {isBest ? badge('⭐ Mejor', 'brand') : badge(healthLabel(h), h)}
-            </div>
-            <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginBottom: 10 }}>
-              Precio · venta · {fmtCurrency(k.precioVenta, currency)}
-            </div>
-            <div style={{ borderTop: `1px solid ${ds.borderRow}`, paddingTop: 10 }}>
-              <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.06em', color: 'var(--color-text-hint)' }}>
-                GANANCIA ESPERADA
-              </div>
-              <div style={{ fontSize: 22, fontWeight: 900, color: gainColor, marginTop: 4 }}>{fmtCurrency(k.gananciaEsperada, currency)}</div>
-              <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 2 }}>por cada pedido</div>
-            </div>
-            <div
-              style={{
-                marginTop: 10,
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 8,
-                borderTop: `1px solid ${ds.borderRow}`,
-                paddingTop: 10,
-              }}
-            >
-              <div>
-                <div style={{ fontSize: 10, color: 'var(--color-text-hint)' }}>CPA equilibrio</div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text-secondary)' }}>
-                  {fmtCurrency(k.cpaEquilibrio, currency)}
-                </div>
-              </div>
-              <div>
-                <div style={{ fontSize: 10, color: 'var(--color-text-hint)' }}>ROAS equilibrio</div>
-                <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--color-text-secondary)' }}>{fmtRoasMult(k.roasEquilibrio)}</div>
-              </div>
-              <div style={{ background: 'var(--color-brand-bg)', borderRadius: 10, padding: 8 }}>
-                <div style={{ fontSize: 10, color: 'var(--color-brand)', fontWeight: 700 }}>CPA meta</div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--color-brand)' }}>{fmtCurrency(k.cpaMeta, currency)}</div>
-              </div>
-              <div style={{ background: 'var(--color-brand-bg)', borderRadius: 10, padding: 8 }}>
-                <div style={{ fontSize: 10, color: 'var(--color-brand)', fontWeight: 700 }}>ROAS meta</div>
-                <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--color-brand)' }}>{fmtRoasMult(k.roasMeta)}</div>
-              </div>
-            </div>
-            <div style={{ marginTop: 10, borderTop: `1px solid ${ds.borderRow}`, paddingTop: 8 }}>
-              <div style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>
-                Margen real{' '}
-                <strong style={{ color: h === 'success' ? 'var(--color-success-text)' : h === 'warning' ? 'var(--color-warning-text)' : 'var(--color-danger-text)' }}>
-                  {fmtPercent(k.margenReal, 1)}
-                </strong>
-              </div>
-            </div>
-          </div>
-        );
-      })}
-      <style>{`
-        @media (max-width: 900px) {
-          .calc-cod-pack-grid {
-            grid-template-columns: 1fr !important;
-          }
-        }
-      `}</style>
+                  {fmtPercent(k.efEnvios * 100, 0)} · {fmtPercent(k.efEntrega * 100, 0)} · {fmtPercent(k.efTotal * 100, 0)}
+                </td>
+              ))}
+            </tr>
+            {rows.map((r) => (
+              <tr key={r.label}>
+                <td
+                  style={{
+                    padding: '8px 8px',
+                    paddingLeft: r.sub ? 16 : 8,
+                    fontSize: r.sub ? 11 : 12,
+                    fontWeight: r.bold ? 800 : 600,
+                    color: r.accent ? 'var(--color-brand)' : 'var(--color-text-muted)',
+                    borderBottom: `1px solid ${ds.borderRow}`,
+                    maxWidth: 200,
+                  }}
+                >
+                  {r.label}
+                </td>
+                {packKpis.map((k) => {
+                  const isBest = k.packId === bestPackId;
+                  return (
+                    <td
+                      key={k.packId}
+                      style={{
+                        textAlign: 'right',
+                        fontSize: r.bold ? 14 : 13,
+                        fontWeight: r.bold ? 900 : 600,
+                        padding: '8px 8px',
+                        borderBottom: `1px solid ${ds.borderRow}`,
+                        background: isBest && (r.accent || r.bold) ? 'var(--color-brand-bg)' : isBest ? 'var(--color-brand-bg)' : 'transparent',
+                        color: r.accent ? 'var(--color-brand)' : 'var(--color-text-secondary)',
+                      }}
+                    >
+                      {r.cells(k)}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

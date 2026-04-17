@@ -1,45 +1,60 @@
-import { useMemo } from 'react';
+import { useMemo, useState } from 'react';
 import { ds } from '../../design-system/ds';
-import type { CalculatorInputsState, MixResult, PackKpis } from '../types';
+import type { CalculatorInputsState, FunnelMixLevel, PackKpis } from '../types';
+import { calcMix } from '../utils/calculations';
 import { fmtCurrency, fmtPercent, fmtRoasMult } from '../utils/formatters';
 
 type Props = {
   inputs: CalculatorInputsState;
   packKpis: [PackKpis, PackKpis, PackKpis];
-  mixResult: MixResult;
   onMixChange: (idx: 0 | 1 | 2, v: number) => void;
 };
 
+const LEVELS: { id: FunnelMixLevel; label: string }[] = [
+  { id: 'gen', label: 'Generado' },
+  { id: 'desp', label: 'Despachado' },
+  { id: 'entr', label: 'Entregado' },
+];
+
 export function MixCalculator(props: Props) {
-  const { inputs, packKpis, mixResult } = props;
+  const { inputs, packKpis } = props;
+  const [level, setLevel] = useState<FunnelMixLevel>('gen');
+
+  const mixResult = useMemo(
+    () => calcMix(inputs.mixPct, inputs.packs, packKpis, level),
+    [inputs.mixPct, inputs.packs, packKpis, level],
+  );
+
   const sumOk = Math.abs(mixResult.sumaPct - 100) < 0.5;
 
   const projection = useMemo(() => {
-    const ef = inputs.efectividadPct / 100;
+    const efTot = packKpis[0].efTotal;
     const targetEnt = 100;
-    const N = ef > 0 ? targetEnt / ef : 0;
+    const nGen = efTot > 0 ? targetEnt / efTot : 0;
     const w =
       mixResult.sumaPct > 0
         ? mixResult.weights
         : ([1 / 3, 1 / 3, 1 / 3] as [number, number, number]);
     const rows = packKpis.map((k, i) => {
-      const pedidos = N * w[i];
-      const entregados = pedidos * ef;
-      const ventas = entregados * k.precioVenta;
-      const ganancia = pedidos * k.gananciaEsperada;
+      const pedidosGen = nGen * w[i];
+      const entregados = pedidosGen * efTot;
+      const ventas = entregados * k.precio;
+      const ganancia = pedidosGen * k.gananciaBruta;
       return {
         label: k.label,
         pct: inputs.mixPct[i],
-        pedidos,
+        pedidosGen,
+        entregados,
         ventas,
         ganancia,
       };
     });
-    const totPed = rows.reduce((a, r) => a + r.pedidos, 0);
+    const totPedGen = rows.reduce((a, r) => a + r.pedidosGen, 0);
+    const totEnt = rows.reduce((a, r) => a + r.entregados, 0);
     const totVentas = rows.reduce((a, r) => a + r.ventas, 0);
     const totGan = rows.reduce((a, r) => a + r.ganancia, 0);
-    return { rows, totPed, totVentas, totGan };
-  }, [inputs.efectividadPct, inputs.mixPct, mixResult, packKpis]);
+    return { rows, totPedGen, totEnt, totVentas, totGan };
+  }, [inputs.mixPct, mixResult, packKpis]);
 
   return (
     <div
@@ -52,6 +67,34 @@ export function MixCalculator(props: Props) {
     >
       <div style={{ fontSize: 14, fontWeight: 800, color: 'var(--color-text-primary)', marginBottom: 12 }}>
         Calculadora de mezcla
+      </div>
+
+      <div style={{ marginBottom: 14 }}>
+        <div style={{ fontSize: 11, fontWeight: 700, color: 'var(--color-text-hint)', marginBottom: 6 }}>Nivel embudo (CPA·ROAS meta)</div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+          {LEVELS.map((lv) => {
+            const active = level === lv.id;
+            return (
+              <button
+                key={lv.id}
+                type="button"
+                onClick={() => setLevel(lv.id)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: 999,
+                  border: active ? `1px solid var(--color-brand)` : `1px solid ${ds.borderCard}`,
+                  background: active ? 'var(--color-brand-bg)' : 'var(--color-bg-subtle)',
+                  color: active ? 'var(--color-brand)' : 'var(--color-text-muted)',
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                {lv.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
       <div
@@ -121,7 +164,7 @@ export function MixCalculator(props: Props) {
           <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--color-text-primary)' }}>
             {fmtCurrency(mixResult.cpaConservador, inputs.currency)}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA</div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA meta ({LEVELS.find((l) => l.id === level)?.label})</div>
           <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: 'var(--color-text-secondary)' }}>
             ROAS {fmtRoasMult(mixResult.roasConservador)}
           </div>
@@ -137,7 +180,7 @@ export function MixCalculator(props: Props) {
         >
           <div style={{ fontSize: 12, fontWeight: 900, color: 'var(--color-brand)', marginBottom: 8 }}>Ponderado · ⭐ Recomendado</div>
           <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--color-brand)' }}>{fmtCurrency(mixResult.cpaPonderado, inputs.currency)}</div>
-          <div style={{ fontSize: 11, color: 'var(--color-brand)', marginTop: 4, opacity: 0.85 }}>CPA</div>
+          <div style={{ fontSize: 11, color: 'var(--color-brand)', marginTop: 4, opacity: 0.85 }}>CPA meta</div>
           <div style={{ marginTop: 8, fontSize: 13, fontWeight: 800, color: 'var(--color-brand)' }}>ROAS {fmtRoasMult(mixResult.roasPonderado)}</div>
           <div style={{ marginTop: 8, fontSize: 12, fontWeight: 700, color: 'var(--color-brand)' }}>
             Ticket promedio {fmtCurrency(mixResult.ticketPromedio, inputs.currency)}
@@ -156,7 +199,7 @@ export function MixCalculator(props: Props) {
           <div style={{ fontSize: 20, fontWeight: 900, color: 'var(--color-text-primary)' }}>
             {fmtCurrency(mixResult.cpaAgresivo, inputs.currency)}
           </div>
-          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA</div>
+          <div style={{ fontSize: 11, color: 'var(--color-text-muted)', marginTop: 4 }}>CPA meta ({LEVELS.find((l) => l.id === level)?.label})</div>
           <div style={{ marginTop: 10, fontSize: 13, fontWeight: 700, color: 'var(--color-text-secondary)' }}>
             ROAS {fmtRoasMult(mixResult.roasAgresivo)}
           </div>
@@ -164,13 +207,13 @@ export function MixCalculator(props: Props) {
       </div>
 
       <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--color-text-secondary)', marginBottom: 8 }}>
-        Proyección con mezcla actual · 100 pedidos entregados
+        Proyección con mezcla actual · 100 entregados (ef. total {fmtPercent(packKpis[0].efTotal * 100, 0)})
       </div>
       <div style={{ overflowX: 'auto' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 420 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 480 }}>
           <thead>
             <tr>
-              {['Pack', '% mezcla', 'Pedidos', 'Ventas', 'Ganancia'].map((h) => (
+              {['Pack', '% mezcla', 'Pedidos gen.', 'Entregados', 'Ventas', 'Ganancia bruta'].map((h) => (
                 <th
                   key={h}
                   style={{
@@ -194,7 +237,10 @@ export function MixCalculator(props: Props) {
                   {fmtPercent(r.pct, 1)}
                 </td>
                 <td style={{ textAlign: 'right', padding: '8px 6px', fontSize: 13, color: 'var(--color-text-secondary)' }}>
-                  {Math.round(r.pedidos)}
+                  {Math.round(r.pedidosGen)}
+                </td>
+                <td style={{ textAlign: 'right', padding: '8px 6px', fontSize: 13, color: 'var(--color-text-secondary)' }}>
+                  {Math.round(r.entregados)}
                 </td>
                 <td style={{ textAlign: 'right', padding: '8px 6px', fontSize: 13, color: 'var(--color-text-secondary)' }}>
                   {fmtCurrency(r.ventas, inputs.currency)}
@@ -227,7 +273,19 @@ export function MixCalculator(props: Props) {
                   background: 'var(--color-brand-bg)',
                 }}
               >
-                {Math.round(projection.totPed)}
+                {Math.round(projection.totPedGen)}
+              </td>
+              <td
+                style={{
+                  textAlign: 'right',
+                  padding: '10px 6px',
+                  fontSize: 13,
+                  fontWeight: 800,
+                  color: 'var(--color-brand)',
+                  background: 'var(--color-brand-bg)',
+                }}
+              >
+                {Math.round(projection.totEnt)}
               </td>
               <td
                 style={{

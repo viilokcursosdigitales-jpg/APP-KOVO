@@ -1,152 +1,100 @@
-import type { MixResult, Pack, PackKpis, PygResult, PackId } from '../types';
+import type { CalculatorInputsState, FunnelMixLevel, MixResult, Pack, PackKpis, PackId, PygResult } from '../types';
 
-export function calcPack(
-  costoUnitario: number,
-  pack: Pick<Pack, 'units' | 'precioVenta' | 'label' | 'id'>,
-  fleteEntrega: number,
-  fleteDevolucion: number,
-  adminPct: number,
-  efectividadPct: number,
-  metaUtilidadPct: number,
-): PackKpis {
-  const precioVenta = pack.precioVenta;
-  const costoProducto = costoUnitario * pack.units;
-  const adminMonto = precioVenta * (adminPct / 100);
-  const gananciaSiEntrega = precioVenta - costoProducto - fleteEntrega - adminMonto;
-  const perdidaSiDevuelve = -fleteDevolucion;
-  const efectividad = efectividadPct / 100;
-  const gananciaEsperada = efectividad * gananciaSiEntrega + (1 - efectividad) * perdidaSiDevuelve;
-  const cpaEquilibrio = gananciaEsperada;
-  const roasEquilibrio = cpaEquilibrio > 0 ? precioVenta / cpaEquilibrio : null;
-  const utilidadDeseada = precioVenta * (metaUtilidadPct / 100);
-  const cpaMeta = gananciaEsperada - utilidadDeseada;
-  const roasMeta = cpaMeta > 0 ? precioVenta / cpaMeta : null;
-  const margenReal = precioVenta > 0 ? (gananciaEsperada / precioVenta) * 100 : 0;
+export function calcPack(pack: Pack, inputs: CalculatorInputsState): PackKpis {
+  const {
+    costoUnitario,
+    fleteIda,
+    cobraFleteDevolucion,
+    fleteDevolucion,
+    canceladosPct,
+    devueltosPct,
+    adminPct,
+    metaUtilidadPct,
+  } = inputs;
+
+  const pCanc = canceladosPct / 100;
+  const pDev = devueltosPct / 100;
+  const efEnvios = 1 - pCanc;
+  const efEntrega = 1 - pDev;
+  const efTotal = efEnvios * efEntrega;
+
+  const fleteDev = cobraFleteDevolucion ? fleteDevolucion : 0;
+  const precio = pack.precioVenta;
+  const unidades = pack.units;
+  const costoProducto = costoUnitario * unidades;
+  const adminMonto = precio * (adminPct / 100);
+
+  const ingresos = efTotal * precio;
+  const costoProductos = efTotal * costoProducto;
+  const fletesIda = efEnvios * fleteIda;
+  const fletesDev = efEnvios * pDev * fleteDev;
+  const adminTotal = efTotal * adminMonto;
+
+  const gananciaBruta = ingresos - costoProductos - fletesIda - fletesDev - adminTotal;
+
+  const cpaGenEq = gananciaBruta;
+  const cpaDespEq = efEnvios > 0 ? gananciaBruta / efEnvios : 0;
+  const cpaEntrEq = efTotal > 0 ? gananciaBruta / efTotal : 0;
+
+  const roasGenEq = cpaGenEq > 0 ? precio / cpaGenEq : null;
+  const roasDespEq = cpaDespEq > 0 ? precio / cpaDespEq : null;
+  const roasEntrEq = cpaEntrEq > 0 ? precio / cpaEntrEq : null;
+
+  const utilidadDeseada = precio * (metaUtilidadPct / 100) * efTotal;
+  const gananciaConMeta = gananciaBruta - utilidadDeseada;
+
+  const cpaGenMeta = gananciaConMeta;
+  const cpaDespMeta = efEnvios > 0 ? gananciaConMeta / efEnvios : 0;
+  const cpaEntrMeta = efTotal > 0 ? gananciaConMeta / efTotal : 0;
+
+  const roasGenMeta = cpaGenMeta > 0 ? precio / cpaGenMeta : null;
+  const roasDespMeta = cpaDespMeta > 0 ? precio / cpaDespMeta : null;
+  const roasEntrMeta = cpaEntrMeta > 0 ? precio / cpaEntrMeta : null;
+
+  const margen = efTotal > 0 ? (gananciaBruta / (precio * efTotal)) * 100 : 0;
+
   return {
     packId: pack.id,
     label: pack.label,
-    precioVenta,
-    costoProducto,
-    adminMonto,
-    gananciaSiEntrega,
-    perdidaSiDevuelve,
-    efectividad,
-    gananciaEsperada,
-    cpaEquilibrio,
-    roasEquilibrio,
-    utilidadDeseada,
-    cpaMeta,
-    roasMeta,
-    margenReal,
+    precio,
+    unidades,
+    gananciaBruta,
+    margen,
+    efEnvios,
+    efEntrega,
+    efTotal,
+    cpaGenEq,
+    roasGenEq,
+    cpaDespEq,
+    roasDespEq,
+    cpaEntrEq,
+    roasEntrEq,
+    cpaGenMeta,
+    roasGenMeta,
+    cpaDespMeta,
+    roasDespMeta,
+    cpaEntrMeta,
+    roasEntrMeta,
   };
 }
 
-function pygCore(
-  pedidos: number,
-  pack: Pick<Pack, 'precioVenta' | 'units'>,
-  costoUnitario: number,
-  fleteEntrega: number,
-  fleteDevolucion: number,
-  adminPct: number,
-  efectividadPct: number,
-  cpaMeta: number,
-) {
-  const precioVenta = pack.precioVenta;
-  const costoProductoPack = costoUnitario * pack.units;
-  const adminMontoPack = precioVenta * (adminPct / 100);
-  const efectividad = efectividadPct / 100;
-  const entregados = pedidos * efectividad;
-  const devueltos = pedidos - entregados;
-  const ventasBrutas = entregados * precioVenta;
-  const costoProductos = entregados * costoProductoPack;
-  const fletesEntrega = entregados * fleteEntrega;
-  const fletesDevolucion = devueltos * fleteDevolucion;
-  const adminTotal = entregados * adminMontoPack;
-  const utilidadAntesAds = ventasBrutas - costoProductos - fletesEntrega - fletesDevolucion - adminTotal;
-  const inversionAds = cpaMeta > 0 ? cpaMeta * pedidos : 0;
-  const utilidadNeta = utilidadAntesAds - inversionAds;
-  const margenNetoPct = ventasBrutas > 0 ? (utilidadNeta / ventasBrutas) * 100 : 0;
-  return {
-    entregados,
-    devueltos,
-    ventasBrutas,
-    costoProductos,
-    fletesEntrega,
-    fletesDevolucion,
-    adminTotal,
-    utilidadAntesAds,
-    inversionAds,
-    utilidadNeta,
-    margenNetoPct,
-  };
+function funnelMetaCpa(k: PackKpis, level: FunnelMixLevel): number {
+  if (level === 'gen') return k.cpaGenMeta;
+  if (level === 'desp') return k.cpaDespMeta;
+  return k.cpaEntrMeta;
 }
 
-export function calcPyg(
-  pedidosA: number,
-  pedidosB: number,
-  pack: Pick<Pack, 'precioVenta' | 'units'>,
-  costoUnitario: number,
-  fleteEntrega: number,
-  fleteDevolucion: number,
-  adminPct: number,
-  efectividadPct: number,
-  cpaMeta: number,
-): PygResult {
-  const a = pygCore(pedidosA, pack, costoUnitario, fleteEntrega, fleteDevolucion, adminPct, efectividadPct, cpaMeta);
-  const b = pygCore(pedidosB, pack, costoUnitario, fleteEntrega, fleteDevolucion, adminPct, efectividadPct, cpaMeta);
-  const efectividad = efectividadPct / 100;
-  const pctLabel = `${(efectividad * 100).toFixed(0)}%`;
-
-  return {
-    rows: [
-      { concepto: 'Pedidos generados', a: pedidosA, b: pedidosB },
-      {
-        concepto: `Entregados (${pctLabel})`,
-        sub: true,
-        muted: true,
-        a: a.entregados,
-        b: b.entregados,
-      },
-      {
-        concepto: `Devueltos (${fmtPctComplement(efectividad)})`,
-        sub: true,
-        muted: true,
-        a: a.devueltos,
-        b: b.devueltos,
-      },
-      { concepto: 'Ventas brutas', total: true, a: a.ventasBrutas, b: b.ventasBrutas },
-      { concepto: '(−) Costo productos', negative: true, a: -a.costoProductos, b: -b.costoProductos },
-      { concepto: '(−) Fletes entregados', negative: true, a: -a.fletesEntrega, b: -b.fletesEntrega },
-      { concepto: '(−) Fletes devueltos', negative: true, a: -a.fletesDevolucion, b: -b.fletesDevolucion },
-      {
-        concepto: `(−) Admin (${adminPct.toFixed(0)}%)`,
-        negative: true,
-        a: -a.adminTotal,
-        b: -b.adminTotal,
-      },
-      { concepto: '= Utilidad antes de ads', total: true, a: a.utilidadAntesAds, b: b.utilidadAntesAds },
-      {
-        concepto: `(−) Inversión ads · CPA ${cpaMeta > 0 ? cpaMeta.toFixed(0) : '—'}`,
-        negative: true,
-        a: -a.inversionAds,
-        b: -b.inversionAds,
-      },
-      { concepto: '= Utilidad neta', final: true, a: a.utilidadNeta, b: b.utilidadNeta },
-    ],
-    margenNetoPctA: a.margenNetoPct,
-    margenNetoPctB: b.margenNetoPct,
-  };
-}
-
-function fmtPctComplement(efectividad: number): string {
-  const p = Math.max(0, Math.min(1, 1 - efectividad));
-  return `${(p * 100).toFixed(0)}%`;
+function funnelMetaRoas(k: PackKpis, level: FunnelMixLevel): number | null {
+  if (level === 'gen') return k.roasGenMeta;
+  if (level === 'desp') return k.roasDespMeta;
+  return k.roasEntrMeta;
 }
 
 export function calcMix(
   mix: [number, number, number],
-  packs: [Pick<Pack, 'precioVenta'>, Pick<Pack, 'precioVenta'>, Pick<Pack, 'precioVenta'>],
-  kpis: [Pick<PackKpis, 'cpaMeta'>, Pick<PackKpis, 'cpaMeta'>, Pick<PackKpis, 'cpaMeta'>],
+  packs: [Pack, Pack, Pack],
+  packKpis: [PackKpis, PackKpis, PackKpis],
+  level: FunnelMixLevel,
 ): MixResult {
   const [m1, m2, m3] = mix;
   const sumaPct = m1 + m2 + m3;
@@ -167,11 +115,18 @@ export function calcMix(
   const w2 = m2 / sumaPct;
   const w3 = m3 / sumaPct;
   const weights: [number, number, number] = [w1, w2, w3];
-  const cpaPonderado = w1 * kpis[0].cpaMeta + w2 * kpis[1].cpaMeta + w3 * kpis[2].cpaMeta;
+  const cpaPonderado =
+    w1 * funnelMetaCpa(packKpis[0], level) +
+    w2 * funnelMetaCpa(packKpis[1], level) +
+    w3 * funnelMetaCpa(packKpis[2], level);
   const ticketPromedio = w1 * packs[0].precioVenta + w2 * packs[1].precioVenta + w3 * packs[2].precioVenta;
   const roasPonderado = cpaPonderado > 0 ? ticketPromedio / cpaPonderado : null;
   const prices = [packs[0].precioVenta, packs[1].precioVenta, packs[2].precioVenta];
-  const cpas = [kpis[0].cpaMeta, kpis[1].cpaMeta, kpis[2].cpaMeta];
+  const cpas = [
+    funnelMetaCpa(packKpis[0], level),
+    funnelMetaCpa(packKpis[1], level),
+    funnelMetaCpa(packKpis[2], level),
+  ];
   let minIdx = 0;
   let maxIdx = 0;
   for (let i = 1; i < 3; i += 1) {
@@ -180,8 +135,8 @@ export function calcMix(
   }
   const cpaConservador = cpas[minIdx];
   const cpaAgresivo = cpas[maxIdx];
-  const roasConservador = cpaConservador > 0 ? packs[minIdx].precioVenta / cpaConservador : null;
-  const roasAgresivo = cpaAgresivo > 0 ? packs[maxIdx].precioVenta / cpaAgresivo : null;
+  const roasConservador = funnelMetaRoas(packKpis[minIdx], level);
+  const roasAgresivo = funnelMetaRoas(packKpis[maxIdx], level);
   return {
     sumaPct,
     weights,
@@ -195,36 +150,175 @@ export function calcMix(
   };
 }
 
-export function packHealth(margenReal: number): 'success' | 'warning' | 'danger' {
-  if (margenReal < 15) return 'danger';
-  if (margenReal <= 30) return 'warning';
+function pygScenario(
+  pedidosGen: number,
+  pack: Pick<Pack, 'precioVenta' | 'units'>,
+  inputs: CalculatorInputsState,
+  cpaGenMeta: number,
+) {
+  const pCanc = inputs.canceladosPct / 100;
+  const pDev = inputs.devueltosPct / 100;
+  const efEnvios = 1 - pCanc;
+  const efEntrega = 1 - pDev;
+  const efTotal = efEnvios * efEntrega;
+
+  const cancelados = pedidosGen * pCanc;
+  const despachados = pedidosGen * efEnvios;
+  const devueltos = despachados * pDev;
+  const entregados = pedidosGen * efTotal;
+
+  const precioVenta = pack.precioVenta;
+  const costoProductoPack = inputs.costoUnitario * pack.units;
+  const adminMontoPack = precioVenta * (inputs.adminPct / 100);
+  const fleteDevEfectivo = inputs.cobraFleteDevolucion ? inputs.fleteDevolucion : 0;
+
+  const ventasBrutas = entregados * precioVenta;
+  const costoProductos = entregados * costoProductoPack;
+  const fletesIda = despachados * inputs.fleteIda;
+  const fletesDevolucion = devueltos * fleteDevEfectivo;
+  const adminTotal = entregados * adminMontoPack;
+  const utilidadAntesAds = ventasBrutas - costoProductos - fletesIda - fletesDevolucion - adminTotal;
+  const inversionAds = cpaGenMeta > 0 ? cpaGenMeta * pedidosGen : 0;
+  const utilidadNeta = utilidadAntesAds - inversionAds;
+  const margenNetoPct = ventasBrutas > 0 ? (utilidadNeta / ventasBrutas) * 100 : 0;
+
+  return {
+    pedidosGen,
+    cancelados,
+    despachados,
+    devueltos,
+    entregados,
+    ventasBrutas,
+    costoProductos,
+    fletesIda: fletesIda,
+    fletesDevolucion,
+    adminTotal,
+    utilidadAntesAds,
+    inversionAds,
+    utilidadNeta,
+    margenNetoPct,
+    pCanc,
+    pDev,
+    efEnvios,
+    efEntrega,
+    efTotal,
+    fleteDevEfectivo,
+  };
+}
+
+export function calcPyg(
+  pedidosA: number,
+  pedidosB: number,
+  pack: Pick<Pack, 'precioVenta' | 'units'>,
+  inputs: CalculatorInputsState,
+  cpaGenMeta: number,
+): PygResult {
+  const a = pygScenario(pedidosA, pack, inputs, cpaGenMeta);
+  const b = pygScenario(pedidosB, pack, inputs, cpaGenMeta);
+
+  const rows: PygResult['rows'] = [
+    { concepto: 'Pedidos generados', a: a.pedidosGen, b: b.pedidosGen },
+    {
+      concepto: `· Cancelados (${(a.pCanc * 100).toFixed(0)}%)`,
+      sub: true,
+      muted: true,
+      a: a.cancelados,
+      b: b.cancelados,
+    },
+    {
+      concepto: `· Despachados (${(a.efEnvios * 100).toFixed(0)}%)`,
+      sub: true,
+      muted: true,
+      a: a.despachados,
+      b: b.despachados,
+    },
+    {
+      concepto: `  · Devueltos (${(a.pDev * 100).toFixed(0)}% del despachado)`,
+      sub: true,
+      subSub: true,
+      muted: true,
+      a: a.devueltos,
+      b: b.devueltos,
+    },
+    {
+      concepto: `  · Entregados (${(a.efTotal * 100).toFixed(0)}% del generado)`,
+      sub: true,
+      subSub: true,
+      muted: true,
+      a: a.entregados,
+      b: b.entregados,
+    },
+    { concepto: 'Ventas brutas', total: true, a: a.ventasBrutas, b: b.ventasBrutas },
+    { concepto: '(−) Costo productos', negative: true, a: -a.costoProductos, b: -b.costoProductos },
+    { concepto: '(−) Flete ida (despachados)', negative: true, a: -a.fletesIda, b: -b.fletesIda },
+  ];
+
+  if (inputs.cobraFleteDevolucion && a.fleteDevEfectivo > 0) {
+    rows.push({
+      concepto: '(−) Flete devolución (solo devueltos)',
+      negative: true,
+      a: -a.fletesDevolucion,
+      b: -b.fletesDevolucion,
+    });
+  }
+
+  rows.push(
+    {
+      concepto: `(−) Admin (${inputs.adminPct.toFixed(0)}% sobre ventas)`,
+      negative: true,
+      a: -a.adminTotal,
+      b: -b.adminTotal,
+    },
+    { concepto: '= Utilidad antes de ads', total: true, a: a.utilidadAntesAds, b: b.utilidadAntesAds },
+    {
+      concepto: `(−) Inversión ads · CPA meta ${
+        cpaGenMeta > 0 ? Math.round(cpaGenMeta).toString() : '—'
+      }`,
+      negative: true,
+      a: -a.inversionAds,
+      b: -b.inversionAds,
+    },
+    { concepto: '= Utilidad neta', final: true, a: a.utilidadNeta, b: b.utilidadNeta },
+  );
+
+  return {
+    rows,
+    margenNetoPctA: a.margenNetoPct,
+    margenNetoPctB: b.margenNetoPct,
+  };
+}
+
+export function packHealth(margen: number): 'success' | 'warning' | 'danger' {
+  if (margen < 15) return 'danger';
+  if (margen <= 30) return 'warning';
   return 'success';
 }
 
 export function bestPackId(kpis: PackKpis[]): PackId {
   let best = kpis[0];
   for (const k of kpis.slice(1)) {
-    if (k.gananciaEsperada > best.gananciaEsperada) best = k;
+    if (k.gananciaBruta > best.gananciaBruta) best = k;
   }
   return best.packId;
 }
 
 /*
- * CASO DE VALIDACIÓN — Body Mameluco
- * Inputs: costo=23000, flete E=20000, flete D=20000, admin=4%, efec=80%, meta=10%
- * Pack 1u (1 unidad × 69900):
- *   gananciaSiEntrega = 24104
- *   gananciaEsperada ≈ 15283
- *   cpaEquilibrio ≈ 15283
- *   roasEquilibrio ≈ 4.57x
- *   cpaMeta ≈ 8293
- *   roasMeta ≈ 8.43x
- * Pack 2u (2 × 109000):
- *   gananciaEsperada ≈ 26912
- *   cpaMeta ≈ 16012
- *   roasMeta ≈ 6.81x
- * Pack 3u (3 × 145000):
- *   gananciaEsperada ≈ 36160
- *   cpaMeta ≈ 21660
- *   roasMeta ≈ 6.70x
+ * CASO DE VALIDACIÓN — Body Mameluco (COP)
+ * Inputs: costo=23000, fleteIda=20000, cobraFleteDevolucion=true, fleteDev=20000,
+ *         canceladosPct=20, devueltosPct=20, admin=4%, meta=10%
+ * Pack 3u (3 unidades × 145000):
+ *   efEnvios=0.80, efEntrega=0.80, efTotal=0.64
+ *   ingresos = 0.64 × 145000 = 92800
+ *   costoProds = 0.64 × 69000 = 44160
+ *   fletesIda = 0.80 × 20000 = 16000
+ *   fletesDev = 0.80 × 0.20 × 20000 = 3200
+ *   adminTotal = 0.64 × 5800 = 3712
+ *   gananciaBruta ≈ 25728
+ *   cpaGenEq ≈ 25728  | roasGenEq ≈ 5.64x
+ *   cpaDespEq ≈ 32160 | roasDespEq ≈ 4.51x
+ *   cpaEntrEq ≈ 40200 | roasEntrEq ≈ 3.61x
+ *   utilDeseada = 145000 × 0.10 × 0.64 = 9280
+ *   cpaGenMeta ≈ 16448 | roasGenMeta ≈ 8.82x
+ *   cpaDespMeta ≈ 20560 | roasDespMeta ≈ 7.05x
+ *   cpaEntrMeta ≈ 25700 | roasEntrMeta ≈ 5.64x
  */
