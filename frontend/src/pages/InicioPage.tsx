@@ -15,6 +15,7 @@ type SeriesByProduct = {
 type SeriesDay = {
   date: string;
   ventas_despachadas_total: number;
+  ventas_entregadas_total: number;
   gasto_publicitario_total: number;
   utilidad: number | null;
   by_product?: Record<string, SeriesByProduct>;
@@ -62,6 +63,18 @@ function formatMoney(n: number): string {
     currency: 'COP',
     maximumFractionDigits: 0,
   }).format(Number.isFinite(n) ? n : 0);
+}
+
+function parsePercentInput(raw: string): number {
+  const n = Number.parseFloat(String(raw || '').replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
+function utilidadConAdmin(row: SeriesDay, adminPercent: number): number {
+  const base = Number(row.utilidad || 0);
+  const ventasEntregadas = Number(row.ventas_entregadas_total || row.ventas_despachadas_total || 0);
+  return base - ventasEntregadas * (adminPercent / 100);
 }
 
 function normalize(values: number[]): number[] {
@@ -155,9 +168,25 @@ export default function InicioPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<SeriesDay[]>([]);
+  const [adminPercentInput, setAdminPercentInput] = useState(() => {
+    try {
+      return localStorage.getItem('kovo_ganancia_admin_percent') || '0';
+    } catch {
+      return '0';
+    }
+  });
   const [metaSpend, setMetaSpend] = useState<Record<string, number>>({});
   const [ctrCurrent, setCtrCurrent] = useState<number | null>(null);
   const [ctrPrevious, setCtrPrevious] = useState<number | null>(null);
+  const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('kovo_ganancia_admin_percent', adminPercentInput);
+    } catch {
+      /* noop */
+    }
+  }, [adminPercentInput]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -217,11 +246,11 @@ export default function InicioPage() {
 
   const ventas = filtered.reduce((s, d) => s + Number(d.ventas_despachadas_total || 0), 0);
   const gastoAds = filtered.reduce((s, d) => s + Number(d.gasto_publicitario_total || 0), 0);
-  const utilidadNeta = filtered.reduce((s, d) => s + Number(d.utilidad || 0), 0);
+  const utilidadNeta = filtered.reduce((s, d) => s + utilidadConAdmin(d, adminPercent), 0);
   const roas = gastoAds > 0 ? ventas / gastoAds : 0;
   const prevVentas = previousFiltered.reduce((s, d) => s + Number(d.ventas_despachadas_total || 0), 0);
   const prevGastoAds = previousFiltered.reduce((s, d) => s + Number(d.gasto_publicitario_total || 0), 0);
-  const prevUtilidadNeta = previousFiltered.reduce((s, d) => s + Number(d.utilidad || 0), 0);
+  const prevUtilidadNeta = previousFiltered.reduce((s, d) => s + utilidadConAdmin(d, adminPercent), 0);
   const prevRoas = prevGastoAds > 0 ? prevVentas / prevGastoAds : 0;
 
   const ventasDelta = deltaPct(ventas, prevVentas);
@@ -232,7 +261,7 @@ export default function InicioPage() {
 
   const salesSeries = normalize(filteredAsc.map((d) => Number(d.ventas_despachadas_total || 0)));
   const adsSeries = normalize(filteredAsc.map((d) => Number(d.gasto_publicitario_total || 0)));
-  const utilSeriesRaw = filteredAsc.map((d) => Number(d.utilidad || 0));
+  const utilSeriesRaw = filteredAsc.map((d) => utilidadConAdmin(d, adminPercent));
   const utilAbsMax = Math.max(1, ...utilSeriesRaw.map((v) => Math.abs(v)));
   const utilBars = utilSeriesRaw.map((v) => v / utilAbsMax);
   const labels = filteredAsc.map((d) => dayLabel(d.date));
@@ -319,6 +348,23 @@ export default function InicioPage() {
           <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 29, fontWeight: 700 }}>Dashboard Overview</h1>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <input
+            value={adminPercentInput}
+            onChange={(e) => setAdminPercentInput(e.target.value)}
+            inputMode="decimal"
+            aria-label="Porcentaje administrativo"
+            title="Porcentaje administrativo"
+            style={{
+              width: 86,
+              border: `1px solid ${ds.borderCard}`,
+              background: ds.bgCard,
+              borderRadius: 8,
+              padding: '8px 10px',
+              fontSize: 13,
+              color: ds.textPrimary,
+            }}
+          />
+          <span style={{ alignSelf: 'center', fontSize: 12, color: ds.textMuted, marginRight: 4 }}>Admin %</span>
           <select
             value={period}
             onChange={(e) => setPeriod(e.target.value as PeriodKey)}

@@ -18,6 +18,7 @@ type SeriesByProduct = {
 type SeriesDay = {
   date: string;
   ventas_despachadas_total: number;
+  ventas_entregadas_total: number;
   costo_producto_total: number;
   costo_producto_entregado_total: number;
   costo_flete_promedio_total: number;
@@ -64,6 +65,18 @@ function money(n: number): string {
     currency: 'COP',
     maximumFractionDigits: 0,
   }).format(Number.isFinite(n) ? n : 0);
+}
+
+function parsePercentInput(raw: string): number {
+  const n = Number.parseFloat(String(raw || '').replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
+}
+
+function utilidadConAdmin(row: SeriesDay, adminPercent: number): number {
+  const base = Number(row.utilidad || 0);
+  const ventasEntregadas = Number(row.ventas_entregadas_total || row.ventas_despachadas_total || 0);
+  return base - ventasEntregadas * (adminPercent / 100);
 }
 
 function normalize(values: number[]): number[] {
@@ -133,7 +146,23 @@ export default function FinanzaPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [days, setDays] = useState<SeriesDay[]>([]);
+  const [adminPercentInput, setAdminPercentInput] = useState(() => {
+    try {
+      return localStorage.getItem('kovo_ganancia_admin_percent') || '0';
+    } catch {
+      return '0';
+    }
+  });
   const [metaSpendByProduct, setMetaSpendByProduct] = useState<Record<string, number>>({});
+  const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('kovo_ganancia_admin_percent', adminPercentInput);
+    } catch {
+      /* noop */
+    }
+  }, [adminPercentInput]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -180,7 +209,7 @@ export default function FinanzaPage() {
   const costoProducto = current.reduce((s, d) => s + Number(d.costo_producto_entregado_total || d.costo_producto_total || 0), 0);
   const costoEnvio = current.reduce((s, d) => s + Number(d.costo_flete_promedio_total || 0), 0);
   const gastoAds = current.reduce((s, d) => s + Number(d.gasto_publicitario_total || 0), 0);
-  const utilidadNeta = current.reduce((s, d) => s + Number(d.utilidad || 0), 0);
+  const utilidadNeta = current.reduce((s, d) => s + utilidadConAdmin(d, adminPercent), 0);
   const utilidadBruta = ingresosNetos - costoProducto - costoEnvio;
   const grossMarginPct = ingresosNetos > 0 ? (utilidadBruta / ingresosNetos) * 100 : 0;
 
@@ -188,7 +217,7 @@ export default function FinanzaPage() {
   const prevCostoProd = previous.reduce((s, d) => s + Number(d.costo_producto_entregado_total || d.costo_producto_total || 0), 0);
   const prevCostoEnvio = previous.reduce((s, d) => s + Number(d.costo_flete_promedio_total || 0), 0);
   const prevUtilidadBruta = prevIngresos - prevCostoProd - prevCostoEnvio;
-  const prevUtilidad = previous.reduce((s, d) => s + Number(d.utilidad || 0), 0);
+  const prevUtilidad = previous.reduce((s, d) => s + utilidadConAdmin(d, adminPercent), 0);
   const prevGross = prevIngresos > 0 ? (prevUtilidadBruta / prevIngresos) * 100 : 0;
   const change = (cur: number, prev: number) => (prev !== 0 ? ((cur - prev) / Math.abs(prev)) * 100 : 0);
 
@@ -200,7 +229,7 @@ export default function FinanzaPage() {
       Number(d.gasto_publicitario_total || 0),
     ),
   );
-  const utilRaw = currentAsc.map((d) => Number(d.utilidad || 0));
+  const utilRaw = currentAsc.map((d) => utilidadConAdmin(d, adminPercent));
   const utilAbsMax = Math.max(1, ...utilRaw.map((v) => Math.abs(v)));
   const utilBars = utilRaw.map((v) => v / utilAbsMax);
   const labels = currentAsc.map((d) => dayLabel(d.date));
@@ -283,6 +312,15 @@ export default function FinanzaPage() {
           <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 29, fontWeight: 700 }}>Finanza</h1>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          <input
+            value={adminPercentInput}
+            onChange={(e) => setAdminPercentInput(e.target.value)}
+            inputMode="decimal"
+            aria-label="Porcentaje administrativo"
+            title="Porcentaje administrativo"
+            style={{ border: `1px solid ${ds.borderCard}`, background: ds.bgCard, borderRadius: 8, padding: '8px 10px', fontSize: 13, width: 86 }}
+          />
+          <span style={{ alignSelf: 'center', fontSize: 12, color: ds.textMuted }}>Admin %</span>
           <select
             style={{ border: `1px solid ${ds.borderCard}`, background: ds.bgCard, borderRadius: 8, padding: '8px 10px', fontSize: 13 }}
             defaultValue="co"
