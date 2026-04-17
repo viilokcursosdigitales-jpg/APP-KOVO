@@ -108,15 +108,23 @@ export function useCalculosGuardados() {
   );
 
   const removeCalculo = useCallback(
-    async (id: number, nombreNormalizado: string) => {
+    async (id: number, nombreNormalizado: string): Promise<CalculoVersion[] | null> => {
       setError(null);
       setLoading(true);
       try {
         await deleteCalculadoraCalculo(id);
         await refreshProductos();
-        await loadHistorico(nombreNormalizado);
+        const h = await loadHistorico(nombreNormalizado);
+        if (!h.length) {
+          setLastSavedAt(null);
+        } else {
+          const last = h[h.length - 1];
+          setLastSavedAt(last.updated_at || last.created_at || null);
+        }
+        return h;
       } catch (e) {
         setError(e instanceof Error ? e.message : 'Error al eliminar');
+        return null;
       } finally {
         setLoading(false);
       }

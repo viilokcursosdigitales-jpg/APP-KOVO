@@ -100,6 +100,38 @@ export default function CalculadoraCodPage() {
     setScreen('calculadora');
   }, [calc, saved]);
 
+  const eliminarGuardadoActual = useCallback(async () => {
+    if (selectedVersionId == null) return;
+    const key = normalizeName(saveSearch.trim() || calc.inputs.productDisplayName.trim());
+    if (!key) {
+      saved.setError('No hay un guardado cargado que se pueda eliminar.');
+      return;
+    }
+    const label = calc.inputs.productDisplayName.trim() || saveSearch.trim() || key;
+    if (!window.confirm(`¿Eliminar el cálculo guardado de «${label}»? Esta acción no se puede deshacer.`)) return;
+    const remaining = await saved.removeCalculo(selectedVersionId, key);
+    if (remaining == null) return;
+    if (remaining.length === 0) {
+      calc.resetToDefaults();
+      setSaveSearch('');
+      setSelectedVersionId(null);
+      void saved.loadHistorico('');
+      setMixFunnelLevel('gen');
+      setScreen('lista');
+      return;
+    }
+    const ultimo = remaining[remaining.length - 1];
+    const parsed = saved.applyCalculoToInputs(ultimo);
+    if (!parsed) {
+      saved.setError('Quedaron registros pero no se pudo cargar el siguiente. Vuelve a la lista e inténtalo de nuevo.');
+      setScreen('lista');
+      return;
+    }
+    calc.replaceInputs(parsed);
+    setSaveSearch(parsed.productDisplayName || key);
+    setSelectedVersionId(ultimo.id);
+  }, [calc, saveSearch, saved, selectedVersionId]);
+
   const abrirProductoGuardado = useCallback(
     async (productKey: string) => {
       saved.setError(null);
@@ -278,6 +310,42 @@ export default function CalculadoraCodPage() {
               onMixFunnelLevelChange={setMixFunnelLevel}
             />
           </div>
+
+          {selectedVersionId != null ? (
+            <div
+              style={{
+                marginTop: 28,
+                padding: '14px 16px',
+                borderRadius: 14,
+                border: `1px solid ${ds.borderCard}`,
+                background: 'var(--color-bg-subtle)',
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 800, color: 'var(--color-text-secondary)', marginBottom: 6 }}>
+                Zona de riesgo
+              </div>
+              <p style={{ margin: '0 0 12px', fontSize: 12, color: 'var(--color-text-muted)', lineHeight: 1.45, maxWidth: 560 }}>
+                Elimina solo este registro guardado en la nube. Si era el único, volverás a la lista de productos.
+              </p>
+              <button
+                type="button"
+                disabled={saved.loading}
+                onClick={() => void eliminarGuardadoActual()}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: `1px solid var(--color-danger-text)`,
+                  background: 'var(--color-danger-bg)',
+                  color: 'var(--color-danger-text)',
+                  fontWeight: 700,
+                  fontSize: 12,
+                  cursor: saved.loading ? 'wait' : 'pointer',
+                }}
+              >
+                Eliminar guardado
+              </button>
+            </div>
+          ) : null}
         </>
       )}
 
