@@ -17,7 +17,7 @@ type Props = {
   onMetaUtilidad: (n: number) => void;
 };
 
-function card(children: ReactNode) {
+function card(children: ReactNode, marginBottom: number = 12) {
   return (
     <div
       style={{
@@ -25,7 +25,8 @@ function card(children: ReactNode) {
         border: `1px solid ${ds.borderCard}`,
         borderRadius: 14,
         padding: '14px 16px',
-        marginBottom: 12,
+        marginBottom,
+        minWidth: 0,
       }}
     >
       {children}
@@ -121,90 +122,106 @@ export function InputsPanel(props: Props) {
         </>,
       )}
 
-      {card(
-        <>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 10 }}>
-            Packs · precio
-          </div>
-          {inputs.packs.map((p) => (
-            <div
-              key={p.id}
-              style={{
-                display: 'grid',
-                gridTemplateColumns: '1fr 1fr',
-                gap: 10,
-                marginBottom: 10,
-                paddingBottom: 10,
-                borderBottom: `1px solid ${ds.borderRow}`,
-              }}
-            >
-              <div>
-                <label style={{ fontSize: 10, color: 'var(--color-text-hint)' }}>Etiqueta</label>
-                <input
-                  value={p.label}
-                  onChange={(e) => props.onPackField(p.id, 'label', e.target.value)}
+      <div
+        className="calc-cod-packs-costos-row"
+        style={{
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'stretch',
+          gap: 20,
+          marginBottom: 12,
+        }}
+      >
+        <div style={{ flex: '1 1 300px', minWidth: 0 }}>
+          {card(
+            <>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 10 }}>
+                Packs · precio
+              </div>
+              {inputs.packs.map((p) => (
+                <div
+                  key={p.id}
                   style={{
-                    marginTop: 4,
-                    width: '100%',
-                    boxSizing: 'border-box',
-                    padding: '8px 10px',
-                    borderRadius: 8,
-                    border: `1px solid ${ds.borderCard}`,
-                    background: 'var(--color-bg-app)',
-                    color: 'var(--color-text-primary)',
-                    fontSize: 12,
+                    display: 'grid',
+                    gridTemplateColumns: '1fr 1fr',
+                    gap: 10,
+                    marginBottom: 10,
+                    paddingBottom: 10,
+                    borderBottom: `1px solid ${ds.borderRow}`,
                   }}
+                >
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--color-text-hint)' }}>Etiqueta</label>
+                    <input
+                      value={p.label}
+                      onChange={(e) => props.onPackField(p.id, 'label', e.target.value)}
+                      style={{
+                        marginTop: 4,
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        padding: '8px 10px',
+                        borderRadius: 8,
+                        border: `1px solid ${ds.borderCard}`,
+                        background: 'var(--color-bg-app)',
+                        color: 'var(--color-text-primary)',
+                        fontSize: 12,
+                      }}
+                    />
+                  </div>
+                  <div />
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--color-text-hint)' }}>Unidades</label>
+                    {numInput(p.units, (n) => props.onPackField(p.id, 'units', Math.max(0, Math.round(n))))}
+                  </div>
+                  <div>
+                    <label style={{ fontSize: 10, color: 'var(--color-text-hint)' }}>Precio venta</label>
+                    {numInput(p.precioVenta, (n) => props.onPackField(p.id, 'precioVenta', Math.max(0, n)))}
+                  </div>
+                </div>
+              ))}
+            </>,
+            0,
+          )}
+        </div>
+        <div style={{ flex: '1 1 260px', minWidth: 0 }}>
+          {card(
+            <>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 8 }}>
+                Costos operativos
+              </div>
+              <div style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Flete ida (por despacho)</label>
+                {numInput(inputs.fleteIda, props.onFleteIda)}
+              </div>
+              <label
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 10,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  color: 'var(--color-text-secondary)',
+                  cursor: 'pointer',
+                  marginBottom: 8,
+                }}
+              >
+                <input
+                  type="checkbox"
+                  checked={inputs.cobraFleteDevolucion}
+                  onChange={(e) => props.onCobraFleteDevolucion(e.target.checked)}
                 />
-              </div>
-              <div />
+                Cobrar flete de devolución (devueltos)
+              </label>
               <div>
-                <label style={{ fontSize: 10, color: 'var(--color-text-hint)' }}>Unidades</label>
-                {numInput(p.units, (n) => props.onPackField(p.id, 'units', Math.max(0, Math.round(n))))}
+                <label style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Flete devolución</label>
+                {numInput(inputs.fleteDevolucion, props.onFleteDevolucion, !inputs.cobraFleteDevolucion)}
               </div>
-              <div>
-                <label style={{ fontSize: 10, color: 'var(--color-text-hint)' }}>Precio venta</label>
-                {numInput(p.precioVenta, (n) => props.onPackField(p.id, 'precioVenta', Math.max(0, n)))}
-              </div>
-            </div>
-          ))}
-        </>,
-      )}
-
-      {card(
-        <>
-          <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--color-text-primary)', marginBottom: 8 }}>
-            Costos operativos
-          </div>
-          <div style={{ marginBottom: 10 }}>
-            <label style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Flete ida (por despacho)</label>
-            {numInput(inputs.fleteIda, props.onFleteIda)}
-          </div>
-          <label
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 10,
-              fontSize: 12,
-              fontWeight: 600,
-              color: 'var(--color-text-secondary)',
-              cursor: 'pointer',
-              marginBottom: 8,
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={inputs.cobraFleteDevolucion}
-              onChange={(e) => props.onCobraFleteDevolucion(e.target.checked)}
-            />
-            Cobrar flete de devolución (devueltos)
-          </label>
-          <div>
-            <label style={{ fontSize: 11, color: 'var(--color-text-muted)' }}>Flete devolución</label>
-            {numInput(inputs.fleteDevolucion, props.onFleteDevolucion, !inputs.cobraFleteDevolucion)}
-          </div>
-          {slider('% Admin (sobre ticket)', inputs.adminPct, 0, 25, 0.5, (n) => fmtPercent(n, 1), props.onAdmin)}
-        </>,
-      )}
+              {slider('% Admin (sobre ticket)', inputs.adminPct, 0, 25, 0.5, (n) => fmtPercent(n, 1), props.onAdmin)}
+            </>,
+            0,
+          )}
+        </div>
+      </div>
 
       {card(
         <>
@@ -259,6 +276,14 @@ export function InputsPanel(props: Props) {
           {fmtPercent(inputs.metaUtilidadPct, 1)}
         </div>
       </div>
+
+      <style>{`
+        @media (max-width: 720px) {
+          .calc-cod-packs-costos-row {
+            flex-direction: column;
+          }
+        }
+      `}</style>
     </div>
   );
 }
