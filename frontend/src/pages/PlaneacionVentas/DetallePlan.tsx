@@ -14,7 +14,7 @@ import {
   IconTrendingUp,
 } from '../../design-system/icons';
 import { usePlanesVentas } from '../../hooks/usePlanesVentas';
-import type { PlanVentas, ProductoPlan } from '../../types/planVentas';
+import { etiquetaMesAnio, type PlanVentas, type ProductoPlan } from '../../types/planVentas';
 import { analizarPlan, diasEnMes, formatCop, planSinAlertas } from '../../utils/calculosVentas';
 
 const COLORES_BORDE = [
@@ -108,11 +108,25 @@ export default function DetallePlan() {
   }, [cargar]);
 
   const analisis = useMemo(() => (draft ? analizarPlan(draft) : null), [draft]);
-  const dias = draft ? diasEnMes(draft.anio, draft.mes) : 30;
+  const diasMesNatural = draft ? diasEnMes(draft.anio, draft.mes) : 30;
+  const diasCalculo =
+    draft != null
+      ? Math.min(
+          Math.max(
+            1,
+            draft.diasCalculo != null &&
+              Number.isFinite(Number(draft.diasCalculo)) &&
+              Number(draft.diasCalculo) > 0
+              ? Math.round(Number(draft.diasCalculo))
+              : diasMesNatural,
+          ),
+          diasMesNatural,
+        )
+      : 30;
 
   const filasKpisDiarios = useMemo(() => {
     if (!draft || !analisis) return [];
-    const d = Math.max(1, diasEnMes(draft.anio, draft.mes));
+    const d = Math.max(1, diasCalculo);
     const t = analisis.totales;
     return [
       {
@@ -150,7 +164,7 @@ export default function DetallePlan() {
       { label: 'CPA confirmados (ads ÷ pedidos confirm.)', value: fmtCpaEmbudo(t.cpaConfirmados) },
       { label: 'CPA entregados (ads ÷ pedidos entreg.)', value: fmtCpaEmbudo(t.cpaEntregados) },
     ];
-  }, [draft, analisis]);
+  }, [draft, analisis, diasCalculo]);
 
   useEffect(() => {
     if (!draft || !id) return;
@@ -457,6 +471,69 @@ export default function DetallePlan() {
 
       <div
         style={{
+          marginBottom: 22,
+          padding: '14px 16px',
+          borderRadius: 12,
+          border: `1px solid ${ds.borderCard}`,
+          background: ds.bgCard,
+        }}
+      >
+        <div
+          style={{
+            fontSize: 11,
+            fontWeight: 700,
+            color: ds.textMuted,
+            marginBottom: 8,
+            textTransform: 'uppercase',
+            letterSpacing: '0.3px',
+          }}
+        >
+          Base para promedios «por día»
+        </div>
+        <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.45, maxWidth: 720 }}>
+          Los totales del mes se dividen entre los días que indiques (p. ej. 22 laborables). No cambia la meta ni los
+          pedidos del plan; solo ajusta la referencia diaria y la tabla de KPIs diarios.
+        </p>
+        <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
+          <label style={{ fontSize: 12, fontWeight: 600, color: ds.textSecondary, display: 'flex', alignItems: 'center', gap: 8 }}>
+            Días
+            <input
+              type="number"
+              min={1}
+              max={diasMesNatural}
+              value={diasCalculo}
+              onChange={(e) => {
+                const n = parseInt(e.target.value, 10);
+                if (!Number.isFinite(n)) return;
+                actualizarCampo({ diasCalculo: Math.min(Math.max(1, n), diasMesNatural) });
+              }}
+              style={{ ...fieldStyle, width: 88, marginTop: 0 }}
+            />
+          </label>
+          <span style={{ fontSize: 12, color: ds.textMuted }}>
+            de {diasMesNatural} en {etiquetaMesAnio(draft.mes, draft.anio)}
+          </span>
+          <button
+            type="button"
+            onClick={() => actualizarCampo({ diasCalculo: diasMesNatural })}
+            style={{
+              padding: '8px 14px',
+              borderRadius: 10,
+              border: `1px solid ${ds.borderCard}`,
+              background: diasCalculo === diasMesNatural ? ds.brandBg : ds.bgSubtle,
+              color: diasCalculo === diasMesNatural ? ds.brand : ds.textSecondary,
+              fontWeight: 600,
+              fontSize: 12,
+              cursor: 'pointer',
+            }}
+          >
+            Todo el mes
+          </button>
+        </div>
+      </div>
+
+      <div
+        style={{
           display: 'grid',
           gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
           gap: 14,
@@ -470,7 +547,7 @@ export default function DetallePlan() {
             <>
               {a.totales.totalPedidosMeta.toLocaleString('es-CO')}
               <span style={{ fontSize: 13, fontWeight: 500, color: ds.textMuted, marginLeft: 6 }}>
-                (~{Math.max(1, Math.ceil(a.totales.totalPedidosMeta / dias))}/día)
+                (~{Math.max(1, Math.ceil(a.totales.totalPedidosMeta / diasCalculo))}/día)
               </span>
             </>
           }
@@ -483,7 +560,7 @@ export default function DetallePlan() {
             <>
               {a.totales.totalPedidosEntregados.toLocaleString('es-CO')}
               <span style={{ fontSize: 13, fontWeight: 500, color: ds.textMuted, marginLeft: 6 }}>
-                (~{Math.max(1, Math.ceil(a.totales.totalPedidosEntregados / dias))}/día)
+                (~{Math.max(1, Math.ceil(a.totales.totalPedidosEntregados / diasCalculo))}/día)
               </span>
             </>
           }
@@ -713,7 +790,7 @@ export default function DetallePlan() {
       <div style={{ marginTop: 24 }}>
         <DataTable
           title="KPIs diarios estimados"
-          subtitle={`Totales del plan repartidos en ${dias} días del mes (referencia; no implica reparto uniforme real).`}
+          subtitle={`Totales del plan repartidos en ${diasCalculo} día${diasCalculo === 1 ? '' : 's'} (máx. ${diasMesNatural} en el mes; referencia lineal).`}
         >
           <table style={tableBase}>
             <thead>

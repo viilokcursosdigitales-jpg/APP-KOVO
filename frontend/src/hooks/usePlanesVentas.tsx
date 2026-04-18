@@ -10,6 +10,7 @@ import {
   type ReactNode,
 } from 'react';
 import { etiquetaMesAnio, type PlanVentas, type ProductoPlan } from '../types/planVentas';
+import { diasEnMes } from '../utils/calculosVentas';
 
 const STORAGE_KEY = 'kovo_planes_ventas';
 
@@ -68,6 +69,7 @@ function planDesdeCero(mes: number, anio: number): PlanVentas {
     presupuestoAds: 3_000_000,
     productos: productosPrecarga(),
     notas: '',
+    diasCalculo: diasEnMes(mes, anio),
   };
 }
 
@@ -169,6 +171,12 @@ function usePlanesVentasInternal(): PlanesVentasApi {
       const origen = list.find((p) => p.id === opciones.duplicarDesdeId);
       if (!origen) throw new Error('No se encontró el plan a duplicar.');
       const t = nowIso();
+      const diasMesDestino = diasEnMes(mes, anio);
+      const rawDias = origen.diasCalculo;
+      const diasClamped =
+        rawDias != null && Number.isFinite(Number(rawDias)) && Number(rawDias) > 0
+          ? Math.min(Math.max(1, Math.round(Number(rawDias))), diasMesDestino)
+          : diasMesDestino;
       nuevo = {
         ...origen,
         id: nuevoId(),
@@ -178,6 +186,7 @@ function usePlanesVentasInternal(): PlanesVentasApi {
         creadoEn: t,
         actualizadoEn: t,
         productos: clonarProductosConNuevosIds(origen.productos),
+        diasCalculo: diasClamped,
       };
     } else {
       nuevo = planDesdeCero(mes, anio);
@@ -208,6 +217,12 @@ function usePlanesVentasInternal(): PlanesVentasApi {
       creadoEn: prev.creadoEn,
       actualizadoEn,
     };
+    const dm = diasEnMes(merged.mes, merged.anio);
+    const rawDc = merged.diasCalculo;
+    merged.diasCalculo =
+      rawDc != null && Number.isFinite(Number(rawDc)) && Number(rawDc) > 0
+        ? Math.min(Math.max(1, Math.round(Number(rawDc))), dm)
+        : dm;
     const nextList = [...list];
     nextList[idx] = merged;
     const next = ordenarPlanes(nextList);

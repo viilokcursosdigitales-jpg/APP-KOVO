@@ -47,6 +47,11 @@ export type PlanVentas = {
   presupuestoAds: number;
   productos: ProductoPlan[];
   notas?: string;
+  /**
+   * Días del mes usados para promedios “por día” (1…días naturales del mes).
+   * Si falta (planes antiguos), la UI asume todos los días calendario del mes.
+   */
+  diasCalculo?: number;
 };
 
 /** Resultado de aplicar la lógica de negocio a un producto (ver calculosVentas). */
