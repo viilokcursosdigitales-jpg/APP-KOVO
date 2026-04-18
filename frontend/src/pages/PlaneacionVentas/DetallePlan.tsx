@@ -7,6 +7,7 @@ import { DataTable, Td, Th, tableBase } from '../../design-system/DataTable';
 import { ds } from '../../design-system/ds';
 import {
   IconCalendar,
+  IconMegaphone,
   IconPackage,
   IconPencil,
   IconTarget,
@@ -58,6 +59,14 @@ function dineroPorDiaEstimado(total: number, diasMes: number): string {
   return formatCop(Math.round(total / d));
 }
 
+function fmtRoasEmbudo(presupuestoAds: number, roas: number): string {
+  return presupuestoAds > 0 ? `${roas.toFixed(2)}×` : '—';
+}
+
+function fmtCpaEmbudo(v: number | null): string {
+  return v != null && Number.isFinite(v) ? formatCop(v) : '—';
+}
+
 export default function DetallePlan() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -105,8 +114,6 @@ export default function DetallePlan() {
     if (!draft || !analisis) return [];
     const d = Math.max(1, diasEnMes(draft.anio, draft.mes));
     const t = analisis.totales;
-    const roasTxt =
-      draft.presupuestoAds > 0 ? `${t.roasGlobal.toFixed(2)}×` : '— (sin presupuesto ads)';
     return [
       {
         label: 'Pedidos meta / día (estim.)',
@@ -127,7 +134,21 @@ export default function DetallePlan() {
         label: 'Inversión ads objetivo / día (estim.)',
         value: dineroPorDiaEstimado(t.totalInversionAdsObjetivo, d),
       },
-      { label: 'ROAS global (plan mensual)', value: roasTxt },
+      {
+        label: 'ROAS publicidad (fact. meta / presup. ads)',
+        value: fmtRoasEmbudo(draft.presupuestoAds, t.roasPublicidad),
+      },
+      {
+        label: 'ROAS confirmados (fact. confirm. / presup. ads)',
+        value: fmtRoasEmbudo(draft.presupuestoAds, t.roasConfirmados),
+      },
+      {
+        label: 'ROAS entregados (fact. entreg. / presup. ads)',
+        value: fmtRoasEmbudo(draft.presupuestoAds, t.roasEntregados),
+      },
+      { label: 'CPA publicidad (ads ÷ pedidos meta)', value: fmtCpaEmbudo(t.cpaPublicidad) },
+      { label: 'CPA confirmados (ads ÷ pedidos confirm.)', value: fmtCpaEmbudo(t.cpaConfirmados) },
+      { label: 'CPA entregados (ads ÷ pedidos entreg.)', value: fmtCpaEmbudo(t.cpaEntregados) },
     ];
   }, [draft, analisis]);
 
@@ -476,18 +497,94 @@ export default function DetallePlan() {
         />
         <KPICard
           variant="spend"
-          label="Utilidad proyectada · ROAS"
+          label="Utilidad proyectada · ROAS entregados"
           value={
             <>
               {formatCop(a.totales.totalUtilidad)}
               <span style={{ fontSize: 13, fontWeight: 500, color: ds.textMuted, marginLeft: 8 }}>
-                ROAS {a.totales.roasGlobal.toFixed(2)}×
+                ROAS {fmtRoasEmbudo(draft.presupuestoAds, a.totales.roasEntregados)}
               </span>
             </>
           }
           icon={<IconCalendar />}
         />
       </div>
+
+      <section style={{ marginBottom: 28 }}>
+        <h2
+          style={{
+            margin: '0 0 6px',
+            fontSize: 15,
+            fontWeight: 700,
+            color: ds.textPrimary,
+          }}
+        >
+          Publicidad: ROAS y CPA por etapa del embudo
+        </h2>
+        <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textMuted, lineHeight: 1.45, maxWidth: 720 }}>
+          ROAS = facturación estimada en cada etapa ÷ presupuesto publicitario del mes. CPA = presupuesto ads ÷
+          pedidos de esa etapa (costo por pedido a nivel meta, confirmado o entregado).
+        </p>
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+            gap: 14,
+          }}
+        >
+          <KPICard
+            variant="spend"
+            label="ROAS publicidad (meta)"
+            value={fmtRoasEmbudo(draft.presupuestoAds, a.totales.roasPublicidad)}
+            icon={<IconMegaphone />}
+            badge={
+              <span style={{ fontSize: 10, color: ds.textHint, fontWeight: 500 }}>
+                Fact. meta {formatCop(a.totales.totalFacturacionMeta)}
+              </span>
+            }
+          />
+          <KPICard
+            variant="conversion"
+            label="ROAS confirmados"
+            value={fmtRoasEmbudo(draft.presupuestoAds, a.totales.roasConfirmados)}
+            icon={<IconTarget />}
+            badge={
+              <span style={{ fontSize: 10, color: ds.textHint, fontWeight: 500 }}>
+                Fact. {formatCop(a.totales.totalFacturacionConfirmados)}
+              </span>
+            }
+          />
+          <KPICard
+            variant="sales"
+            label="ROAS entregados"
+            value={fmtRoasEmbudo(draft.presupuestoAds, a.totales.roasEntregados)}
+            icon={<IconTrendingUp />}
+            badge={
+              <span style={{ fontSize: 10, color: ds.textHint, fontWeight: 500 }}>
+                Fact. {formatCop(a.totales.totalFacturacion)}
+              </span>
+            }
+          />
+          <KPICard
+            variant="spend"
+            label="CPA publicidad (meta)"
+            value={fmtCpaEmbudo(a.totales.cpaPublicidad)}
+            icon={<IconMegaphone />}
+          />
+          <KPICard
+            variant="conversion"
+            label="CPA confirmados"
+            value={fmtCpaEmbudo(a.totales.cpaConfirmados)}
+            icon={<IconTarget />}
+          />
+          <KPICard
+            variant="traffic"
+            label="CPA entregados"
+            value={fmtCpaEmbudo(a.totales.cpaEntregados)}
+            icon={<IconPackage />}
+          />
+        </div>
+      </section>
 
       <section style={{ marginBottom: 28 }}>
         <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 12 }}>

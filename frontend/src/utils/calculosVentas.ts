@@ -84,12 +84,29 @@ export function calcularTotales(
   const totalPedidosConfirmados = productosCalculados.reduce((s, p) => s + p.pedidosConfirmados, 0);
   const totalPedidosEntregados = productosCalculados.reduce((s, p) => s + p.pedidosEntregados, 0);
   const totalFacturacion = productosCalculados.reduce((s, p) => s + p.facturacion, 0);
+  const totalFacturacionMeta = productosCalculados.reduce(
+    (s, p) => s + p.pedidosMeta * p.precioVenta,
+    0,
+  );
+  const totalFacturacionConfirmados = productosCalculados.reduce(
+    (s, p) => s + p.pedidosConfirmados * p.precioVenta,
+    0,
+  );
   const totalUtilidad = productosCalculados.reduce((s, p) => s + p.utilidadTotal, 0);
   const totalInversionAdsObjetivo = productosCalculados.reduce((s, p) => s + p.inversionAdsObjetivo, 0);
 
   const adsSuficiente =
     totalInversionAdsObjetivo <= 0 ? true : presupuestoAds + 1e-6 >= totalInversionAdsObjetivo;
-  const roasGlobal = presupuestoAds > 0 ? totalFacturacion / presupuestoAds : 0;
+  const roasEntregados = presupuestoAds > 0 ? totalFacturacion / presupuestoAds : 0;
+  const roasGlobal = roasEntregados;
+  const roasPublicidad = presupuestoAds > 0 ? totalFacturacionMeta / presupuestoAds : 0;
+  const roasConfirmados = presupuestoAds > 0 ? totalFacturacionConfirmados / presupuestoAds : 0;
+  const cpaPublicidad =
+    presupuestoAds > 0 && totalPedidosMeta > 0 ? presupuestoAds / totalPedidosMeta : null;
+  const cpaConfirmados =
+    presupuestoAds > 0 && totalPedidosConfirmados > 0 ? presupuestoAds / totalPedidosConfirmados : null;
+  const cpaEntregados =
+    presupuestoAds > 0 && totalPedidosEntregados > 0 ? presupuestoAds / totalPedidosEntregados : null;
   const viableGlobal = productosCalculados.length > 0 && productosCalculados.every((p) => p.viable);
 
   return {
@@ -97,10 +114,18 @@ export function calcularTotales(
     totalPedidosConfirmados,
     totalPedidosEntregados,
     totalFacturacion,
+    totalFacturacionMeta,
+    totalFacturacionConfirmados,
     totalUtilidad,
     totalInversionAdsObjetivo,
     adsSuficiente,
     roasGlobal,
+    roasPublicidad,
+    roasConfirmados,
+    roasEntregados,
+    cpaPublicidad,
+    cpaConfirmados,
+    cpaEntregados,
     viableGlobal,
   };
 }

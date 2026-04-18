@@ -71,12 +71,28 @@ export type TotalesPlan = {
   totalPedidosConfirmados: number;
   totalPedidosEntregados: number;
   totalFacturacion: number;
+  /** Σ pedidosMeta × precioVenta (facturación “teórica” si se cerraran todos los pedidos meta). */
+  totalFacturacionMeta: number;
+  /** Σ pedidosConfirmados × precioVenta. */
+  totalFacturacionConfirmados: number;
   totalUtilidad: number;
   totalInversionAdsObjetivo: number;
   /** Suma de inversiones objetivo ≤ presupuesto declarado. */
   adsSuficiente: boolean;
   /** Facturación / presupuesto ads (0 si no hay presupuesto). */
   roasGlobal: number;
+  /** totalFacturacionMeta / presupuesto ads. */
+  roasPublicidad: number;
+  /** totalFacturacionConfirmados / presupuesto ads. */
+  roasConfirmados: number;
+  /** Igual que roasGlobal: facturación entregada / presupuesto ads. */
+  roasEntregados: number;
+  /** Presupuesto ads ÷ pedidos meta (null si no aplica). */
+  cpaPublicidad: number | null;
+  /** Presupuesto ads ÷ pedidos confirmados. */
+  cpaConfirmados: number | null;
+  /** Presupuesto ads ÷ pedidos entregados. */
+  cpaEntregados: number | null;
   /** Todos los productos con margenAntesAds > 0. */
   viableGlobal: boolean;
 };
