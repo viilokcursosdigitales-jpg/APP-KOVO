@@ -15,7 +15,15 @@ import {
 } from '../../design-system/icons';
 import { usePlanesVentas } from '../../hooks/usePlanesVentas';
 import { etiquetaMesAnio, type PlanVentas, type ProductoPlan } from '../../types/planVentas';
-import { analizarPlan, diasEnMes, formatCop, planSinAlertas } from '../../utils/calculosVentas';
+import {
+  analizarPlan,
+  diasEnMes,
+  formatCop,
+  mergePlanYObjetivosRoas,
+  planSinAlertas,
+  sincronizarPresupuestoSiObjetivosRoas,
+  tieneObjetivosRoas,
+} from '../../utils/calculosVentas';
 
 const COLORES_BORDE = [
   ds.brand,
@@ -65,6 +73,14 @@ function fmtRoasEmbudo(presupuestoAds: number, roas: number): string {
 
 function fmtCpaEmbudo(v: number | null): string {
   return v != null && Number.isFinite(v) ? formatCop(v) : '—';
+}
+
+function parseRoasObjetivoInput(raw: string): number | undefined {
+  const t = raw.trim();
+  if (t === '') return undefined;
+  const parsed = Number(t.replace(',', '.'));
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
 }
 
 export default function DetallePlan() {
@@ -204,7 +220,7 @@ export default function DetallePlan() {
   };
 
   const actualizarCampo = (patch: Partial<PlanVentas>) => {
-    setDraft((d) => (d ? { ...d, ...patch } : d));
+    setDraft((d) => (d ? mergePlanYObjetivosRoas(d, patch) : d));
   };
 
   const actualizarProducto = (idx: number, patch: Partial<ProductoPlan>) => {
@@ -212,7 +228,7 @@ export default function DetallePlan() {
       if (!d) return d;
       const productos = [...d.productos];
       productos[idx] = { ...productos[idx], ...patch };
-      return { ...d, productos };
+      return sincronizarPresupuestoSiObjetivosRoas({ ...d, productos });
     });
   };
 
@@ -220,7 +236,7 @@ export default function DetallePlan() {
     setDraft((d) => {
       if (!d) return d;
       const productos = d.productos.filter((_, i) => i !== idx);
-      return { ...d, productos };
+      return sincronizarPresupuestoSiObjetivosRoas({ ...d, productos });
     });
   };
 
@@ -236,7 +252,7 @@ export default function DetallePlan() {
         tasaEntrega: 80,
         distribucionVentas: 0,
       };
-      return { ...d, productos: [...d.productos, nuevo] };
+      return sincronizarPresupuestoSiObjetivosRoas({ ...d, productos: [...d.productos, nuevo] });
     });
   };
 
@@ -602,6 +618,108 @@ export default function DetallePlan() {
           ROAS = facturación estimada en cada etapa ÷ presupuesto publicitario del mes. CPA = presupuesto ads ÷
           pedidos de esa etapa (costo por pedido a nivel meta, confirmado o entregado).
         </p>
+        <div
+          style={{
+            marginBottom: 16,
+            padding: '14px 16px',
+            borderRadius: 12,
+            border: `1px solid ${ds.borderCard}`,
+            background: ds.bgSubtle,
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 700,
+              color: ds.textMuted,
+              marginBottom: 8,
+              textTransform: 'uppercase',
+              letterSpacing: '0.3px',
+            }}
+          >
+            Objetivos ROAS (opcional)
+          </div>
+          <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.45, maxWidth: 720 }}>
+            Indica el ROAS mínimo que quieres en cada etapa. Si defines al menos uno, el presupuesto de ads se recalcula
+            como el menor gasto que cumple todas las cotas (facturación de la etapa ÷ ROAS objetivo). Si editas el
+            presupuesto de ads a mano, se desactivan estos objetivos.
+          </p>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))',
+              gap: 12,
+              marginBottom: 12,
+            }}
+          >
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, fontWeight: 600, color: ds.textSecondary }}>
+              ROAS meta (publicidad)
+              <input
+                type="number"
+                min={0.01}
+                step="0.01"
+                placeholder={draft.presupuestoAds > 0 ? a.totales.roasPublicidad.toFixed(2) : '—'}
+                value={draft.roasObjetivoMeta ?? ''}
+                onChange={(e) =>
+                  actualizarCampo({ roasObjetivoMeta: parseRoasObjetivoInput(e.target.value) })
+                }
+                style={fieldStyle}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, fontWeight: 600, color: ds.textSecondary }}>
+              ROAS confirmados
+              <input
+                type="number"
+                min={0.01}
+                step="0.01"
+                placeholder={draft.presupuestoAds > 0 ? a.totales.roasConfirmados.toFixed(2) : '—'}
+                value={draft.roasObjetivoConfirmados ?? ''}
+                onChange={(e) =>
+                  actualizarCampo({ roasObjetivoConfirmados: parseRoasObjetivoInput(e.target.value) })
+                }
+                style={fieldStyle}
+              />
+            </label>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12, fontWeight: 600, color: ds.textSecondary }}>
+              ROAS entregados
+              <input
+                type="number"
+                min={0.01}
+                step="0.01"
+                placeholder={draft.presupuestoAds > 0 ? a.totales.roasEntregados.toFixed(2) : '—'}
+                value={draft.roasObjetivoEntregados ?? ''}
+                onChange={(e) =>
+                  actualizarCampo({ roasObjetivoEntregados: parseRoasObjetivoInput(e.target.value) })
+                }
+                style={fieldStyle}
+              />
+            </label>
+          </div>
+          {tieneObjetivosRoas(draft) ? (
+            <button
+              type="button"
+              onClick={() =>
+                actualizarCampo({
+                  roasObjetivoMeta: undefined,
+                  roasObjetivoConfirmados: undefined,
+                  roasObjetivoEntregados: undefined,
+                })
+              }
+              style={{
+                padding: '8px 14px',
+                borderRadius: 10,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.bgCard,
+                color: ds.textSecondary,
+                fontWeight: 600,
+                fontSize: 12,
+                cursor: 'pointer',
+              }}
+            >
+              Quitar objetivos ROAS
+            </button>
+          ) : null}
+        </div>
         <div
           style={{
             display: 'grid',

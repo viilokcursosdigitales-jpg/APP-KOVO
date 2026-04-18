@@ -157,6 +157,72 @@ export function analizarPlan(plan: PlanVentas): PlanAnalizado {
   return { plan, productos, totales, validacion };
 }
 
+function normRoasObjetivo(v: unknown): number | undefined {
+  const n = Number(v);
+  return v != null && Number.isFinite(n) && n > 0 ? n : undefined;
+}
+
+export function tieneObjetivosRoas(plan: PlanVentas): boolean {
+  return (
+    normRoasObjetivo(plan.roasObjetivoMeta) != null ||
+    normRoasObjetivo(plan.roasObjetivoConfirmados) != null ||
+    normRoasObjetivo(plan.roasObjetivoEntregados) != null
+  );
+}
+
+/** Presupuesto mínimo (redondeado) que cumple todos los ROAS objetivo definidos; null si ninguno. */
+export function presupuestoAdsDesdeObjetivosRoas(plan: PlanVentas, totales: TotalesPlan): number | null {
+  const parts: number[] = [];
+  const rm = normRoasObjetivo(plan.roasObjetivoMeta);
+  if (rm != null) parts.push(totales.totalFacturacionMeta / rm);
+  const rc = normRoasObjetivo(plan.roasObjetivoConfirmados);
+  if (rc != null) parts.push(totales.totalFacturacionConfirmados / rc);
+  const re = normRoasObjetivo(plan.roasObjetivoEntregados);
+  if (re != null) parts.push(totales.totalFacturacion / re);
+  if (!parts.length) return null;
+  return Math.max(1, Math.round(Math.min(...parts)));
+}
+
+/**
+ * Ajusta `presupuestoAds` según los ROAS objetivo (menor gasto que cumple todas las cotas).
+ * No modifica los objetivos.
+ */
+export function aplicarObjetivosRoasAlPresupuesto(plan: PlanVentas): PlanVentas {
+  if (!tieneObjetivosRoas(plan)) return plan;
+  const productos = plan.productos.map((p) => calcularProducto(p, plan.meta, plan.tipoMeta, plan.gastosAdminPct));
+  const totales = calcularTotales(productos, plan.presupuestoAds);
+  const np = presupuestoAdsDesdeObjetivosRoas(plan, totales);
+  if (np == null) return plan;
+  if (np === plan.presupuestoAds) return plan;
+  return { ...plan, presupuestoAds: np };
+}
+
+export function sincronizarPresupuestoSiObjetivosRoas(plan: PlanVentas): PlanVentas {
+  return tieneObjetivosRoas(plan) ? aplicarObjetivosRoasAlPresupuesto(plan) : plan;
+}
+
+/**
+ * Fusiona un parche al plan y, si aplica, sincroniza presupuesto por ROAS objetivo.
+ * Si el usuario edita solo el presupuesto ads, se eliminan los objetivos ROAS (modo manual).
+ */
+export function mergePlanYObjetivosRoas(doc: PlanVentas, patch: Partial<PlanVentas>): PlanVentas {
+  let next: PlanVentas = { ...doc, ...patch };
+  const editoSoloPresupuesto =
+    Object.prototype.hasOwnProperty.call(patch, 'presupuestoAds') &&
+    !Object.prototype.hasOwnProperty.call(patch, 'roasObjetivoMeta') &&
+    !Object.prototype.hasOwnProperty.call(patch, 'roasObjetivoConfirmados') &&
+    !Object.prototype.hasOwnProperty.call(patch, 'roasObjetivoEntregados');
+  if (editoSoloPresupuesto) {
+    next = {
+      ...next,
+      roasObjetivoMeta: undefined,
+      roasObjetivoConfirmados: undefined,
+      roasObjetivoEntregados: undefined,
+    };
+  }
+  return sincronizarPresupuestoSiObjetivosRoas(next);
+}
+
 /** Semáforo de lista/detalle: sin alertas vs con alertas. */
 export function planSinAlertas(a: PlanAnalizado): boolean {
   return (

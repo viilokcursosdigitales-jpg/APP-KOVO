@@ -52,6 +52,13 @@ export type PlanVentas = {
    * Si falta (planes antiguos), la UI asume todos los días calendario del mes.
    */
   diasCalculo?: number;
+  /**
+   * ROAS mínimo deseado por etapa (facturación etapa ÷ presupuesto ads).
+   * Si defines al menos uno, el presupuesto ads se ajusta al menor valor que cumple todos.
+   */
+  roasObjetivoMeta?: number;
+  roasObjetivoConfirmados?: number;
+  roasObjetivoEntregados?: number;
 };
 
 /** Resultado de aplicar la lógica de negocio a un producto (ver calculosVentas). */
