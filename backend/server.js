@@ -83,6 +83,7 @@ const CONFIGURABLE_MODULE_IDS = [
   'canales',
   'ganancia_diaria',
   'calculadora_cod',
+  'planeacion_ventas',
 ];
 
 const MODULE_CATALOG_FOR_API = [
@@ -98,6 +99,7 @@ const MODULE_CATALOG_FOR_API = [
   { id: 'canales', label: 'Canales', group: 'Marketing' },
   { id: 'ganancia_diaria', label: 'Ganancia Diaria', group: 'Marketing' },
   { id: 'calculadora_cod', label: 'Calculadora COD', group: 'Marketing' },
+  { id: 'planeacion_ventas', label: 'Planeación de Ventas', group: 'Marketing' },
 ];
 
 const pool = createPool();

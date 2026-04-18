@@ -14,6 +14,9 @@ const Login = lazy(() => import('./pages/Login'));
 const MarketingIndicatorsPage = lazy(() => import('./pages/MarketingIndicatorsPage'));
 const GananciaDiariaPage = lazy(() => import('./pages/GananciaDiariaPage'));
 const CalculadoraCodPage = lazy(() => import('./calculadora-cod/CalculadoraCodPage'));
+const PlaneacionVentasLayout = lazy(() => import('./pages/PlaneacionVentas/PlaneacionVentasLayout'));
+const ListaMensualPlaneacion = lazy(() => import('./pages/PlaneacionVentas/ListaMensual'));
+const DetallePlanPlaneacion = lazy(() => import('./pages/PlaneacionVentas/DetallePlan'));
 const MetaAdsPage = lazy(() => import('./pages/MetaAdsPage'));
 const MoticoPage = lazy(() => import('./pages/MoticoPage'));
 const PedidosPage = lazy(() => import('./pages/PedidosPage'));
@@ -55,6 +58,10 @@ export default function App() {
               <Route path="/canales" element={<CanalesPage />} />
               <Route path="/ganancia-diaria" element={<GananciaDiariaPage />} />
               <Route path="/calculadora-cod" element={<CalculadoraCodPage />} />
+              <Route path="/planeacion-ventas" element={<PlaneacionVentasLayout />}>
+                <Route index element={<ListaMensualPlaneacion />} />
+                <Route path=":id" element={<DetallePlanPlaneacion />} />
+              </Route>
             </Route>
             <Route path="/profile" element={<Profile />} />
             <Route element={<AdminRoute />}>

@@ -183,6 +183,71 @@ export function IconCalculadora() {
   );
 }
 
+/** Añadir / crear */
+export function IconPlus({ size = 15 }: { size?: number }) {
+  return strokeSvg(
+    <>
+      <path d="M12 5v14M5 12h14" />
+    </>,
+    size,
+  );
+}
+
+/** Eliminar */
+export function IconTrash({ size = 15 }: { size?: number }) {
+  return strokeSvg(
+    <>
+      <path d="M4 7h16M10 11v6M14 11v6M6 7l1-3h10l1 3" />
+      <path d="M9 21h6a2 2 0 002-2V7H7v12a2 2 0 002 2z" />
+    </>,
+    size,
+  );
+}
+
+/** Calendario / mes */
+export function IconCalendar({ size = 15 }: { size?: number }) {
+  return strokeSvg(
+    <>
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M16 3v4M8 3v4M3 11h18" />
+    </>,
+    size,
+  );
+}
+
+/** Menú contextual (tres puntos verticales) */
+export function IconDotsVertical({ size = 15 }: { size?: number }) {
+  return strokeSvg(
+    <>
+      <circle cx="12" cy="5" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="12" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="12" cy="19" r="1.2" fill="currentColor" stroke="none" />
+    </>,
+    size,
+  );
+}
+
+/** Duplicar / copiar plan */
+export function IconCopy({ size = 15 }: { size?: number }) {
+  return strokeSvg(
+    <>
+      <rect x="8" y="8" width="12" height="12" rx="2" />
+      <path d="M4 16V6a2 2 0 012-2h10" />
+    </>,
+    size,
+  );
+}
+
+/** Expandir / colapsar */
+export function IconChevronDown({ size = 15 }: { size?: number }) {
+  return strokeSvg(
+    <>
+      <path d="M6 9l6 6 6-6" />
+    </>,
+    size,
+  );
+}
+
 export function IconEmpty({ size = 40 }: { size?: number }) {
   return (
     <svg

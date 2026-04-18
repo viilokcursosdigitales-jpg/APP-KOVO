@@ -69,6 +69,12 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
       icon: <IconTrendingUp />,
       moduleId: 'ganancia_diaria',
     },
+    {
+      to: '/planeacion-ventas',
+      label: 'Planeación de Ventas',
+      icon: <IconTarget />,
+      moduleId: 'planeacion_ventas',
+    },
   ];
   const account: NavItem[] = [];
   if (canManageOrg) {

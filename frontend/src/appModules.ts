@@ -12,6 +12,7 @@ export const APP_MODULE_IDS = [
   'canales',
   'ganancia_diaria',
   'calculadora_cod',
+  'planeacion_ventas',
 ] as const;
 
 export type AppModuleId = (typeof APP_MODULE_IDS)[number];
@@ -29,6 +30,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'canales', label: 'Canales', group: 'Marketing' },
   { id: 'ganancia_diaria', label: 'Ganancia Diaria', group: 'Marketing' },
   { id: 'calculadora_cod', label: 'Calculadora COD', group: 'Marketing' },
+  { id: 'planeacion_ventas', label: 'Planeación de Ventas', group: 'Marketing' },
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
@@ -45,6 +47,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/canales': 'canales',
   '/ganancia-diaria': 'ganancia_diaria',
   '/calculadora-cod': 'calculadora_cod',
+  '/planeacion-ventas': 'planeacion_ventas',
 };
 
 const MODULE_TO_PATH: Record<AppModuleId, string> = {
@@ -60,6 +63,7 @@ const MODULE_TO_PATH: Record<AppModuleId, string> = {
   canales: '/canales',
   ganancia_diaria: '/ganancia-diaria',
   calculadora_cod: '/calculadora-cod',
+  planeacion_ventas: '/planeacion-ventas',
 };
 
 /** Orden para “primera pantalla” tras login o al bloquear una ruta. */
@@ -67,7 +71,11 @@ export const APP_MODULE_PATH_ORDER = APP_MODULE_IDS.map((id) => MODULE_TO_PATH[i
 
 export function pathToModuleId(pathname: string): AppModuleId | null {
   const p = pathname.replace(/\/$/, '') || '/';
-  return PATH_TO_MODULE[p] ?? null;
+  const direct = PATH_TO_MODULE[p];
+  if (direct) return direct;
+  // Detalle bajo la misma ruta base (React Router nested).
+  if (p === '/planeacion-ventas' || p.startsWith('/planeacion-ventas/')) return 'planeacion_ventas';
+  return null;
 }
 
 export function firstAllowedPath(moduleAccess: string[] | null): string {
