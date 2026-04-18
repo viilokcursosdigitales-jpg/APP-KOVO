@@ -47,6 +47,17 @@ function fmtFecha(iso: string): string {
   }
 }
 
+/** Misma lógica que las tarjetas KPI: techo de la media mensual ÷ días del mes. */
+function pedidosPorDiaEstimado(total: number, diasMes: number): number {
+  const d = Math.max(1, diasMes);
+  return Math.max(0, Math.ceil(total / d));
+}
+
+function dineroPorDiaEstimado(total: number, diasMes: number): string {
+  const d = Math.max(1, diasMes);
+  return formatCop(Math.round(total / d));
+}
+
 export default function DetallePlan() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
@@ -89,6 +100,36 @@ export default function DetallePlan() {
 
   const analisis = useMemo(() => (draft ? analizarPlan(draft) : null), [draft]);
   const dias = draft ? diasEnMes(draft.anio, draft.mes) : 30;
+
+  const filasKpisDiarios = useMemo(() => {
+    if (!draft || !analisis) return [];
+    const d = Math.max(1, diasEnMes(draft.anio, draft.mes));
+    const t = analisis.totales;
+    const roasTxt =
+      draft.presupuestoAds > 0 ? `${t.roasGlobal.toFixed(2)}×` : '— (sin presupuesto ads)';
+    return [
+      {
+        label: 'Pedidos meta / día (estim.)',
+        value: pedidosPorDiaEstimado(t.totalPedidosMeta, d).toLocaleString('es-CO'),
+      },
+      {
+        label: 'Pedidos confirmados / día (estim.)',
+        value: pedidosPorDiaEstimado(t.totalPedidosConfirmados, d).toLocaleString('es-CO'),
+      },
+      {
+        label: 'Pedidos entregados / día (estim.)',
+        value: pedidosPorDiaEstimado(t.totalPedidosEntregados, d).toLocaleString('es-CO'),
+      },
+      { label: 'Facturación / día (estim.)', value: dineroPorDiaEstimado(t.totalFacturacion, d) },
+      { label: 'Utilidad / día (estim.)', value: dineroPorDiaEstimado(t.totalUtilidad, d) },
+      { label: 'Presupuesto ads / día (referencia)', value: dineroPorDiaEstimado(draft.presupuestoAds, d) },
+      {
+        label: 'Inversión ads objetivo / día (estim.)',
+        value: dineroPorDiaEstimado(t.totalInversionAdsObjetivo, d),
+      },
+      { label: 'ROAS global (plan mensual)', value: roasTxt },
+    ];
+  }, [draft, analisis]);
 
   useEffect(() => {
     if (!draft || !id) return;
@@ -534,6 +575,7 @@ export default function DetallePlan() {
               <Th>Producto</Th>
               <Th style={{ textAlign: 'right' }}>Distrib. %</Th>
               <Th style={{ textAlign: 'right' }}>Pedidos meta</Th>
+              <Th style={{ textAlign: 'right' }}>Confirmados</Th>
               <Th style={{ textAlign: 'right' }}>Entregados</Th>
               <Th style={{ textAlign: 'right' }}>Facturación</Th>
               <Th style={{ textAlign: 'right' }}>Utilidad</Th>
@@ -549,6 +591,9 @@ export default function DetallePlan() {
                 </Td>
                 <Td isLast={false} style={{ textAlign: 'right' }}>
                   {pc.pedidosMeta.toLocaleString('es-CO')}
+                </Td>
+                <Td isLast={false} style={{ textAlign: 'right' }}>
+                  {pc.pedidosConfirmados.toLocaleString('es-CO')}
                 </Td>
                 <Td isLast={false} style={{ textAlign: 'right' }}>
                   {pc.pedidosEntregados.toLocaleString('es-CO')}
@@ -567,6 +612,32 @@ export default function DetallePlan() {
           </tbody>
         </table>
       </DataTable>
+
+      <div style={{ marginTop: 24 }}>
+        <DataTable
+          title="KPIs diarios estimados"
+          subtitle={`Totales del plan repartidos en ${dias} días del mes (referencia; no implica reparto uniforme real).`}
+        >
+          <table style={tableBase}>
+            <thead>
+              <tr>
+                <Th>Indicador</Th>
+                <Th style={{ textAlign: 'right' }}>Valor</Th>
+              </tr>
+            </thead>
+            <tbody>
+              {filasKpisDiarios.map((fila, idx) => (
+                <tr key={fila.label}>
+                  <Td isLast={false}>{fila.label}</Td>
+                  <Td isLast={idx === filasKpisDiarios.length - 1} style={{ textAlign: 'right', fontWeight: 600 }}>
+                    {fila.value}
+                  </Td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </DataTable>
+      </div>
 
       <ModalConfirmar
         open={confirmEliminar}
