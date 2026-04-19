@@ -117,8 +117,8 @@ function isPedidosPruebaOrder(row: Pick<ShopifyOrderRow, 'internal_status' | 'mo
 }
 
 /** Tooltip cuando la fila no es editable desde Pedidos. */
-function pedidosRowLockTitle(row: ShopifyOrderRow, kind: 'estado' | 'mensajero' | 'cantidad' | 'pagado_recibir'): string {
-  if (kind === 'cantidad' || kind === 'pagado_recibir') {
+function pedidosRowLockTitle(row: ShopifyOrderRow, kind: 'estado' | 'mensajero' | 'cantidad'): string {
+  if (kind === 'cantidad') {
     return 'Pedido despachado/cancelado: edición bloqueada';
   }
   return kind === 'estado' ? 'Pedido bloqueado: estado no editable' : 'Pedido bloqueado: mensajero no editable';
@@ -159,7 +159,6 @@ type ShopifyOrderRow = {
   /** Saldo pendiente según Shopify (`total_outstanding`). */
   totalOutstanding?: string | null;
   pago_al_recibir_override?: number;
-  pagado_al_recibir_override?: number;
   is_motico_manual?: boolean;
 };
 
@@ -535,12 +534,10 @@ export default function PedidosPage() {
   const bulkActionBusy = bulkStatusApplying || bulkMensajeroApplying;
 
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
-  const [pagadoRecibidoDraft, setPagadoRecibidoDraft] = useState<Record<number, string>>({});
   const [unlockOrder, setUnlockOrder] = useState<ShopifyOrderRow | null>(null);
   const [unlockReason, setUnlockReason] = useState('');
   const [unlocking, setUnlocking] = useState(false);
   const qtyTimers = useRef<Map<number, number>>(new Map());
-  const pagadoRecibidoTimers = useRef<Map<number, number>>(new Map());
   const ordersRequestAbortRef = useRef<AbortController | null>(null);
   const ordersRequestSeqRef = useRef(0);
   const ordersCacheRef = useRef<
@@ -563,7 +560,6 @@ export default function PedidosPage() {
       total_a_pagar_override?: number | null;
       totalOutstanding?: string | null;
       pago_al_recibir_override?: number;
-      pagado_al_recibir_override?: number;
       is_motico_manual?: boolean;
     };
     const totalDef = Number(ext.total_a_pagar_default);
@@ -607,10 +603,6 @@ export default function PedidosPage() {
       pago_al_recibir_override:
         ext.pago_al_recibir_override != null && Number.isFinite(Number(ext.pago_al_recibir_override))
           ? Number(ext.pago_al_recibir_override)
-          : 0,
-      pagado_al_recibir_override:
-        ext.pagado_al_recibir_override != null && Number.isFinite(Number(ext.pagado_al_recibir_override))
-          ? Number(ext.pagado_al_recibir_override)
           : 0,
       is_motico_manual: Boolean(ext.is_motico_manual),
     };
@@ -699,7 +691,6 @@ export default function PedidosPage() {
             orders: normalized,
           });
           setQtyDraft({});
-          setPagadoRecibidoDraft({});
         }
       } catch (err) {
         if (err instanceof DOMException && err.name === 'AbortError') return;
@@ -739,7 +730,6 @@ export default function PedidosPage() {
       label?: string | null;
       badgeVariant?: StatusBadgeVariant | null;
       pago_al_recibir_override?: number | null;
-      pagado_al_recibir_override?: number | null;
       total_a_pagar_override?: number | null;
     };
     setShopifyError('');
@@ -785,10 +775,6 @@ export default function PedidosPage() {
           const v = Number(data.pago_al_recibir_override);
           patch.pago_al_recibir_override = Number.isFinite(v) ? v : 0;
         }
-        if (data.pagado_al_recibir_override !== undefined) {
-          const v = Number(data.pagado_al_recibir_override);
-          patch.pagado_al_recibir_override = Number.isFinite(v) ? v : 0;
-        }
         if (data.total_a_pagar_override !== undefined) {
           const v = data.total_a_pagar_override;
           patch.total_a_pagar_override =
@@ -805,11 +791,6 @@ export default function PedidosPage() {
       }),
     );
     setQtyDraft((d) => {
-      const n = { ...d };
-      delete n[orderId];
-      return n;
-    });
-    setPagadoRecibidoDraft((d) => {
       const n = { ...d };
       delete n[orderId];
       return n;
@@ -894,26 +875,6 @@ export default function PedidosPage() {
     [patchLocalFields],
   );
 
-  const schedulePagadoRecibidoSave = useCallback(
-    (orderId: number, raw: string) => {
-      const prevT = pagadoRecibidoTimers.current.get(orderId);
-      if (prevT) window.clearTimeout(prevT);
-      const t = window.setTimeout(() => {
-        pagadoRecibidoTimers.current.delete(orderId);
-        const trimmed = raw.trim();
-        if (trimmed === '') {
-          void patchLocalFields(orderId, { pagado_al_recibir_override: 0 });
-          return;
-        }
-        const n = Number.parseFloat(trimmed.replace(',', '.'));
-        if (!Number.isFinite(n) || n < 0) return;
-        void patchLocalFields(orderId, { pagado_al_recibir_override: n });
-      }, SAVE_DEBOUNCE_MS);
-      pagadoRecibidoTimers.current.set(orderId, t);
-    },
-    [patchLocalFields],
-  );
-
   const handleInternalStatusChange = useCallback(
     async (row: ShopifyOrderRow, nextStatus: string) => {
       if (isOrderLockedInPedidos(row)) {
@@ -976,7 +937,6 @@ export default function PedidosPage() {
   useEffect(() => {
     return () => {
       qtyTimers.current.forEach((id) => window.clearTimeout(id));
-      pagadoRecibidoTimers.current.forEach((id) => window.clearTimeout(id));
       ordersRequestAbortRef.current?.abort();
     };
   }, []);
@@ -1499,11 +1459,6 @@ export default function PedidosPage() {
     qtyDraft[o.id] !== undefined
       ? qtyDraft[o.id]!
       : String(o.quantity_override ?? o.shopifyQuantity ?? o.defaultQuantity ?? 0);
-
-  const displayPagadoRecibido = (o: ShopifyOrderRow) =>
-    pagadoRecibidoDraft[o.id] !== undefined
-      ? pagadoRecibidoDraft[o.id]!
-      : String(o.pagado_al_recibir_override ?? 0);
 
   return (
     <>
@@ -2510,7 +2465,7 @@ export default function PedidosPage() {
           <div style={{ padding: 24, color: ds.textMuted, fontSize: 13 }}>Cargando pedidos de Shopify…</div>
         ) : (
           <div style={orderListTableScrollWrapperStyle}>
-            <table style={{ ...tableBase, tableLayout: 'auto', minWidth: useLive ? 2140 : 1280 }}>
+            <table style={{ ...tableBase, tableLayout: 'auto', minWidth: useLive ? 1980 : 1180 }}>
               <thead>
                 <tr>
                   {useLive ? (
@@ -2565,9 +2520,6 @@ export default function PedidosPage() {
                   </Th>
                   <Th style={{ ...orderListTheadStickyCell, textAlign: 'right', whiteSpace: 'normal', maxWidth: 140 }}>
                     Pendiente de pago al recibir
-                  </Th>
-                  <Th style={{ ...orderListTheadStickyCell, textAlign: 'right', whiteSpace: 'normal', maxWidth: 130 }}>
-                    Pagado al recibir
                   </Th>
                   <Th style={orderListTheadStickyCell}>Cant.</Th>
                   <Th style={orderListTheadStickyCell}>Productos</Th>
@@ -2781,38 +2733,9 @@ export default function PedidosPage() {
                               fontVariantNumeric: 'tabular-nums',
                               color: ds.textPrimary,
                             }}
-                            title="Precio total menos pago anticipado (Shopify pagado o valor del editor)."
+                            title="Precio total − pago anticipado (Shopify pagado o valor del editor)."
                           >
                             {formatMoneyAmount(pendienteRecibir, o.currency)}
-                          </Td>
-                          <Td isLast={i === arr.length - 1}>
-                            {o.id > 0 ? (
-                              <input
-                                type="text"
-                                inputMode="decimal"
-                                style={{
-                                  ...inputStyle,
-                                  minWidth: 88,
-                                  cursor: isLocked ? 'not-allowed' : 'text',
-                                  opacity: isLocked ? 0.72 : 1,
-                                }}
-                                value={displayPagadoRecibido(o)}
-                                onChange={(e) => {
-                                  const v = e.target.value;
-                                  setPagadoRecibidoDraft((d) => ({ ...d, [o.id]: v }));
-                                  schedulePagadoRecibidoSave(o.id, v);
-                                }}
-                                aria-label="Pagado al recibir"
-                                disabled={isLocked}
-                                title={
-                                  isLocked
-                                    ? pedidosRowLockTitle(o, 'pagado_recibir')
-                                    : 'Importe cobrado al entregar (se guarda solo en KOVO)'
-                                }
-                              />
-                            ) : (
-                              <span style={{ fontSize: 11, color: ds.textMuted }}>—</span>
-                            )}
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <input
@@ -2907,9 +2830,6 @@ export default function PedidosPage() {
                         <Td isLast={i === arr.length - 1}>{highlightText(o.client, searchTerm)}</Td>
                         <Td isLast={i === arr.length - 1} style={{ textAlign: 'right', fontSize: 12 }}>
                           {o.total}
-                        </Td>
-                        <Td isLast={i === arr.length - 1} style={{ textAlign: 'right', fontSize: 12, color: ds.textMuted }}>
-                          —
                         </Td>
                         <Td isLast={i === arr.length - 1} style={{ textAlign: 'right', fontSize: 12, color: ds.textMuted }}>
                           —
