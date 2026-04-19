@@ -117,8 +117,8 @@ function isPedidosPruebaOrder(row: Pick<ShopifyOrderRow, 'internal_status' | 'mo
 }
 
 /** Tooltip cuando la fila no es editable desde Pedidos. */
-function pedidosRowLockTitle(row: ShopifyOrderRow, kind: 'estado' | 'mensajero' | 'precio' | 'cantidad'): string {
-  if (kind === 'precio' || kind === 'cantidad') {
+function pedidosRowLockTitle(row: ShopifyOrderRow, kind: 'estado' | 'mensajero' | 'cantidad'): string {
+  if (kind === 'cantidad') {
     return 'Pedido despachado/cancelado: edición bloqueada';
   }
   return kind === 'estado' ? 'Pedido bloqueado: estado no editable' : 'Pedido bloqueado: mensajero no editable';
@@ -156,6 +156,9 @@ type ShopifyOrderRow = {
   total_a_pagar?: number;
   total_a_pagar_default?: number;
   total_a_pagar_override?: number | null;
+  /** Saldo pendiente según Shopify (`total_outstanding`). */
+  totalOutstanding?: string | null;
+  pago_al_recibir_override?: number;
   is_motico_manual?: boolean;
 };
 
@@ -181,6 +184,41 @@ function formatMoneyFromString(total: string, currency: string) {
   const n = Number.parseFloat(String(total));
   if (Number.isNaN(n)) return String(total);
   return formatMoneyAmount(n, currency);
+}
+
+function pedidosPrecioTotalNum(o: Pick<ShopifyOrderRow, 'price_override' | 'shopifyTotal' | 'total'>): number {
+  const raw =
+    o.price_override != null && Number.isFinite(Number(o.price_override))
+      ? Number(o.price_override)
+      : Number.parseFloat(String(o.shopifyTotal ?? o.total ?? '0').replace(',', '.'));
+  return Number.isFinite(raw) && raw >= 0 ? raw : 0;
+}
+
+function pedidosOutstandingNum(o: Pick<ShopifyOrderRow, 'totalOutstanding'>): number | null {
+  const s = o.totalOutstanding;
+  if (s == null || String(s).trim() === '') return null;
+  const n = Number.parseFloat(String(s).replace(',', '.'));
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/** Lo ya cobrado o abonado: total del pedido menos `total_outstanding` de Shopify; si no hay dato, todo el total si consta como pagado. */
+function pedidosAnticipoNum(o: ShopifyOrderRow): number {
+  const T = pedidosPrecioTotalNum(o);
+  const out = pedidosOutstandingNum(o);
+  if (out != null) return Math.max(0, Math.min(T, T - out));
+  const fin = String(o.financialStatus || '').toLowerCase();
+  if (fin === 'paid') return T;
+  return 0;
+}
+
+/** Monto a cobrar contra entrega: override «pago al recibir» si es mayor que 0; si no, total a pagar (KOVO/Shopify). */
+function pedidosPendienteRecibirNum(o: ShopifyOrderRow): number {
+  const po = Number(o.pago_al_recibir_override);
+  if (Number.isFinite(po) && po > 0) return po;
+  const tap = Number(o.total_a_pagar);
+  if (Number.isFinite(tap) && tap >= 0) return tap;
+  const out = pedidosOutstandingNum(o);
+  return out != null ? out : 0;
 }
 
 function formatDate(iso: string) {
@@ -504,12 +542,10 @@ export default function PedidosPage() {
 
   const bulkActionBusy = bulkStatusApplying || bulkMensajeroApplying;
 
-  const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
   const [unlockOrder, setUnlockOrder] = useState<ShopifyOrderRow | null>(null);
   const [unlockReason, setUnlockReason] = useState('');
   const [unlocking, setUnlocking] = useState(false);
-  const priceTimers = useRef<Map<number, number>>(new Map());
   const qtyTimers = useRef<Map<number, number>>(new Map());
   const ordersRequestAbortRef = useRef<AbortController | null>(null);
   const ordersRequestSeqRef = useRef(0);
@@ -531,6 +567,8 @@ export default function PedidosPage() {
       total_a_pagar?: number;
       total_a_pagar_default?: number;
       total_a_pagar_override?: number | null;
+      totalOutstanding?: string | null;
+      pago_al_recibir_override?: number;
       is_motico_manual?: boolean;
     };
     const totalDef = Number(ext.total_a_pagar_default);
@@ -567,6 +605,14 @@ export default function PedidosPage() {
       total_a_pagar_default: Number.isFinite(totalDef) ? totalDef : totalAPagar,
       total_a_pagar_override: totalOv != null && Number.isFinite(Number(totalOv)) ? Number(totalOv) : null,
       total_a_pagar: totalAPagar,
+      totalOutstanding:
+        ext.totalOutstanding != null && String(ext.totalOutstanding).trim() !== ''
+          ? String(ext.totalOutstanding)
+          : null,
+      pago_al_recibir_override:
+        ext.pago_al_recibir_override != null && Number.isFinite(Number(ext.pago_al_recibir_override))
+          ? Number(ext.pago_al_recibir_override)
+          : 0,
       is_motico_manual: Boolean(ext.is_motico_manual),
     };
   }, []);
@@ -653,7 +699,6 @@ export default function PedidosPage() {
             fetchedAt: data.fetchedAt || null,
             orders: normalized,
           });
-          setPriceDraft({});
           setQtyDraft({});
         }
       } catch (err) {
@@ -693,6 +738,8 @@ export default function PedidosPage() {
       payment_status_override?: string | null;
       label?: string | null;
       badgeVariant?: StatusBadgeVariant | null;
+      pago_al_recibir_override?: number | null;
+      total_a_pagar_override?: number | null;
     };
     setShopifyError('');
     setShopifyOrders((prev) =>
@@ -733,14 +780,25 @@ export default function PedidosPage() {
               ? String(data.payment_status_override).toLowerCase().trim()
               : null;
         }
+        if (data.pago_al_recibir_override !== undefined) {
+          const v = Number(data.pago_al_recibir_override);
+          patch.pago_al_recibir_override = Number.isFinite(v) ? v : 0;
+        }
+        if (data.total_a_pagar_override !== undefined) {
+          const v = data.total_a_pagar_override;
+          patch.total_a_pagar_override =
+            v != null && v !== '' && Number.isFinite(Number(v)) ? Number(v) : null;
+          const def = o.total_a_pagar_default;
+          patch.total_a_pagar =
+            patch.total_a_pagar_override != null && Number.isFinite(Number(patch.total_a_pagar_override))
+              ? Number(patch.total_a_pagar_override)
+              : def != null && Number.isFinite(def)
+                ? def
+                : o.total_a_pagar;
+        }
         return { ...o, ...patch };
       }),
     );
-    setPriceDraft((d) => {
-      const n = { ...d };
-      delete n[orderId];
-      return n;
-    });
     setQtyDraft((d) => {
       const n = { ...d };
       delete n[orderId];
@@ -805,26 +863,6 @@ export default function PedidosPage() {
       setBulkMensajeroApplying(false);
     }
   }, [selectedOrderIds, shopifyOrders, bulkMensajero, patchLocalFields]);
-
-  const schedulePriceSave = useCallback(
-    (orderId: number, raw: string) => {
-      const prevT = priceTimers.current.get(orderId);
-      if (prevT) window.clearTimeout(prevT);
-      const t = window.setTimeout(() => {
-        priceTimers.current.delete(orderId);
-        const trimmed = raw.trim();
-        if (trimmed === '') {
-          void patchLocalFields(orderId, { price_override: null });
-          return;
-        }
-        const n = Number.parseFloat(trimmed.replace(',', '.'));
-        if (!Number.isFinite(n) || n < 0) return;
-        void patchLocalFields(orderId, { price_override: n });
-      }, SAVE_DEBOUNCE_MS);
-      priceTimers.current.set(orderId, t);
-    },
-    [patchLocalFields],
-  );
 
   const scheduleQtySave = useCallback(
     (orderId: number, raw: string) => {
@@ -907,7 +945,6 @@ export default function PedidosPage() {
 
   useEffect(() => {
     return () => {
-      priceTimers.current.forEach((id) => window.clearTimeout(id));
       qtyTimers.current.forEach((id) => window.clearTimeout(id));
       ordersRequestAbortRef.current?.abort();
     };
@@ -1428,9 +1465,6 @@ export default function PedidosPage() {
 
   const useLive = shopifyConnected && shopDomain;
 
-  const displayPrice = (o: ShopifyOrderRow) =>
-    priceDraft[o.id] !== undefined ? priceDraft[o.id]! : String(o.price_override ?? o.shopifyTotal ?? '');
-
   const displayQty = (o: ShopifyOrderRow) =>
     qtyDraft[o.id] !== undefined
       ? qtyDraft[o.id]!
@@ -1442,7 +1476,7 @@ export default function PedidosPage() {
         title="Pedidos"
         subtitle={
           useLive
-            ? `Tienda Shopify · ${shopDomain}. Sincronización cada ${POLL_MS / 1000} s. Los cambios en estado, precio y cantidad se guardan solos.`
+            ? `Tienda Shopify · ${shopDomain}. Sincronización cada ${POLL_MS / 1000} s. Los cambios en estado, mensajero y cantidad se guardan solos.`
             : 'Conecta Shopify en Canales para ver pedidos reales. Mientras tanto, datos de demostración.'
         }
         right={
@@ -2441,7 +2475,7 @@ export default function PedidosPage() {
           <div style={{ padding: 24, color: ds.textMuted, fontSize: 13 }}>Cargando pedidos de Shopify…</div>
         ) : (
           <div style={orderListTableScrollWrapperStyle}>
-            <table style={{ ...tableBase, tableLayout: 'auto', minWidth: useLive ? 1760 : 1080 }}>
+            <table style={{ ...tableBase, tableLayout: 'auto', minWidth: useLive ? 1980 : 1180 }}>
               <thead>
                 <tr>
                   {useLive ? (
@@ -2490,7 +2524,11 @@ export default function PedidosPage() {
                       <Th style={orderListTheadStickyCell}>Dirección</Th>
                     </>
                   ) : null}
-                  <Th style={orderListTheadStickyCell}>Precio</Th>
+                  <Th style={{ ...orderListTheadStickyCell, textAlign: 'right' }}>Precio Total</Th>
+                  <Th style={{ ...orderListTheadStickyCell, textAlign: 'right' }}>Anticipo</Th>
+                  <Th style={{ ...orderListTheadStickyCell, textAlign: 'right', whiteSpace: 'normal', maxWidth: 140 }}>
+                    Pendiente de pago al recibir
+                  </Th>
                   <Th style={orderListTheadStickyCell}>Cant.</Th>
                   <Th style={orderListTheadStickyCell}>Productos</Th>
                   <Th style={orderListTheadStickyCell}>Pago (Shopify)</Th>
@@ -2504,6 +2542,9 @@ export default function PedidosPage() {
                       const isLocked = isOrderLockedInPedidos(o);
                       const stLower = String(o.internal_status || '').toLowerCase();
                       const editDisabledFromPedidos = o.id < 0;
+                      const precioTotal = pedidosPrecioTotalNum(o);
+                      const anticipo = pedidosAnticipoNum(o);
+                      const pendienteRecibir = pedidosPendienteRecibirNum(o);
                       return (
                         <tr key={o.id}>
                           <Td
@@ -2668,28 +2709,41 @@ export default function PedidosPage() {
                               {highlightText(o.shippingAddressLine?.trim() || '—', searchTerm)}
                             </div>
                           </Td>
-                          <Td isLast={i === arr.length - 1}>
-                            <input
-                              type="text"
-                              inputMode="decimal"
-                              style={{
-                                ...inputStyle,
-                                cursor: isLocked ? 'not-allowed' : 'text',
-                                opacity: isLocked ? 0.72 : 1,
-                              }}
-                              value={displayPrice(o)}
-                              onChange={(e) => {
-                                const v = e.target.value;
-                                setPriceDraft((d) => ({ ...d, [o.id]: v }));
-                                schedulePriceSave(o.id, v);
-                              }}
-                              aria-label="Precio manual"
-                              disabled={isLocked}
-                              title={isLocked ? pedidosRowLockTitle(o, 'precio') : 'Editar precio'}
-                            />
-                            <div style={{ fontSize: 9.5, color: ds.textHint, marginTop: 4 }}>
-                              Shopify: {formatMoneyFromString(o.shopifyTotal, o.currency)}
-                            </div>
+                          <Td
+                            isLast={i === arr.length - 1}
+                            style={{
+                              textAlign: 'right',
+                              fontSize: 12,
+                              fontWeight: 600,
+                              fontVariantNumeric: 'tabular-nums',
+                              color: ds.textPrimary,
+                            }}
+                          >
+                            {formatMoneyAmount(precioTotal, o.currency)}
+                          </Td>
+                          <Td
+                            isLast={i === arr.length - 1}
+                            style={{
+                              textAlign: 'right',
+                              fontSize: 12,
+                              fontVariantNumeric: 'tabular-nums',
+                              color: ds.textSecondary,
+                            }}
+                          >
+                            {formatMoneyAmount(anticipo, o.currency)}
+                          </Td>
+                          <Td
+                            isLast={i === arr.length - 1}
+                            style={{
+                              textAlign: 'right',
+                              fontSize: 12,
+                              fontWeight: 600,
+                              fontVariantNumeric: 'tabular-nums',
+                              color: ds.textPrimary,
+                            }}
+                            title="Override «pago al recibir» en KOVO si existe; si no, total a pagar."
+                          >
+                            {formatMoneyAmount(pendienteRecibir, o.currency)}
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <input
@@ -2782,7 +2836,15 @@ export default function PedidosPage() {
                         </Td>
                         <Td isLast={i === arr.length - 1}>{o.date}</Td>
                         <Td isLast={i === arr.length - 1}>{highlightText(o.client, searchTerm)}</Td>
-                        <Td isLast={i === arr.length - 1}>{o.total}</Td>
+                        <Td isLast={i === arr.length - 1} style={{ textAlign: 'right', fontSize: 12 }}>
+                          {o.total}
+                        </Td>
+                        <Td isLast={i === arr.length - 1} style={{ textAlign: 'right', fontSize: 12, color: ds.textMuted }}>
+                          —
+                        </Td>
+                        <Td isLast={i === arr.length - 1} style={{ textAlign: 'right', fontSize: 12, color: ds.textMuted }}>
+                          —
+                        </Td>
                         <Td isLast={i === arr.length - 1}>—</Td>
                         <Td isLast={i === arr.length - 1}>—</Td>
                         <Td isLast={i === arr.length - 1}>
