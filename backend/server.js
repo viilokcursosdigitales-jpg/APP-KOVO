@@ -1901,6 +1901,7 @@ app.get(
   async (req, res) => {
     try {
       const roleRows = await listOrganizationRoleRows(req.organizationId);
+      const roleLabelBySlug = new Map(roleRows.map((r) => [String(r.slug), String(r.label || r.slug)]));
 
       const commissionBySlug = new Map();
       try {
@@ -1963,12 +1964,12 @@ app.get(
         if (e && e.code !== '42P01') throw e;
       }
 
-      const queryLatestRoleMap = async (orderSource, orderIds) => {
+      const queryLatestActorMap = async (orderSource, orderIds) => {
         const out = new Map();
         if (!orderIds.length) return out;
         try {
           const q = await pool.query(
-            `SELECT DISTINCT ON (order_id) order_id, user_role
+            `SELECT DISTINCT ON (order_id) order_id, user_id, user_name, user_email, user_role
              FROM order_change_logs
              WHERE organization_id = $1 AND order_source = $2 AND order_id = ANY($3::bigint[])
              ORDER BY order_id, created_at DESC, id DESC`,
@@ -1977,8 +1978,14 @@ app.get(
           for (const r of q.rows) {
             const id = Number(r.order_id);
             if (!Number.isFinite(id) || id <= 0) continue;
-            const slug = String(r.user_role || '').trim();
-            out.set(id, slug || 'sin_asignar');
+            const roleSlug = String(r.user_role || '').trim() || 'sin_asignar';
+            const userId = Number(r.user_id);
+            out.set(id, {
+              role_slug: roleSlug,
+              user_id: Number.isFinite(userId) && userId > 0 ? userId : null,
+              user_name: String(r.user_name || '').trim(),
+              user_email: String(r.user_email || '').trim(),
+            });
           }
         } catch (e) {
           if (e && e.code === '42P01') return out;
@@ -1987,11 +1994,11 @@ app.get(
         return out;
       };
 
-      const shopRoleMap = await queryLatestRoleMap(
+      const shopActorMap = await queryLatestActorMap(
         'shopify',
         shopifyDespachados.map((x) => x.orderId),
       );
-      const manualRoleMap = await queryLatestRoleMap(
+      const manualActorMap = await queryLatestActorMap(
         'motico_manual',
         manualDespachados.map((x) => x.orderId),
       );
@@ -2000,6 +2007,71 @@ app.get(
       const shopifyFetchedTotals = await fetchShopifyTotalsByOrderIds(req.organizationId, missingShopifyTotals);
 
       const ventasByRole = new Map();
+      const membersByKey = new Map();
+      const unassignedMember = {
+        member_id: null,
+        member_name: 'Sin usuario asignado',
+        member_email: '',
+        role_slug: 'sin_asignar',
+        role_label: 'Sin rol asignado',
+        pedidos_despachados: 0,
+        ventas_despachadas_total: 0,
+      };
+
+      try {
+        const mRows = await pool.query(
+          `SELECT id, name, email, role
+           FROM users
+           WHERE organization_id = $1 AND is_active = true
+           ORDER BY name ASC, email ASC`,
+          [req.organizationId],
+        );
+        for (const m of mRows.rows) {
+          const id = Number(m.id);
+          if (!Number.isFinite(id) || id <= 0) continue;
+          const roleSlug = String(m.role || '').trim() || 'member';
+          membersByKey.set(`uid:${id}`, {
+            member_id: id,
+            member_name: String(m.name || '').trim() || String(m.email || '').trim() || `Usuario ${id}`,
+            member_email: String(m.email || '').trim(),
+            role_slug: roleSlug,
+            role_label: String(roleLabelBySlug.get(roleSlug) || roleSlug || 'Sin rol'),
+            pedidos_despachados: 0,
+            ventas_despachadas_total: 0,
+          });
+        }
+      } catch (e) {
+        if (e && e.code !== '42P01') throw e;
+      }
+
+      const trackMember = (actor, amountRaw) => {
+        const amount = Number(amountRaw);
+        if (!Number.isFinite(amount) || amount <= 0) return;
+        const userId = Number(actor?.user_id);
+        if (Number.isFinite(userId) && userId > 0) {
+          const key = `uid:${userId}`;
+          let row = membersByKey.get(key);
+          if (!row) {
+            const roleSlug = String(actor?.role_slug || '').trim() || 'sin_asignar';
+            row = {
+              member_id: userId,
+              member_name: String(actor?.user_name || '').trim() || String(actor?.user_email || '').trim() || `Usuario ${userId}`,
+              member_email: String(actor?.user_email || '').trim(),
+              role_slug: roleSlug,
+              role_label: String(roleLabelBySlug.get(roleSlug) || roleSlug || 'Sin rol'),
+              pedidos_despachados: 0,
+              ventas_despachadas_total: 0,
+            };
+            membersByKey.set(key, row);
+          }
+          row.pedidos_despachados += 1;
+          row.ventas_despachadas_total += amount;
+          return;
+        }
+        unassignedMember.pedidos_despachados += 1;
+        unassignedMember.ventas_despachadas_total += amount;
+      };
+
       const addToRole = (slugRaw, amountRaw) => {
         const amount = Number(amountRaw);
         if (!Number.isFinite(amount) || amount <= 0) return;
@@ -2008,13 +2080,17 @@ app.get(
       };
 
       for (const o of shopifyDespachados) {
-        const roleSlug = shopRoleMap.get(o.orderId) || 'sin_asignar';
+        const actor = shopActorMap.get(o.orderId) || { role_slug: 'sin_asignar', user_id: null };
+        const roleSlug = String(actor.role_slug || 'sin_asignar');
         const amount = o.amount != null ? o.amount : Number(shopifyFetchedTotals.get(o.orderId) || 0);
         addToRole(roleSlug, amount);
+        trackMember(actor, amount);
       }
       for (const o of manualDespachados) {
-        const roleSlug = manualRoleMap.get(o.orderId) || 'sin_asignar';
+        const actor = manualActorMap.get(o.orderId) || { role_slug: 'sin_asignar', user_id: null };
+        const roleSlug = String(actor.role_slug || 'sin_asignar');
         addToRole(roleSlug, o.amount);
+        trackMember(actor, o.amount);
       }
 
       const baseRows = roleRows.map((r) => {
@@ -2054,9 +2130,31 @@ app.get(
       );
 
       const roleTier = await getRoleTier(req.user.userId, req.organizationId);
+      const memberRows = [...membersByKey.values()];
+      if (unassignedMember.pedidos_despachados > 0 || unassignedMember.ventas_despachadas_total > 0) {
+        memberRows.push(unassignedMember);
+      }
+      memberRows.sort((a, b) => {
+        const va = Number(a.ventas_despachadas_total || 0);
+        const vb = Number(b.ventas_despachadas_total || 0);
+        if (vb !== va) return vb - va;
+        const pa = Number(a.pedidos_despachados || 0);
+        const pb = Number(b.pedidos_despachados || 0);
+        if (pb !== pa) return pb - pa;
+        return String(a.member_name || '').localeCompare(String(b.member_name || ''), 'es');
+      });
       return res.json({
         can_edit_percent: roleTier === 'owner',
         rows: baseRows,
+        member_rows: memberRows.map((m) => ({
+          member_id: m.member_id,
+          member_name: m.member_name,
+          member_email: m.member_email,
+          role_slug: m.role_slug,
+          role_label: m.role_label,
+          pedidos_despachados: Number(m.pedidos_despachados || 0),
+          ventas_despachadas_total: Number(m.ventas_despachadas_total || 0),
+        })),
         totals,
       });
     } catch (e) {

@@ -12,9 +12,20 @@ type CommissionRoleRow = {
   editable: boolean;
 };
 
+type CommissionMemberRow = {
+  member_id: number | null;
+  member_name: string;
+  member_email: string;
+  role_slug: string;
+  role_label: string;
+  pedidos_despachados: number;
+  ventas_despachadas_total: number;
+};
+
 type CommissionPayload = {
   can_edit_percent?: boolean;
   rows?: CommissionRoleRow[];
+  member_rows?: CommissionMemberRow[];
   totals?: {
     ventas_despachadas_total?: number;
     commission_percent_total?: number;
@@ -53,6 +64,7 @@ export default function ComisionVentasPage() {
   const [error, setError] = useState('');
   const [canEditPercent, setCanEditPercent] = useState(false);
   const [rows, setRows] = useState<CommissionRoleRow[]>([]);
+  const [memberRows, setMemberRows] = useState<CommissionMemberRow[]>([]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -63,14 +75,17 @@ export default function ComisionVentasPage() {
       if (!res.ok) {
         setError(typeof data.error === 'string' ? data.error : 'No se pudo cargar la comisión por ventas');
         setRows([]);
+        setMemberRows([]);
         setCanEditPercent(false);
         return;
       }
       setRows(Array.isArray(data.rows) ? data.rows : []);
+      setMemberRows(Array.isArray(data.member_rows) ? data.member_rows : []);
       setCanEditPercent(Boolean(data.can_edit_percent));
     } catch {
       setError('Error de red al cargar comisión por ventas');
       setRows([]);
+      setMemberRows([]);
       setCanEditPercent(false);
     } finally {
       setLoading(false);
@@ -298,6 +313,63 @@ export default function ComisionVentasPage() {
         >
           {saving ? 'Guardando...' : 'Guardar porcentajes'}
         </button>
+      </div>
+
+      <div
+        style={{
+          marginTop: 14,
+          background: ds.bgCard,
+          border: `1px solid ${ds.borderCard}`,
+          borderRadius: 14,
+          overflow: 'hidden',
+        }}
+      >
+        <div style={{ padding: '10px 12px', borderBottom: `1px solid ${ds.borderRow}` }}>
+          <strong style={{ color: ds.textPrimary, fontSize: 13 }}>Detalle por miembro</strong>
+        </div>
+        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <thead>
+            <tr style={{ background: ds.bgSubtle }}>
+              <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Miembro</th>
+              <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Rol</th>
+              <th style={{ textAlign: 'right', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Pedidos despachados</th>
+              <th style={{ textAlign: 'right', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Ventas despachadas</th>
+            </tr>
+          </thead>
+          <tbody>
+            {loading ? (
+              <tr>
+                <td colSpan={4} style={{ padding: '12px', color: ds.textMuted, fontSize: 12 }}>
+                  Cargando...
+                </td>
+              </tr>
+            ) : memberRows.length === 0 ? (
+              <tr>
+                <td colSpan={4} style={{ padding: '12px', color: ds.textMuted, fontSize: 12 }}>
+                  No hay miembros para mostrar.
+                </td>
+              </tr>
+            ) : (
+              memberRows.map((m) => (
+                <tr key={m.member_id != null ? String(m.member_id) : `${m.member_name}-${m.role_slug}`}>
+                  <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px' }}>
+                    <div style={{ color: ds.textPrimary, fontWeight: 600 }}>{m.member_name || 'Miembro'}</div>
+                    {m.member_email ? <div style={{ color: ds.textMuted, fontSize: 11 }}>{m.member_email}</div> : null}
+                  </td>
+                  <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', color: ds.textPrimary }}>
+                    {m.role_label || m.role_slug}
+                  </td>
+                  <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', textAlign: 'right', color: ds.textPrimary }}>
+                    {Number(m.pedidos_despachados || 0).toLocaleString('es-CO')}
+                  </td>
+                  <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', textAlign: 'right' }}>
+                    <strong style={{ color: ds.textPrimary }}>{formatMoney(m.ventas_despachadas_total)}</strong>
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
       </div>
 
       <div
