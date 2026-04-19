@@ -268,6 +268,7 @@ CREATE TABLE IF NOT EXISTS commission_payment_cuts (
   ventas_despachadas_total NUMERIC(14, 4) NOT NULL DEFAULT 0,
   payment_status VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid')),
   paid_at TIMESTAMPTZ,
+  payment_proof_rel_path TEXT,
   updated_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),

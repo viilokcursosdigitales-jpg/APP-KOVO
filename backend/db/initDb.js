@@ -343,6 +343,7 @@ async function initDb(pool) {
       ventas_despachadas_total NUMERIC(14, 4) NOT NULL DEFAULT 0,
       payment_status VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid')),
       paid_at TIMESTAMPTZ,
+      payment_proof_rel_path TEXT,
       updated_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
       created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -352,6 +353,8 @@ async function initDb(pool) {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_commission_payment_cuts_org_end ON commission_payment_cuts (organization_id, period_end DESC)`,
   );
+  await pool.query(`ALTER TABLE commission_payment_cuts ADD COLUMN IF NOT EXISTS payment_proof_rel_path TEXT`);
+
   try {
     await pool.query(`ALTER TABLE commission_payment_cuts DROP CONSTRAINT IF EXISTS commission_payment_cuts_cut_kind_check`);
     await pool.query(

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { apiFetch } from '../auth/api';
+import { apiFetch, apiUrl, getStoredToken } from '../auth/api';
 import { ds } from '../design-system/ds';
 
 type CommissionRoleRow = {
@@ -47,9 +47,11 @@ type CommissionCutRow = {
   payment_status: string;
   paid_at: string | null;
   updated_at: string | null;
+  has_payment_proof?: boolean;
 };
 
 type CommissionCutsPayload = {
+  as_of?: string;
   cuts?: CommissionCutRow[];
   can_edit_payment?: boolean;
   accumulated?: {
@@ -96,6 +98,14 @@ function formatUpdatedAt(d: Date | null): string {
   }
 }
 
+function localTodayYmd(): string {
+  const d = new Date();
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
 export default function ComisionVentasPage() {
   const [period, setPeriod] = useState<'hoy' | '7d' | '30d' | 'mes'>('30d');
   const [loading, setLoading] = useState(true);
@@ -111,12 +121,19 @@ export default function ComisionVentasPage() {
   const [cutsError, setCutsError] = useState('');
   const [patchingCutId, setPatchingCutId] = useState<number | null>(null);
   const [canEditCutPayment, setCanEditCutPayment] = useState(false);
+  const [cutsAsOf, setCutsAsOf] = useState(localTodayYmd);
+  const [cutsAsOfApplied, setCutsAsOfApplied] = useState(localTodayYmd);
+  const [payModalCut, setPayModalCut] = useState<CommissionCutRow | null>(null);
+  const [payProofDataUrl, setPayProofDataUrl] = useState<string | null>(null);
+  const [payProofErr, setPayProofErr] = useState('');
+  const [proofView, setProofView] = useState<{ title: string; url: string } | null>(null);
 
-  const loadCuts = useCallback(async () => {
+  const loadCuts = useCallback(async (asOfOverride?: string) => {
+    const asOf = String(asOfOverride ?? cutsAsOf).trim() || localTodayYmd();
     setCutsLoading(true);
     setCutsError('');
     try {
-      const res = await apiFetch('/api/comision-ventas/cuts');
+      const res = await apiFetch(`/api/comision-ventas/cuts?as_of=${encodeURIComponent(asOf)}`);
       const data = (await res.json().catch(() => ({}))) as CommissionCutsPayload;
       if (!res.ok) {
         setCutsError(typeof data.error === 'string' ? data.error : 'No se pudieron cargar los cortes de pago');
@@ -127,6 +144,7 @@ export default function ComisionVentasPage() {
       }
       setCuts(Array.isArray(data.cuts) ? data.cuts : []);
       setCanEditCutPayment(Boolean(data.can_edit_payment));
+      setCutsAsOfApplied(typeof data.as_of === 'string' && data.as_of ? data.as_of : asOf);
       setAccumulated(
         data.accumulated && typeof data.accumulated === 'object'
           ? {
@@ -144,7 +162,7 @@ export default function ComisionVentasPage() {
     } finally {
       setCutsLoading(false);
     }
-  }, []);
+  }, [cutsAsOf]);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -232,7 +250,7 @@ export default function ComisionVentasPage() {
   }, [canEditPercent, rows, load]);
 
   const setCutPaymentStatus = useCallback(
-    async (cutId: number, payment_status: 'paid' | 'pending') => {
+    async (cutId: number, payment_status: 'pending') => {
       setPatchingCutId(cutId);
       setCutsError('');
       try {
@@ -255,6 +273,60 @@ export default function ComisionVentasPage() {
     },
     [loadCuts],
   );
+
+  const markCutPaidWithProof = useCallback(
+    async (cutId: number, proofImageBase64: string) => {
+      setPatchingCutId(cutId);
+      setCutsError('');
+      try {
+        const res = await apiFetch(`/api/comision-ventas/cuts/${cutId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ payment_status: 'paid', proof_image_base64: proofImageBase64 }),
+        });
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        if (!res.ok) {
+          setCutsError(typeof data.error === 'string' ? data.error : 'No se pudo marcar como pagado');
+          return false;
+        }
+        setPayModalCut(null);
+        setPayProofDataUrl(null);
+        setPayProofErr('');
+        await loadCuts();
+        return true;
+      } catch {
+        setCutsError('Error de red al marcar como pagado');
+        return false;
+      } finally {
+        setPatchingCutId(null);
+      }
+    },
+    [loadCuts],
+  );
+
+  const openPaymentProof = useCallback(async (cut: CommissionCutRow) => {
+    setCutsError('');
+    try {
+      setProofView((prev) => {
+        if (prev?.url) URL.revokeObjectURL(prev.url);
+        return null;
+      });
+      const token = getStoredToken();
+      const res = await fetch(apiUrl(`/api/comision-ventas/cuts/${cut.id}/payment-proof`), {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
+      });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => ({}))) as { error?: string };
+        setCutsError(typeof j.error === 'string' ? j.error : 'No se pudo cargar el comprobante');
+        return;
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      setProofView({ title: `Corte #${cut.cut_number || cut.id} — ${cut.period_label}`, url });
+    } catch {
+      setCutsError('Error de red al cargar el comprobante');
+    }
+  }, []);
 
   return (
     <div style={{ width: '100%', maxWidth: 1080, margin: '0 auto' }}>
@@ -292,7 +364,7 @@ export default function ComisionVentasPage() {
         }}
       >
         <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: ds.textSecondary }}>
-          Periodo
+          Período
           <select
             value={period}
             onChange={(e) => setPeriod(e.target.value as 'hoy' | '7d' | '30d' | 'mes')}
@@ -346,7 +418,7 @@ export default function ComisionVentasPage() {
                 opacity: saving || loading ? 0.6 : 1,
               }}
             >
-              {saving ? 'Guardando…' : 'Guardar %'}
+              {saving ? 'Guardando…' : 'Guardar porcentajes'}
             </button>
           ) : null}
         </div>
@@ -479,9 +551,46 @@ export default function ComisionVentasPage() {
           </h2>
           <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, maxWidth: 720 }}>
             El primer corte va desde la primera fecha con pedidos despachados hasta el último día de ese mes. Después,
-            cada mes se divide en 1–15 y 16–último día (según la fecha de actualización del pedido a despachado). Solo el
-            propietario puede marcar pagado o pendiente.
+            cada mes se divide en 1–15 y 16–último día (según la fecha de actualización del pedido a despachado). Por
+            defecto solo ves cortes con fin de período hasta el día elegido. Para marcar pagado, el propietario debe
+            adjuntar una imagen de soporte; todos los que tienen acceso al módulo pueden verla.
           </p>
+
+          <div
+            style={{
+              marginBottom: 12,
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'center',
+              gap: 10,
+            }}
+          >
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: ds.textSecondary }}>
+              Cortes hasta el día
+              <input
+                type="date"
+                value={cutsAsOf}
+                max={localTodayYmd()}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  const next = v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : localTodayYmd();
+                  setCutsAsOf(next);
+                  void loadCuts(next);
+                }}
+                style={{
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  borderRadius: 8,
+                  padding: '6px 8px',
+                  fontSize: 13,
+                  color: ds.textPrimary,
+                }}
+              />
+            </label>
+            <span style={{ fontSize: 12, color: ds.textMuted }}>
+              Aplicado en servidor: <strong style={{ color: ds.textPrimary }}>{cutsAsOfApplied}</strong>
+            </span>
+          </div>
 
           {accumulated ? (
             <div
@@ -493,17 +602,17 @@ export default function ComisionVentasPage() {
               }}
             >
               <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: 12 }}>
-                <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 4 }}>Acumulado histórico (comisión)</div>
+                <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 4 }}>Comisión acumulada (hasta el día)</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: ds.textPrimary }}>
                   {formatMoney(accumulated.commission_total)}
                 </div>
               </div>
               <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: 12 }}>
-                <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 4 }}>Total pagado</div>
+                <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 4 }}>Pagado (hasta el día)</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: ds.textPrimary }}>{formatMoney(accumulated.paid_total)}</div>
               </div>
               <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: 12 }}>
-                <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 4 }}>Total pendiente</div>
+                <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 4 }}>Pendiente (hasta el día)</div>
                 <div style={{ fontSize: 18, fontWeight: 700, color: ds.warningText }}>
                   {formatMoney(accumulated.pending_total)}
                 </div>
@@ -531,7 +640,7 @@ export default function ComisionVentasPage() {
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr style={{ background: ds.bgSubtle }}>
-                  <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Periodo</th>
+                  <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Período</th>
                   <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Tipo</th>
                   <th style={{ textAlign: 'right', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>
                     Ventas del período
@@ -540,20 +649,21 @@ export default function ComisionVentasPage() {
                     Comisión del período
                   </th>
                   <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Estado</th>
-                  <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Marcado pago</th>
+                  <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Comprobante</th>
+                  <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Fecha de pago</th>
                   <th style={{ textAlign: 'right', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Acciones</th>
                 </tr>
               </thead>
               <tbody>
                 {cutsLoading ? (
                   <tr>
-                    <td colSpan={7} style={{ padding: '12px', color: ds.textMuted, fontSize: 12 }}>
+                    <td colSpan={8} style={{ padding: '12px', color: ds.textMuted, fontSize: 12 }}>
                       Cargando cortes…
                     </td>
                   </tr>
                 ) : cuts.length === 0 ? (
                   <tr>
-                    <td colSpan={7} style={{ padding: '12px', color: ds.textMuted, fontSize: 12 }}>
+                    <td colSpan={8} style={{ padding: '12px', color: ds.textMuted, fontSize: 12 }}>
                       Aún no hay cortes. Aparecen cuando exista al menos un despacho y se cierre el primer período (hasta
                       fin de mes o la quincena correspondiente).
                     </td>
@@ -575,7 +685,7 @@ export default function ComisionVentasPage() {
                           <div style={{ fontWeight: 700, color: ds.brand }}>Corte #{num}</div>
                           <div style={{ fontWeight: 600 }}>{c.period_label}</div>
                           <div style={{ fontSize: 11, color: ds.textMuted }}>
-                            {c.period_start} → {c.period_end}
+                            {c.period_start} al {c.period_end}
                           </div>
                         </td>
                         <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', fontSize: 12, color: ds.textSecondary }}>
@@ -601,6 +711,28 @@ export default function ComisionVentasPage() {
                           >
                             {isPaid ? 'Pagado' : 'Pendiente de pago'}
                           </span>
+                        </td>
+                        <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', fontSize: 12 }}>
+                          {c.has_payment_proof ? (
+                            <button
+                              type="button"
+                              onClick={() => void openPaymentProof(c)}
+                              style={{
+                                border: `1px solid ${ds.borderCard}`,
+                                background: ds.bgSubtle,
+                                borderRadius: 8,
+                                padding: '6px 10px',
+                                fontSize: 11,
+                                fontWeight: 600,
+                                cursor: 'pointer',
+                                color: ds.textPrimary,
+                              }}
+                            >
+                              Ver comprobante
+                            </button>
+                          ) : (
+                            <span style={{ color: ds.textMuted }}>—</span>
+                          )}
                         </td>
                         <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', fontSize: 12, color: ds.textMuted }}>
                           {c.paid_at ? formatUpdatedAt(new Date(c.paid_at)) : '—'}
@@ -628,7 +760,11 @@ export default function ComisionVentasPage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => void setCutPaymentStatus(c.id, 'paid')}
+                                onClick={() => {
+                                  setPayProofErr('');
+                                  setPayProofDataUrl(null);
+                                  setPayModalCut(c);
+                                }}
                                 disabled={busy || cutsLoading || isPaid}
                                 style={{
                                   border: 'none',
@@ -657,6 +793,182 @@ export default function ComisionVentasPage() {
             </table>
           </div>
         </section>
+
+      {proofView ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Comprobante de pago"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onClick={() => {
+            setProofView((p) => {
+              if (p?.url) URL.revokeObjectURL(p.url);
+              return null;
+            });
+          }}
+        >
+          <div
+            style={{
+              maxWidth: 'min(920px, 96vw)',
+              maxHeight: '90vh',
+              overflow: 'auto',
+              background: ds.bgCard,
+              borderRadius: 14,
+              padding: 16,
+              border: `1px solid ${ds.borderCard}`,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 10 }}>
+              <strong style={{ color: ds.textPrimary }}>{proofView.title}</strong>
+              <button
+                type="button"
+                onClick={() => {
+                  setProofView((p) => {
+                    if (p?.url) URL.revokeObjectURL(p.url);
+                    return null;
+                  });
+                }}
+                style={{
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgSubtle,
+                  borderRadius: 8,
+                  padding: '6px 12px',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+            <img src={proofView.url} alt="Comprobante de pago" style={{ maxWidth: '100%', height: 'auto', display: 'block' }} />
+          </div>
+        </div>
+      ) : null}
+
+      {payModalCut ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Marcar corte como pagado"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1000,
+            background: 'rgba(0,0,0,0.55)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onClick={() => {
+            setPayModalCut(null);
+            setPayProofDataUrl(null);
+            setPayProofErr('');
+          }}
+        >
+          <div
+            style={{
+              width: 'min(440px, 100%)',
+              background: ds.bgCard,
+              borderRadius: 14,
+              padding: 18,
+              border: `1px solid ${ds.borderCard}`,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 style={{ margin: '0 0 8px', fontSize: 15, color: ds.textPrimary }}>Marcar corte como pagado</h3>
+            <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary }}>
+              {payModalCut.period_label}. Debes adjuntar una imagen del soporte de pago (máx. 4 MB, JPG, PNG o WebP).
+            </p>
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              onChange={(e) => {
+                setPayProofErr('');
+                const f = e.target.files?.[0];
+                if (!f) {
+                  setPayProofDataUrl(null);
+                  return;
+                }
+                if (f.size > 4 * 1024 * 1024) {
+                  setPayProofErr('El archivo supera 4 MB.');
+                  setPayProofDataUrl(null);
+                  return;
+                }
+                const reader = new FileReader();
+                reader.onload = () => {
+                  const r = String(reader.result || '');
+                  setPayProofDataUrl(r);
+                };
+                reader.readAsDataURL(f);
+              }}
+              style={{ marginBottom: 10, fontSize: 12 }}
+            />
+            {payProofErr ? (
+              <div style={{ fontSize: 12, color: ds.dangerText, marginBottom: 8 }}>{payProofErr}</div>
+            ) : null}
+            {payProofDataUrl ? (
+              <div style={{ marginBottom: 12 }}>
+                <img src={payProofDataUrl} alt="Vista previa" style={{ maxWidth: '100%', maxHeight: 180, borderRadius: 8 }} />
+              </div>
+            ) : null}
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+              <button
+                type="button"
+                onClick={() => {
+                  setPayModalCut(null);
+                  setPayProofDataUrl(null);
+                  setPayProofErr('');
+                }}
+                style={{
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgCard,
+                  borderRadius: 8,
+                  padding: '8px 12px',
+                  fontSize: 12,
+                  cursor: 'pointer',
+                }}
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={!payProofDataUrl || patchingCutId != null}
+                onClick={() => {
+                  if (!payModalCut || !payProofDataUrl) {
+                    setPayProofErr('Selecciona una imagen de soporte.');
+                    return;
+                  }
+                  void markCutPaidWithProof(payModalCut.id, payProofDataUrl);
+                }}
+                style={{
+                  border: 'none',
+                  background: ds.brand,
+                  color: '#fff',
+                  borderRadius: 8,
+                  padding: '8px 14px',
+                  fontSize: 12,
+                  fontWeight: 700,
+                  cursor: !payProofDataUrl || patchingCutId != null ? 'not-allowed' : 'pointer',
+                  opacity: !payProofDataUrl || patchingCutId != null ? 0.55 : 1,
+                }}
+              >
+                Confirmar pagado
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

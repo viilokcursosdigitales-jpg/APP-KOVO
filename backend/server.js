@@ -60,6 +60,56 @@ const {
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
 const hasFrontendDist = fs.existsSync(staticDir);
 
+const COMMISSION_PAYMENT_PROOFS_DIR = path.join(__dirname, 'uploads', 'commission-payment-proofs');
+function ensureCommissionPaymentProofsDir() {
+  try {
+    fs.mkdirSync(COMMISSION_PAYMENT_PROOFS_DIR, { recursive: true });
+  } catch (e) {
+    console.warn('[commission-payment-proof] mkdir:', e && e.message);
+  }
+}
+
+function parseCommissionCutsAsOfDate(raw) {
+  const s = String(raw ?? '')
+    .trim()
+    .slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  if (Number.isNaN(Date.parse(`${s}T12:00:00Z`))) return null;
+  return s;
+}
+
+function decodeBase64ImagePayload(raw) {
+  let s = String(raw || '').trim();
+  const dataIdx = s.indexOf('base64,');
+  if (s.startsWith('data:') && dataIdx >= 0) s = s.slice(dataIdx + 7);
+  s = s.replace(/\s/g, '');
+  if (!s) return null;
+  try {
+    return Buffer.from(s, 'base64');
+  } catch {
+    return null;
+  }
+}
+
+function detectImageMimeFromBuffer(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return { mime: 'image/jpeg', ext: 'jpg' };
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return { mime: 'image/png', ext: 'png' };
+  if (
+    buf[0] === 0x52 &&
+    buf[1] === 0x49 &&
+    buf[2] === 0x46 &&
+    buf[3] === 0x46 &&
+    buf[8] === 0x57 &&
+    buf[9] === 0x45 &&
+    buf[10] === 0x42 &&
+    buf[11] === 0x50
+  ) {
+    return { mime: 'image/webp', ext: 'webp' };
+  }
+  return null;
+}
+
 const JWT_SECRET = process.env.JWT_SECRET || 'kovo-dev-secret-change-in-production';
 const JWT_EXPIRES = '7d';
 const BCRYPT_ROUNDS = 10;
@@ -200,6 +250,7 @@ app.use(
 );
 app.use(
   express.json({
+    limit: '6mb',
     verify(req, res, buf) {
       if (req.method === 'POST' && String(req.originalUrl || '').startsWith('/api/shopify/webhooks/')) {
         req.rawBody = Buffer.from(buf);
@@ -2304,7 +2355,7 @@ app.put(
   async (req, res) => {
     try {
       const entries = Array.isArray(req.body?.entries) ? req.body.entries : null;
-      if (!entries) return res.status(400).json({ error: 'Se esperaba entries: array' });
+      if (!entries) return res.status(400).json({ error: 'Se esperaba el campo entries como lista.' });
       const roleRows = await listOrganizationRoleRows(req.organizationId);
       const allowed = new Set(roleRows.map((r) => String(r.slug)));
       for (const ent of entries) {
@@ -2347,18 +2398,23 @@ app.get(
   async (req, res) => {
     try {
       await syncCommissionPaymentCutsForOrg(req.organizationId);
+      const asOf =
+        parseCommissionCutsAsOfDate(req.query.as_of) || new Date().toISOString().slice(0, 10);
       const cutsR = await pool.query(
-        `SELECT id, period_start, period_end, cut_kind, commission_total, ventas_despachadas_total, payment_status, paid_at, updated_at
-         FROM commission_payment_cuts WHERE organization_id = $1 ORDER BY period_end DESC, id DESC`,
-        [req.organizationId],
+        `SELECT id, period_start, period_end, cut_kind, commission_total, ventas_despachadas_total, payment_status, paid_at, updated_at, payment_proof_rel_path
+         FROM commission_payment_cuts
+         WHERE organization_id = $1 AND period_end <= $2::date
+         ORDER BY period_end DESC, id DESC`,
+        [req.organizationId, asOf],
       );
       const accR = await pool.query(
         `SELECT
            COALESCE(SUM(commission_total), 0)::float AS commission_total,
            COALESCE(SUM(commission_total) FILTER (WHERE payment_status = 'paid'), 0)::float AS paid_total,
            COALESCE(SUM(commission_total) FILTER (WHERE payment_status = 'pending'), 0)::float AS pending_total
-         FROM commission_payment_cuts WHERE organization_id = $1`,
-        [req.organizationId],
+         FROM commission_payment_cuts
+         WHERE organization_id = $1 AND period_end <= $2::date`,
+        [req.organizationId, asOf],
       );
       const acc = accR.rows[0] || {};
       const roleTier = await getRoleTier(req.user.userId, req.organizationId);
@@ -2373,6 +2429,7 @@ app.get(
         const ps = String(r.period_start).slice(0, 10);
         const pe = String(r.period_end).slice(0, 10);
         const id = Number(r.id);
+        const proofPath = r.payment_proof_rel_path != null ? String(r.payment_proof_rel_path).trim() : '';
         return {
           id,
           cut_number: cutNumberById.get(id) || 0,
@@ -2385,9 +2442,11 @@ app.get(
           payment_status: String(r.payment_status),
           paid_at: r.paid_at,
           updated_at: r.updated_at,
+          has_payment_proof: Boolean(proofPath),
         };
       });
       return res.json({
+        as_of: asOf,
         cuts,
         can_edit_payment,
         accumulated: {
@@ -2397,13 +2456,54 @@ app.get(
         },
       });
     } catch (e) {
-      if (e && e.code === '42P01') {
+      if (e && (e.code === '42P01' || e.code === '42703')) {
         return res.status(503).json({
-          error: 'Falta la tabla commission_payment_cuts. Reinicia el backend para ejecutar initDb.',
+          error: 'Falta la tabla o columnas de cortes. Reinicia el backend para ejecutar initDb.',
         });
       }
       console.error('[comision-ventas cuts GET]', e);
       return res.status(500).json({ error: 'Error al cargar cortes de pago' });
+    }
+  },
+);
+
+app.get(
+  '/api/comision-ventas/cuts/:id/payment-proof',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('comision_ventas'),
+  async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: 'Identificador de corte no válido' });
+      }
+      const { rows } = await pool.query(
+        `SELECT payment_proof_rel_path FROM commission_payment_cuts WHERE id = $1 AND organization_id = $2`,
+        [id, req.organizationId],
+      );
+      const rel = rows[0]?.payment_proof_rel_path != null ? String(rows[0].payment_proof_rel_path).trim() : '';
+      if (!rel || rel.includes('..') || rel.startsWith('/') || path.isAbsolute(rel)) {
+        return res.status(404).json({ error: 'No hay comprobante para este corte' });
+      }
+      const abs = path.join(COMMISSION_PAYMENT_PROOFS_DIR, rel);
+      const base = path.resolve(COMMISSION_PAYMENT_PROOFS_DIR) + path.sep;
+      if (!abs.startsWith(base) || !fs.existsSync(abs)) {
+        return res.status(404).json({ error: 'Archivo de comprobante no encontrado' });
+      }
+      const ext = path.extname(abs).toLowerCase();
+      const mime = ext === '.png' ? 'image/png' : ext === '.webp' ? 'image/webp' : 'image/jpeg';
+      res.setHeader('Content-Type', mime);
+      res.setHeader('Cache-Control', 'private, no-store');
+      fs.createReadStream(abs).pipe(res);
+    } catch (e) {
+      if (e && (e.code === '42P01' || e.code === '42703')) {
+        return res.status(503).json({
+          error: 'Falta columna o tabla de cortes. Reinicia el backend para ejecutar initDb.',
+        });
+      }
+      console.error('[commission proof GET]', e);
+      return res.status(500).json({ error: 'Error al leer el comprobante' });
     }
   },
 );
@@ -2424,24 +2524,102 @@ app.patch(
         return res.status(400).json({ error: 'Identificador de corte no válido' });
       }
       if (status !== 'paid' && status !== 'pending') {
-        return res.status(400).json({ error: 'payment_status debe ser paid o pending' });
+        return res.status(400).json({
+          error:
+            'Estado de pago no válido. Los valores admitidos son pending (pendiente) y paid (pagado).',
+        });
       }
-      const paidAt = status === 'paid' ? new Date().toISOString() : null;
+
+      const prevRow = await pool.query(
+        `SELECT payment_proof_rel_path FROM commission_payment_cuts WHERE id = $1 AND organization_id = $2`,
+        [id, req.organizationId],
+      );
+      if (prevRow.rowCount === 0) {
+        return res.status(404).json({ error: 'Corte no encontrado' });
+      }
+      const prevRel =
+        prevRow.rows[0].payment_proof_rel_path != null
+          ? String(prevRow.rows[0].payment_proof_rel_path).trim()
+          : '';
+
+      if (status === 'pending') {
+        if (prevRel && !prevRel.includes('..') && !path.isAbsolute(prevRel)) {
+          const absPrev = path.join(COMMISSION_PAYMENT_PROOFS_DIR, prevRel);
+          const basePrev = path.resolve(COMMISSION_PAYMENT_PROOFS_DIR) + path.sep;
+          if (absPrev.startsWith(basePrev) && fs.existsSync(absPrev)) {
+            try {
+              fs.unlinkSync(absPrev);
+            } catch (e) {
+              console.warn('[commission proof unlink]', e && e.message);
+            }
+          }
+        }
+        const u = await pool.query(
+          `UPDATE commission_payment_cuts
+           SET payment_status = 'pending', paid_at = NULL, payment_proof_rel_path = NULL, updated_by = $1, updated_at = now()
+           WHERE id = $2 AND organization_id = $3
+           RETURNING id`,
+          [req.user.userId, id, req.organizationId],
+        );
+        if (u.rowCount === 0) {
+          return res.status(404).json({ error: 'Corte no encontrado' });
+        }
+        return res.json({ ok: true });
+      }
+
+      const proofB64 = req.body?.proof_image_base64;
+      const buf = decodeBase64ImagePayload(proofB64);
+      if (!buf || buf.length < 32) {
+        return res.status(400).json({
+          error: 'Debes adjuntar una imagen de soporte de pago (JPEG, PNG o WebP) para marcar el corte como pagado.',
+        });
+      }
+      if (buf.length > 4.5 * 1024 * 1024) {
+        return res.status(400).json({ error: 'La imagen no puede superar 4 MB.' });
+      }
+      const detected = detectImageMimeFromBuffer(buf);
+      if (!detected) {
+        return res.status(400).json({ error: 'Solo se admiten imágenes JPEG, PNG o WebP como comprobante.' });
+      }
+
+      ensureCommissionPaymentProofsDir();
+      const orgDir = path.join(COMMISSION_PAYMENT_PROOFS_DIR, String(req.organizationId));
+      fs.mkdirSync(orgDir, { recursive: true });
+      const relPath = `${req.organizationId}/${id}.${detected.ext}`;
+      const absPath = path.join(COMMISSION_PAYMENT_PROOFS_DIR, relPath);
+      const baseResolved = path.resolve(COMMISSION_PAYMENT_PROOFS_DIR) + path.sep;
+      if (!absPath.startsWith(baseResolved)) {
+        return res.status(500).json({ error: 'Ruta de almacenamiento inválida' });
+      }
+
+      if (prevRel && !prevRel.includes('..') && !path.isAbsolute(prevRel)) {
+        const absPrev = path.join(COMMISSION_PAYMENT_PROOFS_DIR, prevRel);
+        if (absPrev.startsWith(baseResolved) && fs.existsSync(absPrev) && absPrev !== absPath) {
+          try {
+            fs.unlinkSync(absPrev);
+          } catch (e) {
+            console.warn('[commission proof unlink]', e && e.message);
+          }
+        }
+      }
+
+      fs.writeFileSync(absPath, buf);
+
       const u = await pool.query(
         `UPDATE commission_payment_cuts
-         SET payment_status = $1, paid_at = $2, updated_by = $3, updated_at = now()
-         WHERE id = $4 AND organization_id = $5
+         SET payment_status = 'paid', paid_at = now(), updated_by = $1, updated_at = now(), payment_proof_rel_path = $2
+         WHERE id = $3 AND organization_id = $4
          RETURNING id`,
-        [status, paidAt, req.user.userId, id, req.organizationId],
+        [req.user.userId, relPath, id, req.organizationId],
       );
       if (u.rowCount === 0) {
         return res.status(404).json({ error: 'Corte no encontrado' });
       }
       return res.json({ ok: true });
     } catch (e) {
-      if (e && e.code === '42P01') {
+      if (e && (e.code === '42P01' || e.code === '42703')) {
         return res.status(503).json({
-          error: 'Falta la tabla commission_payment_cuts. Reinicia el backend para ejecutar initDb.',
+          error: 'Falta la tabla o columnas de cortes. Reinicia el backend para ejecutar initDb.',
         });
       }
       console.error('[comision-ventas cuts PATCH]', e);
@@ -4028,10 +4206,12 @@ async function syncCommissionPaymentCutsForOrg(organizationId) {
 function formatComisionCutPeriodLabel(periodStartStr, periodEndStr, cutKind) {
   const [ys, ms, ds] = periodStartStr.split('-').map(Number);
   const [ye, me, de] = periodEndStr.split('-').map(Number);
-  const monthLong = (y, m) =>
-    new Date(Date.UTC(y, m - 1, 1))
+  const monthLong = (y, m) => {
+    const raw = new Date(Date.UTC(y, m - 1, 1))
       .toLocaleString('es-CO', { month: 'long', timeZone: 'UTC' })
       .replace(/\./g, '');
+    return raw.charAt(0).toUpperCase() + raw.slice(1);
+  };
   if (ys === ye && ms === me) {
     if (cutKind === 'first_half') {
       return `1 al 15 de ${monthLong(ys, ms)} de ${ys}`;
@@ -4041,7 +4221,7 @@ function formatComisionCutPeriodLabel(periodStartStr, periodEndStr, cutKind) {
     }
     return `${ds} al ${de} de ${monthLong(ys, ms)} de ${ys}`;
   }
-  return `${periodStartStr} → ${periodEndStr}`;
+  return `${ds} de ${monthLong(ys, ms)} de ${ys} al ${de} de ${monthLong(ye, me)} de ${ye}`;
 }
 
 function isUnifiedEstadoPrueba(raw) {
