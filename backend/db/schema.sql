@@ -258,6 +258,25 @@ CREATE TABLE IF NOT EXISTS organization_role_commissions (
 CREATE INDEX IF NOT EXISTS idx_org_role_commissions_org
   ON organization_role_commissions (organization_id);
 
+CREATE TABLE IF NOT EXISTS commission_payment_cuts (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  period_start DATE NOT NULL,
+  period_end DATE NOT NULL,
+  cut_kind VARCHAR(20) NOT NULL CHECK (cut_kind IN ('first_half', 'second_half')),
+  commission_total NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  ventas_despachadas_total NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  payment_status VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid')),
+  paid_at TIMESTAMPTZ,
+  updated_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (organization_id, period_start, period_end)
+);
+
+CREATE INDEX IF NOT EXISTS idx_commission_payment_cuts_org_end
+  ON commission_payment_cuts (organization_id, period_end DESC);
+
 CREATE TABLE IF NOT EXISTS calculadora_cod_calculos (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,

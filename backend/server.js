@@ -8,6 +8,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { createPool } = require('./db/pool');
 const { initDb, uniqueSlug } = require('./db/initDb');
+const { computeOrganizationCommissionPeriodTotals } = require('./comisionVentasPeriod');
 const {
   normalizeActId,
   datePresetFromDashboardPeriod,
@@ -2335,6 +2336,107 @@ app.put(
 );
 
 app.get(
+  '/api/comision-ventas/cuts',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('comision_ventas'),
+  requireRole('owner'),
+  async (req, res) => {
+    try {
+      await syncCommissionPaymentCutsForOrg(req.organizationId);
+      const cutsR = await pool.query(
+        `SELECT id, period_start, period_end, cut_kind, commission_total, ventas_despachadas_total, payment_status, paid_at, updated_at
+         FROM commission_payment_cuts WHERE organization_id = $1 ORDER BY period_end DESC, id DESC`,
+        [req.organizationId],
+      );
+      const accR = await pool.query(
+        `SELECT
+           COALESCE(SUM(commission_total), 0)::float AS commission_total,
+           COALESCE(SUM(commission_total) FILTER (WHERE payment_status = 'paid'), 0)::float AS paid_total,
+           COALESCE(SUM(commission_total) FILTER (WHERE payment_status = 'pending'), 0)::float AS pending_total
+         FROM commission_payment_cuts WHERE organization_id = $1`,
+        [req.organizationId],
+      );
+      const acc = accR.rows[0] || {};
+      const cuts = cutsR.rows.map((r) => {
+        const ps = String(r.period_start).slice(0, 10);
+        const pe = String(r.period_end).slice(0, 10);
+        return {
+          id: Number(r.id),
+          period_start: ps,
+          period_end: pe,
+          cut_kind: String(r.cut_kind),
+          period_label: formatComisionCutPeriodLabel(ps, pe, String(r.cut_kind)),
+          commission_total: Number(r.commission_total) || 0,
+          ventas_despachadas_total: Number(r.ventas_despachadas_total) || 0,
+          payment_status: String(r.payment_status),
+          paid_at: r.paid_at,
+          updated_at: r.updated_at,
+        };
+      });
+      return res.json({
+        cuts,
+        accumulated: {
+          commission_total: Number(acc.commission_total) || 0,
+          paid_total: Number(acc.paid_total) || 0,
+          pending_total: Number(acc.pending_total) || 0,
+        },
+      });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Falta la tabla commission_payment_cuts. Reinicia el backend para ejecutar initDb.',
+        });
+      }
+      console.error('[comision-ventas cuts GET]', e);
+      return res.status(500).json({ error: 'Error al cargar cortes de pago' });
+    }
+  },
+);
+
+app.patch(
+  '/api/comision-ventas/cuts/:id',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('comision_ventas'),
+  requireRole('owner'),
+  async (req, res) => {
+    try {
+      const id = Number(req.params.id);
+      const status = String(req.body?.payment_status || '')
+        .trim()
+        .toLowerCase();
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: 'Identificador de corte no válido' });
+      }
+      if (status !== 'paid' && status !== 'pending') {
+        return res.status(400).json({ error: 'payment_status debe ser paid o pending' });
+      }
+      const paidAt = status === 'paid' ? new Date().toISOString() : null;
+      const u = await pool.query(
+        `UPDATE commission_payment_cuts
+         SET payment_status = $1, paid_at = $2, updated_by = $3, updated_at = now()
+         WHERE id = $4 AND organization_id = $5
+         RETURNING id`,
+        [status, paidAt, req.user.userId, id, req.organizationId],
+      );
+      if (u.rowCount === 0) {
+        return res.status(404).json({ error: 'Corte no encontrado' });
+      }
+      return res.json({ ok: true });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Falta la tabla commission_payment_cuts. Reinicia el backend para ejecutar initDb.',
+        });
+      }
+      console.error('[comision-ventas cuts PATCH]', e);
+      return res.status(500).json({ error: 'Error al actualizar el estado de pago' });
+    }
+  },
+);
+
+app.get(
   '/api/organization/members',
   verifyToken,
   scopeToOrganization,
@@ -3851,6 +3953,77 @@ function mergeDisplayedOrderEstado(internalRaw, moticoRaw) {
   const ra = UNIFIED_ESTADO_RANK[a] || 0;
   const rb = UNIFIED_ESTADO_RANK[b] || 0;
   return ra >= rb ? a : b;
+}
+
+function comisionVentasPeriodDeps() {
+  return {
+    listOrganizationRoleRows,
+    fetchShopifyTotalsByOrderIds,
+    normalizeLegacyMoticoEstadoToUnified,
+  };
+}
+
+async function ensureCommissionPaymentCutRow(
+  organizationId,
+  periodStartStr,
+  periodEndStr,
+  cutKind,
+  sinceMs,
+  untilExclusiveMs,
+) {
+  const ex = await pool.query(
+    `SELECT 1 FROM commission_payment_cuts WHERE organization_id = $1 AND period_start = $2::date AND period_end = $3::date`,
+    [organizationId, periodStartStr, periodEndStr],
+  );
+  if (ex.rowCount > 0) return;
+  const { gain_total, ventas_total } = await computeOrganizationCommissionPeriodTotals(
+    pool,
+    organizationId,
+    sinceMs,
+    untilExclusiveMs,
+    comisionVentasPeriodDeps(),
+  );
+  await pool.query(
+    `INSERT INTO commission_payment_cuts (organization_id, period_start, period_end, cut_kind, commission_total, ventas_despachadas_total, payment_status, created_at, updated_at)
+     VALUES ($1, $2::date, $3::date, $4, $5, $6, 'pending', now(), now())`,
+    [organizationId, periodStartStr, periodEndStr, cutKind, gain_total, ventas_total],
+  );
+}
+
+/** Crea filas faltantes para cortes ya cerrados (1–15 y 16–fin de mes, UTC). */
+async function syncCommissionPaymentCutsForOrg(organizationId) {
+  const now = Date.now();
+  const endY = new Date().getUTCFullYear();
+  const endM = new Date().getUTCMonth();
+  const startY = endY - 4;
+  for (let y = startY; y <= endY; y += 1) {
+    for (let m = 0; m < 12; m += 1) {
+      if (y > endY || (y === endY && m > endM)) break;
+      const firstHalfEndEx = Date.UTC(y, m, 16);
+      if (now >= firstHalfEndEx) {
+        const ps = `${y}-${String(m + 1).padStart(2, '0')}-01`;
+        const pe = `${y}-${String(m + 1).padStart(2, '0')}-15`;
+        await ensureCommissionPaymentCutRow(organizationId, ps, pe, 'first_half', Date.UTC(y, m, 1), firstHalfEndEx);
+      }
+      const secondHalfEndEx = Date.UTC(y, m + 1, 1);
+      if (now >= secondHalfEndEx) {
+        const lastD = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+        const ps2 = `${y}-${String(m + 1).padStart(2, '0')}-16`;
+        const pe2 = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastD).padStart(2, '0')}`;
+        await ensureCommissionPaymentCutRow(organizationId, ps2, pe2, 'second_half', Date.UTC(y, m, 16), secondHalfEndEx);
+      }
+    }
+  }
+}
+
+function formatComisionCutPeriodLabel(periodStartStr, periodEndStr, cutKind) {
+  const [ys, ms] = periodStartStr.split('-').map(Number);
+  const [, , de] = periodEndStr.split('-').map(Number);
+  const d0 = new Date(Date.UTC(ys, ms - 1, 1));
+  const mo = d0.toLocaleString('es-CO', { month: 'short', timeZone: 'UTC' });
+  const yLabel = ys;
+  if (cutKind === 'first_half') return `1 al 15 ${mo} ${yLabel}`.replace(/\./g, '');
+  return `16 al ${de} ${mo} ${yLabel}`.replace(/\./g, '');
 }
 
 function isUnifiedEstadoPrueba(raw) {
