@@ -2426,8 +2426,8 @@ app.get(
       });
       const cutNumberById = new Map(asc.map((row, i) => [Number(row.id), i + 1]));
       const cuts = cutsR.rows.map((r) => {
-        const ps = String(r.period_start).slice(0, 10);
-        const pe = String(r.period_end).slice(0, 10);
+        const ps = commissionPaymentCutDateToYmd(r.period_start);
+        const pe = commissionPaymentCutDateToYmd(r.period_end);
         const id = Number(r.id);
         const proofPath = r.payment_proof_rel_path != null ? String(r.payment_proof_rel_path).trim() : '';
         return {
@@ -4203,9 +4203,37 @@ async function syncCommissionPaymentCutsForOrg(organizationId) {
   }
 }
 
+/** Fecha de corte (columna DATE u objeto Date de pg) → `YYYY-MM-DD` para API y etiquetas. */
+function commissionPaymentCutDateToYmd(v) {
+  if (v == null || v === '') return '';
+  if (v instanceof Date) {
+    if (Number.isNaN(v.getTime())) return '';
+    const y = v.getUTCFullYear();
+    const m = String(v.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(v.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  const s = String(v).trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return s;
+  if (/^\d{4}-\d{2}-\d{2}/.test(s)) return s.slice(0, 10);
+  const parsed = new Date(s);
+  if (!Number.isNaN(parsed.getTime())) {
+    const y = parsed.getUTCFullYear();
+    const m = String(parsed.getUTCMonth() + 1).padStart(2, '0');
+    const d = String(parsed.getUTCDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }
+  return '';
+}
+
 function formatComisionCutPeriodLabel(periodStartStr, periodEndStr, cutKind) {
-  const [ys, ms, ds] = periodStartStr.split('-').map(Number);
-  const [ye, me, de] = periodEndStr.split('-').map(Number);
+  const ps = String(periodStartStr || '').trim();
+  const pe = String(periodEndStr || '').trim();
+  const [ys, ms, ds] = ps.split('-').map(Number);
+  const [ye, me, de] = pe.split('-').map(Number);
+  if (![ys, ms, ds, ye, me, de].every((n) => Number.isFinite(n))) {
+    return ps && pe ? `${ps} al ${pe}` : ps || pe || '—';
+  }
   const monthLong = (y, m) => {
     const raw = new Date(Date.UTC(y, m - 1, 1))
       .toLocaleString('es-CO', { month: 'long', timeZone: 'UTC' })
