@@ -75,6 +75,12 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
       icon: <IconTarget />,
       moduleId: 'planeacion_ventas',
     },
+    {
+      to: '/comision-ventas',
+      label: 'Comisión por Ventas',
+      icon: <IconTrendingUp />,
+      moduleId: 'comision_ventas',
+    },
   ];
   const account: NavItem[] = [];
   if (canManageOrg) {

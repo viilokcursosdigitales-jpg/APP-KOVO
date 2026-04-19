@@ -13,6 +13,7 @@ export const APP_MODULE_IDS = [
   'ganancia_diaria',
   'calculadora_cod',
   'planeacion_ventas',
+  'comision_ventas',
 ] as const;
 
 export type AppModuleId = (typeof APP_MODULE_IDS)[number];
@@ -31,6 +32,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'ganancia_diaria', label: 'Ganancia Diaria', group: 'Marketing' },
   { id: 'calculadora_cod', label: 'Calculadora COD', group: 'Marketing' },
   { id: 'planeacion_ventas', label: 'Planeación de Ventas', group: 'Marketing' },
+  { id: 'comision_ventas', label: 'Comisión por Ventas', group: 'Marketing' },
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
@@ -48,6 +50,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/ganancia-diaria': 'ganancia_diaria',
   '/calculadora-cod': 'calculadora_cod',
   '/planeacion-ventas': 'planeacion_ventas',
+  '/comision-ventas': 'comision_ventas',
 };
 
 const MODULE_TO_PATH: Record<AppModuleId, string> = {
@@ -64,6 +67,7 @@ const MODULE_TO_PATH: Record<AppModuleId, string> = {
   ganancia_diaria: '/ganancia-diaria',
   calculadora_cod: '/calculadora-cod',
   planeacion_ventas: '/planeacion-ventas',
+  comision_ventas: '/comision-ventas',
 };
 
 /** Orden para “primera pantalla” tras login o al bloquear una ruta. */
