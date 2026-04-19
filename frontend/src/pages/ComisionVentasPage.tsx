@@ -24,6 +24,7 @@ type CommissionMemberRow = {
 
 type CommissionPayload = {
   can_edit_percent?: boolean;
+  period_applied?: string;
   rows?: CommissionRoleRow[];
   member_rows?: CommissionMemberRow[];
   totals?: {
@@ -59,6 +60,7 @@ function formatPercent(value: number): string {
 }
 
 export default function ComisionVentasPage() {
+  const [period, setPeriod] = useState<'hoy' | '7d' | '30d' | 'mes'>('30d');
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -70,7 +72,7 @@ export default function ComisionVentasPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await apiFetch('/api/comision-ventas/roles');
+      const res = await apiFetch(`/api/comision-ventas/roles?period=${encodeURIComponent(period)}`);
       const data = (await res.json().catch(() => ({}))) as CommissionPayload;
       if (!res.ok) {
         setError(typeof data.error === 'string' ? data.error : 'No se pudo cargar la comisión por ventas');
@@ -90,11 +92,11 @@ export default function ComisionVentasPage() {
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [period]);
 
   useEffect(() => {
     void load();
-  }, [load]);
+  }, [load, period]);
 
   const totals = useMemo(() => {
     return rows.reduce(
@@ -156,8 +158,31 @@ export default function ComisionVentasPage() {
     <div style={{ width: '100%', maxWidth: 1080, margin: '0 auto' }}>
       <PageHeader
         title="Comisión por Ventas"
-        subtitle="El total de ventas despachadas se toma automáticamente desde Pedidos (estado despachado) y se distribuye por rol."
+        subtitle="El total de ventas despachadas se toma automáticamente desde Pedidos (estado despachado), con filtro por fecha."
       />
+
+      <div style={{ marginBottom: 10, display: 'flex', justifyContent: 'flex-end' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 12, color: ds.textSecondary }}>
+          Periodo
+          <select
+            value={period}
+            onChange={(e) => setPeriod(e.target.value as 'hoy' | '7d' | '30d' | 'mes')}
+            style={{
+              border: `1px solid ${ds.borderCard}`,
+              background: ds.bgCard,
+              borderRadius: 8,
+              padding: '6px 9px',
+              fontSize: 12,
+              color: ds.textPrimary,
+            }}
+          >
+            <option value="hoy">Hoy</option>
+            <option value="7d">Ultimos 7 dias</option>
+            <option value="30d">Ultimos 30 dias</option>
+            <option value="mes">Mes actual</option>
+          </select>
+        </label>
+      </div>
 
       {!canEditPercent ? (
         <div

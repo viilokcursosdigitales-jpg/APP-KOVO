@@ -1900,6 +1900,27 @@ app.get(
   requireModuleAccess('comision_ventas'),
   async (req, res) => {
     try {
+      const periodRaw = String(req.query.period || '30d')
+        .trim()
+        .toLowerCase();
+      const now = new Date();
+      let sinceDate = null;
+      let periodApplied = '30d';
+      if (periodRaw === 'hoy') {
+        sinceDate = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+        periodApplied = 'hoy';
+      } else if (periodRaw === '7d') {
+        sinceDate = new Date(now.getTime() - 7 * 86400000);
+        periodApplied = '7d';
+      } else if (periodRaw === 'mes') {
+        sinceDate = new Date(now.getFullYear(), now.getMonth(), 1);
+        periodApplied = 'mes';
+      } else {
+        sinceDate = new Date(now.getTime() - 30 * 86400000);
+        periodApplied = '30d';
+      }
+      const sinceMs = sinceDate.getTime();
+
       const roleRows = await listOrganizationRoleRows(req.organizationId);
       const roleLabelBySlug = new Map(roleRows.map((r) => [String(r.slug), String(r.label || r.slug)]));
 
@@ -1922,12 +1943,14 @@ app.get(
       const shopifyDespachados = [];
       try {
         const sRows = await pool.query(
-          `SELECT shopify_order_id, internal_status, motico_status, price_override
+          `SELECT shopify_order_id, internal_status, motico_status, price_override, updated_at
            FROM shopify_order_local_fields
            WHERE organization_id = $1`,
           [req.organizationId],
         );
         for (const r of sRows.rows) {
+          const updatedMs = Date.parse(String(r.updated_at || ''));
+          if (!Number.isFinite(updatedMs) || updatedMs < sinceMs) continue;
           const st = mergeDisplayedOrderEstado(r.internal_status, r.motico_status);
           if (st !== 'despachado') continue;
           const orderId = Number(r.shopify_order_id);
@@ -1945,12 +1968,14 @@ app.get(
       const manualDespachados = [];
       try {
         const mRows = await pool.query(
-          `SELECT id, motico_status, price_override, total_price
+          `SELECT id, motico_status, price_override, total_price, updated_at
            FROM motico_manual_orders
            WHERE organization_id = $1`,
           [req.organizationId],
         );
         for (const r of mRows.rows) {
+          const updatedMs = Date.parse(String(r.updated_at || ''));
+          if (!Number.isFinite(updatedMs) || updatedMs < sinceMs) continue;
           const st = normalizeLegacyMoticoEstadoToUnified(r.motico_status);
           if (st !== 'despachado') continue;
           const orderId = Number(r.id);
@@ -2145,6 +2170,7 @@ app.get(
       });
       return res.json({
         can_edit_percent: roleTier === 'owner',
+        period_applied: periodApplied,
         rows: baseRows,
         member_rows: memberRows.map((m) => ({
           member_id: m.member_id,
