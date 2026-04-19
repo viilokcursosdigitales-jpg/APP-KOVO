@@ -1943,7 +1943,7 @@ app.get(
       const shopifyDespachados = [];
       try {
         const sRows = await pool.query(
-          `SELECT shopify_order_id, internal_status, motico_status, price_override, updated_at
+          `SELECT shopify_order_id, internal_status, motico_status, price_override, updated_at, updated_by
            FROM shopify_order_local_fields
            WHERE organization_id = $1`,
           [req.organizationId],
@@ -1956,9 +1956,12 @@ app.get(
           const orderId = Number(r.shopify_order_id);
           if (!Number.isFinite(orderId) || orderId <= 0) continue;
           const amountRaw = Number(r.price_override);
+          const fallbackUserIdRaw = Number(r.updated_by);
           shopifyDespachados.push({
             orderId,
             amount: Number.isFinite(amountRaw) && amountRaw >= 0 ? amountRaw : null,
+            fallback_user_id:
+              Number.isFinite(fallbackUserIdRaw) && fallbackUserIdRaw > 0 ? fallbackUserIdRaw : null,
           });
         }
       } catch (e) {
@@ -1968,7 +1971,7 @@ app.get(
       const manualDespachados = [];
       try {
         const mRows = await pool.query(
-          `SELECT id, motico_status, price_override, total_price, updated_at
+          `SELECT id, motico_status, price_override, total_price, updated_at, created_by
            FROM motico_manual_orders
            WHERE organization_id = $1`,
           [req.organizationId],
@@ -1982,8 +1985,14 @@ app.get(
           if (!Number.isFinite(orderId) || orderId <= 0) continue;
           const ovr = Number(r.price_override);
           const totalPrice = Number(r.total_price);
+          const fallbackUserIdRaw = Number(r.created_by);
           const amount = Number.isFinite(ovr) && ovr >= 0 ? ovr : Number.isFinite(totalPrice) && totalPrice >= 0 ? totalPrice : 0;
-          manualDespachados.push({ orderId, amount });
+          manualDespachados.push({
+            orderId,
+            amount,
+            fallback_user_id:
+              Number.isFinite(fallbackUserIdRaw) && fallbackUserIdRaw > 0 ? fallbackUserIdRaw : null,
+          });
         }
       } catch (e) {
         if (e && e.code !== '42P01') throw e;
@@ -2097,6 +2106,36 @@ app.get(
         unassignedMember.ventas_despachadas_total += amount;
       };
 
+      const resolveActor = (actorRaw, fallbackUserIdRaw) => {
+        const actor = actorRaw && typeof actorRaw === 'object' ? actorRaw : {};
+        const actorUserIdRaw = Number(actor.user_id);
+        const fallbackUserId = Number(fallbackUserIdRaw);
+        const userId =
+          Number.isFinite(actorUserIdRaw) && actorUserIdRaw > 0
+            ? actorUserIdRaw
+            : Number.isFinite(fallbackUserId) && fallbackUserId > 0
+              ? fallbackUserId
+              : null;
+        let roleSlug = String(actor.role_slug || '').trim();
+        let userName = String(actor.user_name || '').trim();
+        let userEmail = String(actor.user_email || '').trim();
+        if (userId != null) {
+          const seeded = membersByKey.get(`uid:${userId}`);
+          if (seeded) {
+            if (!roleSlug) roleSlug = String(seeded.role_slug || '').trim();
+            if (!userName) userName = String(seeded.member_name || '').trim();
+            if (!userEmail) userEmail = String(seeded.member_email || '').trim();
+          }
+        }
+        if (!roleSlug) roleSlug = 'sin_asignar';
+        return {
+          user_id: userId,
+          role_slug: roleSlug,
+          user_name: userName,
+          user_email: userEmail,
+        };
+      };
+
       const addToRole = (slugRaw, amountRaw) => {
         const amount = Number(amountRaw);
         if (!Number.isFinite(amount) || amount <= 0) return;
@@ -2105,14 +2144,14 @@ app.get(
       };
 
       for (const o of shopifyDespachados) {
-        const actor = shopActorMap.get(o.orderId) || { role_slug: 'sin_asignar', user_id: null };
+        const actor = resolveActor(shopActorMap.get(o.orderId), o.fallback_user_id);
         const roleSlug = String(actor.role_slug || 'sin_asignar');
         const amount = o.amount != null ? o.amount : Number(shopifyFetchedTotals.get(o.orderId) || 0);
         addToRole(roleSlug, amount);
         trackMember(actor, amount);
       }
       for (const o of manualDespachados) {
-        const actor = manualActorMap.get(o.orderId) || { role_slug: 'sin_asignar', user_id: null };
+        const actor = resolveActor(manualActorMap.get(o.orderId), o.fallback_user_id);
         const roleSlug = String(actor.role_slug || 'sin_asignar');
         addToRole(roleSlug, o.amount);
         trackMember(actor, o.amount);
@@ -6659,8 +6698,8 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       }
     }
 
-    const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override, shipping_address_override, line_items_override_json)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb)
+    const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, total_a_pagar_override, shipping_address_override, line_items_override_json, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::jsonb, $13)
        ON CONFLICT (organization_id, shopify_order_id) DO UPDATE SET
          internal_status = EXCLUDED.internal_status,
          price_override = EXCLUDED.price_override,
@@ -6672,6 +6711,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
          total_a_pagar_override = EXCLUDED.total_a_pagar_override,
          shipping_address_override = EXCLUDED.shipping_address_override,
          line_items_override_json = EXCLUDED.line_items_override_json,
+         updated_by = EXCLUDED.updated_by,
          updated_at = now()`;
     const insertParams = [
       req.organizationId,
@@ -6690,6 +6730,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       line_items_override_json && typeof line_items_override_json === 'object'
         ? JSON.stringify(line_items_override_json)
         : null,
+      req.user.userId,
     ];
 
     await pool.query(insertSql, insertParams);
@@ -6899,12 +6940,13 @@ app.put(
         if (Object.prototype.hasOwnProperty.call(updates, k)) mergedOv[k] = updates[k];
       }
       await pool.query(
-        `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, motico_status, shipping_address_override)
-         VALUES ($1, $2, 'sin_revisar', 'sin_revisar', $3::jsonb)
+        `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, motico_status, shipping_address_override, updated_by)
+         VALUES ($1, $2, 'sin_revisar', 'sin_revisar', $3::jsonb, $4)
          ON CONFLICT (organization_id, shopify_order_id) DO UPDATE SET
            shipping_address_override = EXCLUDED.shipping_address_override,
+           updated_by = EXCLUDED.updated_by,
            updated_at = now()`,
-        [req.organizationId, orderId, JSON.stringify(mergedOv)],
+        [req.organizationId, orderId, JSON.stringify(mergedOv), req.user.userId],
       );
       await appendOrderChangeLog(req, {
         orderSource: 'shopify',
@@ -7195,8 +7237,9 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
         shipping_json,
         product_summary,
         line_items_json,
+        created_by,
         created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, COALESCE($12::timestamptz, now()))
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12, COALESCE($13::timestamptz, now()))
       RETURNING *`,
       [
         req.organizationId,
@@ -7210,6 +7253,7 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
         JSON.stringify(shipping_json),
         product_summary.slice(0, 600),
         JSON.stringify(line_items_json),
+        req.user.userId,
         createdAtParam,
       ],
     );

@@ -122,6 +122,7 @@ async function initDb(pool) {
       quantity_override INTEGER,
       mensajero VARCHAR(32),
       motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
+      updated_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
       updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
       UNIQUE (organization_id, shopify_order_id)
     )
@@ -155,6 +156,9 @@ async function initDb(pool) {
   );
   await pool.query(
     `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS line_items_override_json JSONB`,
+  );
+  await pool.query(
+    `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS updated_by INTEGER REFERENCES users (id) ON DELETE SET NULL`,
   );
 
   await pool.query(`
@@ -244,6 +248,7 @@ async function initDb(pool) {
       shipping_json JSONB NOT NULL DEFAULT '{}'::jsonb,
       product_summary VARCHAR(600) NOT NULL DEFAULT '',
       line_items_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+      created_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
       price_override NUMERIC(14, 4),
       quantity_override INTEGER,
       motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
@@ -256,6 +261,9 @@ async function initDb(pool) {
   );
   await pool.query(
     `ALTER TABLE motico_manual_orders ALTER COLUMN motico_status SET DEFAULT 'sin_revisar'`,
+  );
+  await pool.query(
+    `ALTER TABLE motico_manual_orders ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users (id) ON DELETE SET NULL`,
   );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_motico_manual_org_created ON motico_manual_orders (organization_id, created_at DESC)`,

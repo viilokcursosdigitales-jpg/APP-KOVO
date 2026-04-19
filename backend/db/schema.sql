@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS shopify_order_local_fields (
   total_a_pagar_override NUMERIC(14, 4),
   shipping_address_override JSONB,
   line_items_override_json JSONB,
+  updated_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (organization_id, shopify_order_id)
 );
@@ -218,6 +219,7 @@ CREATE TABLE IF NOT EXISTS motico_manual_orders (
   shipping_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   product_summary VARCHAR(600) NOT NULL DEFAULT '',
   line_items_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+  created_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
   price_override NUMERIC(14, 4),
   quantity_override INTEGER,
   motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
