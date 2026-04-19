@@ -477,6 +477,10 @@ export default function PedidosPage() {
   const [bulkInternalStatus, setBulkInternalStatus] = useState<InternalStatusValue>('sin_revisar');
   const [bulkStatusApplying, setBulkStatusApplying] = useState(false);
   const [bulkStatusFeedback, setBulkStatusFeedback] = useState('');
+  /** Valor del desplegable masivo: cadena vacía = Sin asignar (null en API). */
+  const [bulkMensajero, setBulkMensajero] = useState<string>('');
+  const [bulkMensajeroApplying, setBulkMensajeroApplying] = useState(false);
+  const [bulkMensajeroFeedback, setBulkMensajeroFeedback] = useState('');
   const [cityMenuOpen, setCityMenuOpen] = useState(false);
   const cityFilterWrapRef = useRef<HTMLDivElement>(null);
   const selectAllCheckboxRef = useRef<HTMLInputElement>(null);
@@ -498,7 +502,7 @@ export default function PedidosPage() {
   const [logoMessage, setLogoMessage] = useState('');
   const logoFileInputRef = useRef<HTMLInputElement>(null);
 
-  const bulkActionBusy = bulkStatusApplying;
+  const bulkActionBusy = bulkStatusApplying || bulkMensajeroApplying;
 
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
   const [qtyDraft, setQtyDraft] = useState<Record<number, string>>({});
@@ -747,6 +751,7 @@ export default function PedidosPage() {
 
   const applyBulkInternalStatus = useCallback(async () => {
     const editableIds = [...selectedOrderIds].filter((id) => {
+      if (id <= 0) return false;
       const row = shopifyOrders.find((o) => o.id === id);
       return row ? !isOrderLockedInPedidos(row) : false;
     });
@@ -754,6 +759,7 @@ export default function PedidosPage() {
     const ids = editableIds;
     setBulkStatusApplying(true);
     setBulkStatusFeedback('');
+    setBulkMensajeroFeedback('');
     try {
       const results = await Promise.all(ids.map((id) => patchLocalFields(id, { internal_status: bulkInternalStatus })));
       const ok = results.filter(Boolean).length;
@@ -768,6 +774,37 @@ export default function PedidosPage() {
       setBulkStatusApplying(false);
     }
   }, [selectedOrderIds, shopifyOrders, bulkInternalStatus, patchLocalFields]);
+
+  const applyBulkMensajero = useCallback(async () => {
+    const editableIds = [...selectedOrderIds].filter((id) => {
+      if (id <= 0) return false;
+      const row = shopifyOrders.find((o) => o.id === id);
+      return row ? !isOrderLockedInPedidos(row) : false;
+    });
+    if (editableIds.length === 0) return;
+    const ids = editableIds;
+    const nextMensajero = bulkMensajero.trim() === '' ? null : bulkMensajero.trim().toLowerCase();
+    setBulkMensajeroApplying(true);
+    setBulkMensajeroFeedback('');
+    setBulkStatusFeedback('');
+    try {
+      const results = await Promise.all(ids.map((id) => patchLocalFields(id, { mensajero: nextMensajero })));
+      const ok = results.filter(Boolean).length;
+      const fail = ids.length - ok;
+      const label =
+        nextMensajero == null
+          ? 'Sin asignar'
+          : MENSAJERO_OPTIONS.find((o) => o.value === nextMensajero)?.label ?? nextMensajero;
+      if (fail > 0) {
+        setBulkMensajeroFeedback(`${ok} actualizado(s), ${fail} error(es). Revisa la conexión o vuelve a intentar.`);
+      } else {
+        setBulkMensajeroFeedback(`${ok} pedido${ok === 1 ? '' : 's'} con mensajero «${label}».`);
+      }
+      window.setTimeout(() => setBulkMensajeroFeedback(''), 6000);
+    } finally {
+      setBulkMensajeroApplying(false);
+    }
+  }, [selectedOrderIds, shopifyOrders, bulkMensajero, patchLocalFields]);
 
   const schedulePriceSave = useCallback(
     (orderId: number, raw: string) => {
@@ -2297,6 +2334,55 @@ export default function PedidosPage() {
                 >
                   {bulkStatusApplying ? 'Aplicando…' : 'Aplicar estado'}
                 </button>
+                <label
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 8,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    color: ds.textMuted,
+                  }}
+                >
+                  Mensajero
+                  <select
+                    value={bulkMensajero}
+                    onChange={(e) => setBulkMensajero(e.target.value)}
+                    disabled={bulkActionBusy}
+                    style={{
+                      ...selectStyle,
+                      ...mensajeroSelectStyle(bulkMensajero || null),
+                      minWidth: `${MENSAJERO_SELECT_MIN_WIDTH_CH}ch`,
+                      maxWidth: 200,
+                    }}
+                    aria-label="Mensajero a aplicar en masa"
+                  >
+                    <option value="">Sin asignar</option>
+                    {MENSAJERO_OPTIONS.map((opt) => (
+                      <option key={opt.value} value={opt.value} style={mensajeroOptionStyle(opt.value)}>
+                        {opt.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <button
+                  type="button"
+                  disabled={bulkActionBusy}
+                  onClick={() => void applyBulkMensajero()}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.brand}`,
+                    background: ds.brandBg,
+                    color: ds.brand,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: bulkMensajeroApplying ? 'wait' : 'pointer',
+                    opacity: bulkActionBusy ? 0.75 : 1,
+                  }}
+                >
+                  {bulkMensajeroApplying ? 'Aplicando…' : 'Aplicar mensajero'}
+                </button>
                 <button
                   type="button"
                   onClick={clearOrderSelection}
@@ -2315,7 +2401,7 @@ export default function PedidosPage() {
                   Quitar selección
                 </button>
               </div>
-              {bulkStatusFeedback ? (
+              {bulkStatusFeedback || bulkMensajeroFeedback ? (
                 <div
                   style={{
                     fontSize: 11,
@@ -2334,6 +2420,15 @@ export default function PedidosPage() {
                       }}
                     >
                       {bulkStatusFeedback}
+                    </div>
+                  ) : null}
+                  {bulkMensajeroFeedback ? (
+                    <div
+                      style={{
+                        color: bulkMensajeroFeedback.includes('error') ? ds.dangerText : ds.textSecondary,
+                      }}
+                    >
+                      {bulkMensajeroFeedback}
                     </div>
                   ) : null}
                 </div>
