@@ -23,6 +23,7 @@ type CommissionMemberRow = {
 };
 
 type CommissionPayload = {
+  view_scope?: 'full' | 'self';
   can_edit_percent?: boolean;
   period_applied?: string;
   rows?: CommissionRoleRow[];
@@ -65,6 +66,7 @@ export default function ComisionVentasPage() {
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
   const [canEditPercent, setCanEditPercent] = useState(false);
+  const [viewScope, setViewScope] = useState<'full' | 'self'>('full');
   const [rows, setRows] = useState<CommissionRoleRow[]>([]);
   const [memberRows, setMemberRows] = useState<CommissionMemberRow[]>([]);
 
@@ -79,16 +81,19 @@ export default function ComisionVentasPage() {
         setRows([]);
         setMemberRows([]);
         setCanEditPercent(false);
+        setViewScope('full');
         return;
       }
       setRows(Array.isArray(data.rows) ? data.rows : []);
       setMemberRows(Array.isArray(data.member_rows) ? data.member_rows : []);
       setCanEditPercent(Boolean(data.can_edit_percent));
+      setViewScope(data.view_scope === 'self' ? 'self' : 'full');
     } catch {
       setError('Error de red al cargar comisión por ventas');
       setRows([]);
       setMemberRows([]);
       setCanEditPercent(false);
+      setViewScope('full');
     } finally {
       setLoading(false);
     }
@@ -158,7 +163,11 @@ export default function ComisionVentasPage() {
     <div style={{ width: '100%', maxWidth: 1080, margin: '0 auto' }}>
       <PageHeader
         title="Comisión por Ventas"
-        subtitle="El total de ventas despachadas se toma automáticamente desde Pedidos (estado despachado), con filtro por fecha."
+        subtitle={
+          viewScope === 'self'
+            ? 'Vista personal: solo tus pedidos despachados atribuidos a ti y el porcentaje de tu rol. El propietario ve el resumen completo del equipo.'
+            : 'El total de ventas despachadas se toma automáticamente desde Pedidos (estado despachado), con filtro por fecha.'
+        }
       />
 
       <div style={{ marginBottom: 10, display: 'flex', justifyContent: 'flex-end' }}>
@@ -184,7 +193,21 @@ export default function ComisionVentasPage() {
         </label>
       </div>
 
-      {!canEditPercent ? (
+      {viewScope === 'self' ? (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: '10px 12px',
+            borderRadius: 10,
+            background: ds.bgSubtle,
+            color: ds.textSecondary,
+            border: `1px solid ${ds.borderCard}`,
+            fontSize: 12,
+          }}
+        >
+          No se muestran datos de otros miembros ni del propietario o administradores: solo tu resumen.
+        </div>
+      ) : !canEditPercent ? (
         <div
           style={{
             marginBottom: 10,
@@ -350,7 +373,9 @@ export default function ComisionVentasPage() {
         }}
       >
         <div style={{ padding: '10px 12px', borderBottom: `1px solid ${ds.borderRow}` }}>
-          <strong style={{ color: ds.textPrimary, fontSize: 13 }}>Detalle por miembro</strong>
+          <strong style={{ color: ds.textPrimary, fontSize: 13 }}>
+            {viewScope === 'self' ? 'Tu actividad' : 'Detalle por miembro'}
+          </strong>
         </div>
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>

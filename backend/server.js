@@ -2214,20 +2214,74 @@ app.get(
         if (pb !== pa) return pb - pa;
         return String(a.member_name || '').localeCompare(String(b.member_name || ''), 'es');
       });
+
+      const mapMemberRow = (m) => ({
+        member_id: m.member_id,
+        member_name: m.member_name,
+        member_email: m.member_email,
+        role_slug: m.role_slug,
+        role_label: m.role_label,
+        pedidos_despachados: Number(m.pedidos_despachados || 0),
+        ventas_despachadas_total: Number(m.ventas_despachadas_total || 0),
+      });
+
+      let responseRows = baseRows;
+      let responseMemberRows = memberRows.map(mapMemberRow);
+      let responseTotals = totals;
+      const viewScope = roleTier === 'owner' ? 'full' : 'self';
+
+      if (roleTier !== 'owner') {
+        const uid = Number(req.user.userId);
+        const selfKey = `uid:${uid}`;
+        let selfAgg = membersByKey.get(selfKey);
+        if (!selfAgg) {
+          const ur = String(req.user.role || 'member').trim() || 'member';
+          selfAgg = {
+            member_id: uid,
+            member_name: String(req.user.name || '').trim() || String(req.user.email || '').trim() || `Usuario ${uid}`,
+            member_email: String(req.user.email || '').trim(),
+            role_slug: ur,
+            role_label: String(roleLabelBySlug.get(ur) || ur),
+            pedidos_despachados: 0,
+            ventas_despachadas_total: 0,
+          };
+        }
+        const mySlug = String(selfAgg.role_slug || 'member').trim() || 'member';
+        const myLabel = String(selfAgg.role_label || roleLabelBySlug.get(mySlug) || mySlug);
+        const myVentas = Number(selfAgg.ventas_despachadas_total || 0);
+        const myPct = Number(commissionBySlug.get(mySlug) || 0);
+        const myGain = myVentas * (myPct / 100);
+        responseRows = [
+          {
+            role_slug: mySlug,
+            role_label: myLabel,
+            ventas_despachadas_total: myVentas,
+            commission_percent: myPct,
+            gain: myGain,
+            editable: false,
+          },
+        ];
+        responseMemberRows = [
+          mapMemberRow({
+            ...selfAgg,
+            role_slug: mySlug,
+            role_label: myLabel,
+          }),
+        ];
+        responseTotals = {
+          ventas_despachadas_total: myVentas,
+          commission_percent_total: myPct,
+          gain_total: myGain,
+        };
+      }
+
       return res.json({
+        view_scope: viewScope,
         can_edit_percent: roleTier === 'owner',
         period_applied: periodApplied,
-        rows: baseRows,
-        member_rows: memberRows.map((m) => ({
-          member_id: m.member_id,
-          member_name: m.member_name,
-          member_email: m.member_email,
-          role_slug: m.role_slug,
-          role_label: m.role_label,
-          pedidos_despachados: Number(m.pedidos_despachados || 0),
-          ventas_despachadas_total: Number(m.ventas_despachadas_total || 0),
-        })),
-        totals,
+        rows: responseRows,
+        member_rows: responseMemberRows,
+        totals: responseTotals,
       });
     } catch (e) {
       console.error('[comision-ventas GET]', e);
