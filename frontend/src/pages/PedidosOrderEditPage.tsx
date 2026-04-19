@@ -64,6 +64,15 @@ type EditDraft = {
   variant_id: string;
 };
 
+type OrderAuditLog = {
+  id: number;
+  action: string;
+  user_name: string;
+  user_email: string;
+  user_role: string;
+  created_at: string | null;
+};
+
 const LOCKED_STATUSES = new Set(['despachado', 'cancelado']);
 
 function normalizeProducts(raw: unknown): Product[] {
@@ -157,6 +166,24 @@ function formatMoneyAmount(n: number, currency: string): string {
   }
 }
 
+function formatAuditAction(action: string): string {
+  const a = String(action || '').trim().toLowerCase();
+  if (a === 'update_local_fields') return 'Edición de datos del pedido';
+  if (a === 'update_shipping_address') return 'Edición de dirección';
+  if (a === 'create_manual_order') return 'Creación de pedido manual';
+  return a || 'Cambio';
+}
+
+function formatAuditDate(iso: string | null): string {
+  if (!iso) return 'Fecha no disponible';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return 'Fecha no disponible';
+  return new Intl.DateTimeFormat('es-CO', {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(new Date(t));
+}
+
 export default function PedidosOrderEditPage() {
   const navigate = useNavigate();
   const params = useParams();
@@ -167,6 +194,7 @@ export default function PedidosOrderEditPage() {
   const [success, setSuccess] = useState('');
   const [order, setOrder] = useState<EditableOrder | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const [auditLogs, setAuditLogs] = useState<OrderAuditLog[]>([]);
   const [draft, setDraft] = useState<EditDraft>(() => emptyDraft());
   const [configuredCurrency, setConfiguredCurrency] = useState('COP');
 
@@ -201,10 +229,11 @@ export default function PedidosOrderEditPage() {
     setError('');
     setSuccess('');
     try {
-      const [orderRes, productsRes, settingsRes] = await Promise.all([
+      const [orderRes, productsRes, settingsRes, auditRes] = await Promise.all([
         apiFetch(`/api/shopify/orders/${orderId}`),
         apiFetch('/api/shopify/products?limit=250'),
         apiFetch('/api/motico/settings'),
+        apiFetch(`/api/shopify/orders/${orderId}/audit-log`),
       ]);
       const orderData = (await orderRes.json().catch(() => ({}))) as {
         error?: string;
@@ -222,6 +251,14 @@ export default function PedidosOrderEditPage() {
           .trim()
           .toUpperCase();
         if (cur) setConfiguredCurrency(cur);
+      }
+      const auditPayload = (await auditRes.json().catch(() => ({}))) as {
+        logs?: OrderAuditLog[];
+      };
+      if (auditRes.ok && Array.isArray(auditPayload.logs)) {
+        setAuditLogs(auditPayload.logs);
+      } else {
+        setAuditLogs([]);
       }
       const loadedOrder = orderData.order;
       setOrder(loadedOrder);
@@ -624,6 +661,53 @@ export default function PedidosOrderEditPage() {
             >
               {saving ? 'Guardando…' : 'Guardar cambios'}
             </button>
+          </div>
+
+          <div style={{ marginTop: 24 }}>
+            <p
+              style={{
+                margin: '0 0 10px',
+                fontSize: 11,
+                fontWeight: 700,
+                color: ds.textSecondary,
+                textTransform: 'uppercase',
+                letterSpacing: '0.4px',
+              }}
+            >
+              Historial de cambios
+            </p>
+            <div
+              style={{
+                border: `1px solid ${ds.borderCard}`,
+                borderRadius: 10,
+                background: ds.bgSubtle,
+                overflow: 'hidden',
+              }}
+            >
+              {auditLogs.length === 0 ? (
+                <p style={{ margin: 0, padding: '10px 12px', fontSize: 12, color: ds.textMuted }}>
+                  Aún no hay registros para este pedido.
+                </p>
+              ) : (
+                auditLogs.slice(0, 12).map((log) => (
+                  <div
+                    key={log.id}
+                    style={{
+                      padding: '9px 12px',
+                      borderTop: `1px solid ${ds.borderCard}`,
+                    }}
+                  >
+                    <div style={{ fontSize: 12, color: ds.textPrimary, fontWeight: 600 }}>
+                      {formatAuditAction(log.action)}
+                    </div>
+                    <div style={{ marginTop: 2, fontSize: 11, color: ds.textSecondary }}>
+                      {formatAuditDate(log.created_at)} · {log.user_name || log.user_email || 'Usuario'}
+                      {log.user_role ? ` (${log.user_role})` : ''}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
       ) : null}

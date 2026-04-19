@@ -282,6 +282,44 @@ function normalizeConfigurableModulesList(raw) {
 }
 
 /**
+ * Guarda auditoría de cambios sobre pedidos (Shopify y manuales Motico).
+ * No rompe el flujo principal si el log falla.
+ */
+async function appendOrderChangeLog(req, params) {
+  const p = params && typeof params === 'object' ? params : {};
+  const source = String(p.orderSource || '').trim();
+  const orderId = Number(p.orderId);
+  const action = String(p.action || '').trim();
+  if (!source || !Number.isFinite(orderId) || !action) return;
+  const payload =
+    p.payload && typeof p.payload === 'object' ? p.payload : {};
+  try {
+    await pool.query(
+      `INSERT INTO order_change_logs
+       (organization_id, order_source, order_id, action, user_id, user_name, user_email, user_role, payload)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb)`,
+      [
+        req.organizationId,
+        source,
+        orderId,
+        action,
+        req.user?.userId || null,
+        String(req.user?.name || ''),
+        String(req.user?.email || ''),
+        String(req.user?.role || ''),
+        JSON.stringify(payload),
+      ],
+    );
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      console.warn('[order-change-log] tabla faltante order_change_logs');
+      return;
+    }
+    console.warn('[order-change-log] no se pudo registrar auditoría:', e && e.message);
+  }
+}
+
+/**
  * null = acceso a todos los módulos configurables (comportamiento por defecto).
  * array = solo esos ids.
  */
@@ -6048,6 +6086,20 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           req.organizationId,
         ],
       );
+      await appendOrderChangeLog(req, {
+        orderSource: 'motico_manual',
+        orderId: manualId,
+        action: 'update_local_fields',
+        payload: {
+          internal_status: motico_status,
+          financial_status,
+          price_override,
+          quantity_override,
+          pago_al_recibir_override,
+          total_a_pagar_override,
+          has_line_items: Array.isArray(line_items_json) && line_items_json.length > 0,
+        },
+      });
       const paymentBadge = mapFinancialToBadge(financial_status);
       return res.json({
         ok: true,
@@ -6246,6 +6298,23 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
     ];
 
     await pool.query(insertSql, insertParams);
+    await appendOrderChangeLog(req, {
+      orderSource: 'shopify',
+      orderId,
+      action: 'update_local_fields',
+      payload: {
+        internal_status,
+        motico_status,
+        payment_status_override,
+        price_override,
+        quantity_override,
+        mensajero,
+        pago_al_recibir_override,
+        total_a_pagar_override,
+        has_line_items: !!(line_items_override_json && typeof line_items_override_json === 'object'),
+        has_shipping_override: !!(shipping_address_override && typeof shipping_address_override === 'object'),
+      },
+    });
 
     res.json({
       ok: true,
@@ -6264,6 +6333,45 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al guardar campos del pedido' });
+  }
+});
+
+app.get('/api/shopify/orders/:orderId/audit-log', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const orderIdRaw = parseInt(String(req.params.orderId), 10);
+    if (!Number.isFinite(orderIdRaw) || orderIdRaw === 0) {
+      return res.status(400).json({ error: 'ID de pedido inválido' });
+    }
+    const orderSource = orderIdRaw < 0 ? 'motico_manual' : 'shopify';
+    const normalizedOrderId = orderIdRaw < 0 ? -orderIdRaw : orderIdRaw;
+    const { rows } = await pool.query(
+      `SELECT id, order_source, order_id, action, user_id, user_name, user_email, user_role, payload, created_at
+       FROM order_change_logs
+       WHERE organization_id = $1 AND order_source = $2 AND order_id = $3
+       ORDER BY created_at DESC
+       LIMIT 150`,
+      [req.organizationId, orderSource, normalizedOrderId],
+    );
+    return res.json({
+      logs: rows.map((r) => ({
+        id: Number(r.id),
+        order_source: String(r.order_source || ''),
+        order_id: Number(r.order_id),
+        action: String(r.action || ''),
+        user_id: r.user_id != null ? Number(r.user_id) : null,
+        user_name: String(r.user_name || ''),
+        user_email: String(r.user_email || ''),
+        user_role: String(r.user_role || ''),
+        payload: r.payload && typeof r.payload === 'object' ? r.payload : {},
+        created_at: r.created_at ? new Date(r.created_at).toISOString() : null,
+      })),
+    });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.json({ logs: [] });
+    }
+    console.error('[shopify/orders/:orderId/audit-log]', e);
+    return res.status(500).json({ error: 'Error al cargar historial del pedido' });
   }
 });
 
@@ -6330,6 +6438,15 @@ app.put(
           `UPDATE motico_manual_orders SET shipping_json = $1::jsonb, updated_at = now() WHERE id = $2 AND organization_id = $3`,
           [JSON.stringify(merged), manualId, req.organizationId],
         );
+        await appendOrderChangeLog(req, {
+          orderSource: 'motico_manual',
+          orderId: manualId,
+          action: 'update_shipping_address',
+          payload: {
+            fields: Object.keys(updates),
+            shipping_address_override: merged,
+          },
+        });
         const s = merged;
         return res.json({
           ok: true,
@@ -6394,6 +6511,15 @@ app.put(
            updated_at = now()`,
         [req.organizationId, orderId, JSON.stringify(mergedOv)],
       );
+      await appendOrderChangeLog(req, {
+        orderSource: 'shopify',
+        orderId,
+        action: 'update_shipping_address',
+        payload: {
+          fields: Object.keys(updates),
+          shipping_address_override: mergedOv,
+        },
+      });
       const s = mergedOv;
       res.json({
         ok: true,
@@ -6699,6 +6825,19 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
       [finalName, row.id, req.organizationId],
     );
     row.order_name = finalName;
+    await appendOrderChangeLog(req, {
+      orderSource: 'motico_manual',
+      orderId: Number(row.id),
+      action: 'create_manual_order',
+      payload: {
+        order_name: finalName,
+        client_name,
+        financial_status,
+        total_price: total,
+        quantity: qty,
+        currency,
+      },
+    });
 
     res.status(201).json({ ok: true, order: mapMoticoManualOrderRowFromDb(row) });
   } catch (e) {

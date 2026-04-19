@@ -227,6 +227,23 @@ CREATE TABLE IF NOT EXISTS motico_manual_orders (
 
 CREATE INDEX IF NOT EXISTS idx_motico_manual_org_created ON motico_manual_orders (organization_id, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS order_change_logs (
+  id BIGSERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  order_source VARCHAR(32) NOT NULL CHECK (order_source IN ('shopify', 'motico_manual')),
+  order_id BIGINT NOT NULL,
+  action VARCHAR(64) NOT NULL,
+  user_id INTEGER REFERENCES users (id) ON DELETE SET NULL,
+  user_name TEXT,
+  user_email TEXT,
+  user_role VARCHAR(64),
+  payload JSONB NOT NULL DEFAULT '{}'::jsonb,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_change_logs_org_order
+  ON order_change_logs (organization_id, order_source, order_id, created_at DESC);
+
 CREATE TABLE IF NOT EXISTS calculadora_cod_calculos (
   id SERIAL PRIMARY KEY,
   user_id INTEGER NOT NULL REFERENCES users (id) ON DELETE CASCADE,
