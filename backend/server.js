@@ -1951,15 +1951,21 @@ app.get(
         for (const r of sRows.rows) {
           const updatedMs = Date.parse(String(r.updated_at || ''));
           if (!Number.isFinite(updatedMs) || updatedMs < sinceMs) continue;
-          const st = mergeDisplayedOrderEstado(r.internal_status, r.motico_status);
-          if (st !== 'despachado') continue;
+          /* Mismo criterio que KPI "Ventas despachado" en Pedidos: internal_status unificado. */
+          const stInternal = normalizeLegacyMoticoEstadoToUnified(r.internal_status);
+          if (stInternal !== 'despachado') continue;
           const orderId = Number(r.shopify_order_id);
           if (!Number.isFinite(orderId) || orderId <= 0) continue;
-          const amountRaw = Number(r.price_override);
+          /* NULL en price_override debe significar "usar total Shopify", no 0 (Number(null) === 0). */
+          let amount = null;
+          if (r.price_override != null && String(r.price_override).trim() !== '') {
+            const amountRaw = Number(r.price_override);
+            if (Number.isFinite(amountRaw) && amountRaw >= 0) amount = amountRaw;
+          }
           const fallbackUserIdRaw = Number(r.updated_by);
           shopifyDespachados.push({
             orderId,
-            amount: Number.isFinite(amountRaw) && amountRaw >= 0 ? amountRaw : null,
+            amount,
             fallback_user_id:
               Number.isFinite(fallbackUserIdRaw) && fallbackUserIdRaw > 0 ? fallbackUserIdRaw : null,
           });
@@ -1983,7 +1989,8 @@ app.get(
           if (st !== 'despachado') continue;
           const orderId = Number(r.id);
           if (!Number.isFinite(orderId) || orderId <= 0) continue;
-          const ovr = Number(r.price_override);
+          const hasOvr = r.price_override != null && String(r.price_override).trim() !== '';
+          const ovr = hasOvr ? Number(r.price_override) : NaN;
           const totalPrice = Number(r.total_price);
           const fallbackUserIdRaw = Number(r.created_by);
           const amount = Number.isFinite(ovr) && ovr >= 0 ? ovr : Number.isFinite(totalPrice) && totalPrice >= 0 ? totalPrice : 0;
