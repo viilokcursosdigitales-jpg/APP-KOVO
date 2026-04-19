@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS shopify_order_local_fields (
   motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
   payment_status_override VARCHAR(32),
   pago_al_recibir_override NUMERIC(14, 4) NOT NULL DEFAULT 0,
+  pagado_al_recibir_override NUMERIC(14, 4) NOT NULL DEFAULT 0,
   total_a_pagar_override NUMERIC(14, 4),
   shipping_address_override JSONB,
   line_items_override_json JSONB,

@@ -26,6 +26,11 @@ type OrderRow = {
   motico_status?: string;
   is_motico_manual?: boolean;
   currency?: string;
+  financialStatus?: string;
+  total?: string;
+  shopifyTotal?: string;
+  price_override?: number | null;
+  totalOutstanding?: string | null;
   pago_al_recibir_override?: number;
   total_a_pagar?: number | null;
   product_cost_motico?: number | null;
@@ -72,12 +77,29 @@ function isMoticoMensajeroScope(o: OrderRow) {
   );
 }
 
-function pagoAlRecibirAmount(o: OrderRow): number {
-  const po = Number(o.pago_al_recibir_override);
-  if (Number.isFinite(po) && po > 0) return po;
-  const t = Number(o.total_a_pagar);
-  if (Number.isFinite(t) && t >= 0) return t;
+function relacionPrecioTotal(o: OrderRow): number {
+  const raw =
+    o.price_override != null && Number.isFinite(Number(o.price_override))
+      ? Number(o.price_override)
+      : Number.parseFloat(String(o.shopifyTotal ?? o.total ?? '0').replace(',', '.'));
+  return Number.isFinite(raw) && raw >= 0 ? raw : 0;
+}
+
+function relacionAnticipo(o: OrderRow): number {
+  const T = relacionPrecioTotal(o);
+  const s = o.totalOutstanding;
+  if (s != null && String(s).trim() !== '') {
+    const out = Number.parseFloat(String(s).replace(',', '.'));
+    if (Number.isFinite(out) && out >= 0) return Math.max(0, Math.min(T, T - out));
+  }
+  const fin = String(o.financialStatus || '').toLowerCase();
+  if (fin === 'paid') return T;
   return 0;
+}
+
+/** Misma lógica que Pedidos: pendiente al recibir = precio total − anticipo. */
+function pagoAlRecibirAmount(o: OrderRow): number {
+  return Math.max(0, relacionPrecioTotal(o) - relacionAnticipo(o));
 }
 
 function numOrZero(v: unknown): number {
