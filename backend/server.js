@@ -129,7 +129,6 @@ const CONFIGURABLE_MODULE_IDS = [
   'dashboard',
   'analisis_producto',
   'pedidos',
-  'motico',
   'inventario',
   'meta_ads',
   'ads_funnel',
@@ -146,7 +145,6 @@ const MODULE_CATALOG_FOR_API = [
   { id: 'dashboard', label: 'Inicio', group: 'Principal' },
   { id: 'analisis_producto', label: 'Analisis de productos', group: 'Principal' },
   { id: 'pedidos', label: 'Pedidos', group: 'Principal' },
-  { id: 'motico', label: 'Motico', group: 'Principal' },
   { id: 'inventario', label: 'Inventario', group: 'Principal' },
   { id: 'meta_ads', label: 'Meta Ads', group: 'Marketing' },
   { id: 'ads_funnel', label: 'Ads Funnel', group: 'Marketing' },
@@ -329,7 +327,8 @@ function normalizeConfigurableModulesList(raw) {
   const out = [];
   const seen = new Set();
   for (const x of raw) {
-    const id = String(x || '').trim();
+    let id = String(x || '').trim();
+    if (id === 'motico') id = 'pedidos';
     if (!id || seen.has(id) || !CONFIGURABLE_MODULE_IDS.includes(id)) continue;
     seen.add(id);
     out.push(id);

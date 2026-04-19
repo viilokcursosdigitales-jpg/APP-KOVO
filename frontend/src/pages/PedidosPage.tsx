@@ -20,12 +20,65 @@ import {
   ORDER_INTERNAL_ESTADO_OPTIONS as INTERNAL_OPTIONS,
   type OrderInternalEstadoValue as InternalStatusValue,
   ORDER_INTERNAL_LOCKED_STATUSES,
+  ORDER_ESTADO_FOR_GUIA_PRINT,
   coerceOrderInternalEstadoForSelect,
 } from '../constants/orderInternalEstado';
+import {
+  buildMoticoGuidesExcelPreviewRows,
+  buildMoticoGuidesLayoutExcelBlob,
+  mapLineItemToExportLine,
+  MOTICO_GUIAS_EXCEL_COLUMN_HEADERS,
+  type MoticoGuideExportLine,
+  type MoticoGuidesExcelPreviewRow,
+} from '../utils/moticoGuidesExcelExport';
+import {
+  buildMoticoGuideLabelData,
+  GUIAS_POR_HOJA,
+  openMoticoGuidesBatchPrint,
+  type MoticoGuideLabelData,
+  type MoticoLineItemRow,
+  type MoticoShippingAddress,
+} from '../utils/moticoPrintGuide';
 
 const POLL_MS = 40_000;
 const SAVE_DEBOUNCE_MS = 450;
 const SEARCH_DEBOUNCE_MS = 240;
+const MAX_LOGO_BYTES = 400_000;
+const PEDIDOS_RELACION_MAX_Q = 50;
+
+type LineItemDetail = {
+  id: number;
+  product_id?: number | null;
+  variant_id?: number | null;
+  title: string;
+  quantity: number;
+  price: string;
+  name?: string;
+  variant_title?: string;
+  sku?: string;
+  barcode?: string;
+  properties?: { name: string; value: string }[];
+};
+
+function expandLineItemsByQuantityForShopifyRelacion(details: LineItemDetail[]): LineItemDetail[] {
+  if (!details.length) return details;
+  const out: LineItemDetail[] = [];
+  let synthetic = 0;
+  for (const li of details) {
+    const q = Math.max(0, Math.min(PEDIDOS_RELACION_MAX_Q, Math.floor(Number(li.quantity) || 0)));
+    if (q <= 0) continue;
+    const baseId = typeof li.id === 'number' && Number.isFinite(li.id) ? li.id : 0;
+    for (let k = 0; k < q; k += 1) {
+      synthetic += 1;
+      out.push({
+        ...li,
+        id: baseId * 1000 + synthetic,
+        quantity: 1,
+      });
+    }
+  }
+  return out.length ? out : details;
+}
 
 const DEMO = [
   { id: '#4821', client: 'María G.', email: 'maria@mail.com', date: '11 abr 2026', total: '€ 124,90', st: 'success' as const, lb: 'Completado' },
@@ -98,6 +151,12 @@ type ShopifyOrderRow = {
   shippingAddressLine?: string;
   /** Solo dígitos, sin +57 (viene del backend). */
   phoneLocal?: string;
+  lineItemsDetail?: LineItemDetail[];
+  shippingAddress?: MoticoShippingAddress | null;
+  total_a_pagar?: number;
+  total_a_pagar_default?: number;
+  total_a_pagar_override?: number | null;
+  is_motico_manual?: boolean;
 };
 
 type ShopifyOrdersPayload = {
@@ -106,6 +165,8 @@ type ShopifyOrdersPayload = {
   fetchedAt: string;
   orders: ShopifyOrderRow[];
 };
+
+type ShopifyProductRow = { id: number; title: string };
 
 function formatMoneyAmount(n: number, currency: string) {
   const cur = currency && currency.length === 3 ? currency : 'EUR';
@@ -422,6 +483,21 @@ export default function PedidosPage() {
   const [phoneCopyToastVisible, setPhoneCopyToastVisible] = useState(false);
   const phoneCopyToastTimerRef = useRef<number | null>(null);
 
+  const [guideProducts, setGuideProducts] = useState<ShopifyProductRow[]>([]);
+  const [logoDataUrl, setLogoDataUrl] = useState<string | null>(null);
+  const [templateCurrency, setTemplateCurrency] = useState('COP');
+  const [guideHint, setGuideHint] = useState('');
+  const [guidesExcelPreview, setGuidesExcelPreview] = useState<{
+    previewRows: MoticoGuidesExcelPreviewRow[];
+    blob: Blob;
+    filename: string;
+  } | null>(null);
+  const [guidesExcelPreviewLoading, setGuidesExcelPreviewLoading] = useState(false);
+  const [logoPanelOpen, setLogoPanelOpen] = useState(false);
+  const [logoSaving, setLogoSaving] = useState(false);
+  const [logoMessage, setLogoMessage] = useState('');
+  const logoFileInputRef = useRef<HTMLInputElement>(null);
+
   const bulkActionBusy = bulkStatusApplying;
 
   const [priceDraft, setPriceDraft] = useState<Record<number, string>>({});
@@ -445,6 +521,24 @@ export default function PedidosPage() {
   const normalizeRow = useCallback((o: ShopifyOrderRow): ShopifyOrderRow => {
     const bv = o.badgeVariant;
     const safeBv = (['success', 'paused', 'error', 'info', 'warning'].includes(bv) ? bv : 'info') as StatusBadgeVariant;
+    const ext = o as ShopifyOrderRow & {
+      lineItemsDetail?: LineItemDetail[];
+      shippingAddress?: MoticoShippingAddress | null;
+      total_a_pagar?: number;
+      total_a_pagar_default?: number;
+      total_a_pagar_override?: number | null;
+      is_motico_manual?: boolean;
+    };
+    const totalDef = Number(ext.total_a_pagar_default);
+    const totalOv = ext.total_a_pagar_override;
+    const totalAPagar =
+      ext.total_a_pagar != null && Number.isFinite(Number(ext.total_a_pagar))
+        ? Number(ext.total_a_pagar)
+        : totalOv != null && Number.isFinite(Number(totalOv))
+          ? Number(totalOv)
+          : Number.isFinite(totalDef)
+            ? totalDef
+            : 0;
     return {
       ...o,
       badgeVariant: safeBv,
@@ -464,6 +558,12 @@ export default function PedidosPage() {
         o.payment_status_override != null && String(o.payment_status_override).trim() !== ''
           ? String(o.payment_status_override).toLowerCase().trim()
           : null,
+      lineItemsDetail: Array.isArray(ext.lineItemsDetail) ? ext.lineItemsDetail : [],
+      shippingAddress: ext.shippingAddress ?? null,
+      total_a_pagar_default: Number.isFinite(totalDef) ? totalDef : totalAPagar,
+      total_a_pagar_override: totalOv != null && Number.isFinite(Number(totalOv)) ? Number(totalOv) : null,
+      total_a_pagar: totalAPagar,
+      is_motico_manual: Boolean(ext.is_motico_manual),
     };
   }, []);
 
@@ -901,6 +1001,320 @@ export default function PedidosPage() {
     };
   }, [filteredShopify]);
 
+  const loadMoticoSettings = useCallback(async () => {
+    try {
+      const res = await apiFetch('/api/motico/settings');
+      if (!res.ok) return;
+      const data = (await res.json()) as { logo_data_url?: string | null; default_currency?: string | null };
+      setLogoDataUrl(typeof data.logo_data_url === 'string' ? data.logo_data_url : null);
+      const cur = String(data.default_currency || 'COP')
+        .trim()
+        .toUpperCase();
+      setTemplateCurrency(cur || 'COP');
+    } catch {
+      /* noop */
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadMoticoSettings();
+  }, [loadMoticoSettings]);
+
+  useEffect(() => {
+    if (!shopifyConnected || guideProducts.length > 0) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const prodRes = await apiFetch('/api/shopify/products?limit=250');
+        if (!prodRes.ok || cancelled) return;
+        const pdata = (await prodRes.json().catch(() => ({}))) as { products?: unknown[] };
+        const arr = Array.isArray(pdata.products) ? pdata.products : [];
+        const rows: ShopifyProductRow[] = arr
+          .map((x) => {
+            const p = x as { id?: unknown; title?: unknown };
+            const id = Number(p?.id);
+            if (!Number.isFinite(id)) return null;
+            return { id, title: String(p?.title || `Producto ${id}`) };
+          })
+          .filter((x): x is ShopifyProductRow => x != null);
+        if (!cancelled) setGuideProducts(rows);
+      } catch {
+        /* noop */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [shopifyConnected, guideProducts.length]);
+
+  useEffect(() => {
+    if (!logoPanelOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLogoPanelOpen(false);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [logoPanelOpen]);
+
+  const productTitleById = useMemo(() => {
+    const m = new Map<number, string>();
+    for (const p of guideProducts) m.set(p.id, p.title);
+    return m;
+  }, [guideProducts]);
+
+  const summarizeProducts = useCallback(
+    (ids: number[]) => {
+      if (!ids.length) return '—';
+      const parts = ids.slice(0, 3).map((id) => productTitleById.get(id) || `#${id}`);
+      const extra = ids.length > 3 ? ` +${ids.length - 3}` : '';
+      return parts.join(', ') + extra;
+    },
+    [productTitleById],
+  );
+
+  const printableSelectedCount = useMemo(() => {
+    let n = 0;
+    for (const o of shopifyOrders) {
+      if (!selectedOrderIds.has(o.id)) continue;
+      const st = coerceOrderInternalEstadoForSelect(String(o.internal_status || o.motico_status || ''));
+      if (st === ORDER_ESTADO_FOR_GUIA_PRINT) n += 1;
+    }
+    return n;
+  }, [shopifyOrders, selectedOrderIds]);
+
+  const buildLabelFromOrder = useCallback(
+    (o: ShopifyOrderRow): MoticoGuideLabelData => {
+      const lineItems: MoticoLineItemRow[] = (o.lineItemsDetail || []).map((li, idx) => ({
+        title: li.title,
+        name: li.name,
+        variant_title: li.variant_title,
+        quantity: idx === 0 && o.quantity_override != null ? o.quantity_override : li.quantity,
+        properties: li.properties,
+      }));
+      const totalAmount =
+        o.total_a_pagar != null && Number.isFinite(Number(o.total_a_pagar))
+          ? Math.max(0, Number(o.total_a_pagar))
+          : 0;
+      return buildMoticoGuideLabelData({
+        orderName: o.orderName,
+        client: o.client,
+        shipping: o.shippingAddress ?? null,
+        lineItems: lineItems.length
+          ? lineItems
+          : [{ title: summarizeProducts(o.productIds || []), quantity: o.defaultQuantity }],
+        totalAmount,
+        currency: templateCurrency,
+        fallbackProductSummary: summarizeProducts(o.productIds || []),
+        defaultQuantity: o.quantity_override ?? o.defaultQuantity,
+      });
+    },
+    [summarizeProducts, templateCurrency],
+  );
+
+  const handlePrintSelectedGuides = useCallback(() => {
+    setGuideHint('');
+    if (!logoDataUrl) {
+      setGuideHint('Configura el logo (PNG o JPEG) con «Logo guías» antes de imprimir.');
+      return;
+    }
+    const set = new Set(selectedOrderIds);
+    const list = shopifyOrders.filter((o) => set.has(o.id));
+    if (!list.length) {
+      setGuideHint('Marca los pedidos con la casilla de la primera columna.');
+      return;
+    }
+    const eligible = list.filter(
+      (o) =>
+        coerceOrderInternalEstadoForSelect(String(o.internal_status || o.motico_status || '')) ===
+        ORDER_ESTADO_FOR_GUIA_PRINT,
+    );
+    if (!eligible.length) {
+      setGuideHint(
+        'Solo se pueden imprimir guías de pedidos en estado «Confirmado». Cambia el estado o marca solo esos pedidos.',
+      );
+      return;
+    }
+    const skipped = list.length - eligible.length;
+    if (skipped > 0) {
+      setGuideHint(
+        skipped === 1
+          ? 'Se omitió 1 pedido que no está en «Confirmado». Se abre la vista previa con el resto.'
+          : `Se omitieron ${skipped} pedidos que no están en «Confirmado». Vista previa con ${eligible.length}.`,
+      );
+    }
+    const labels = eligible.map(buildLabelFromOrder);
+    const ok = openMoticoGuidesBatchPrint(logoDataUrl, labels);
+    if (!ok) {
+      setGuideHint('Permite ventanas emergentes para abrir la vista previa de las guías.');
+    }
+  }, [logoDataUrl, shopifyOrders, selectedOrderIds, buildLabelFromOrder]);
+
+  const handleOpenGuidesExcelPreview = useCallback(async () => {
+    setGuideHint('');
+    setGuidesExcelPreview(null);
+    const set = new Set(selectedOrderIds);
+    const list = shopifyOrders.filter((o) => set.has(o.id));
+    if (!list.length) {
+      setGuideHint('Marca los pedidos con la casilla de la primera columna.');
+      return;
+    }
+    const eligible = list.filter(
+      (o) =>
+        coerceOrderInternalEstadoForSelect(String(o.internal_status || o.motico_status || '')) ===
+        ORDER_ESTADO_FOR_GUIA_PRINT,
+    );
+    if (!eligible.length) {
+      setGuideHint(
+        'Solo se exportan pedidos en estado «Confirmado». Cambia el estado o marca solo esos pedidos.',
+      );
+      return;
+    }
+    const skipped = list.length - eligible.length;
+    if (skipped > 0) {
+      setGuideHint(
+        skipped === 1
+          ? 'Se omitió 1 pedido que no está en «Confirmado». La vista previa incluye el resto.'
+          : `Se omitieron ${skipped} pedidos que no están en «Confirmado». Vista previa con ${eligible.length} pedidos.`,
+      );
+    }
+    const payload = eligible.map((o, orderIdx) => {
+      const sa = o.shippingAddress;
+      const dirLine = [sa?.address1, sa?.address2].filter(Boolean).join(' · ').trim();
+      const ciudad = (sa?.city?.trim() || '').toUpperCase();
+      const observacion = (o.lineItemsDetail || [])
+        .flatMap((li) => (Array.isArray(li.properties) ? li.properties : []))
+        .find((p) => /^observ/i.test(String(p.name || '').trim()) && String(p.value || '').trim())
+        ?.value;
+      const rawDetails = o.lineItemsDetail || [];
+      const details =
+        !o.is_motico_manual && o.id > 0 ? expandLineItemsByQuantityForShopifyRelacion(rawDetails) : rawDetails;
+      let lines: MoticoGuideExportLine[];
+      if (details.length) {
+        lines = details.map((li, idx) => {
+          const base = mapLineItemToExportLine({
+            title: li.title,
+            name: li.name,
+            variant_title: li.variant_title,
+            quantity: li.quantity,
+            properties: li.properties,
+          });
+          const numero = idx === 0 && o.quantity_override != null ? o.quantity_override : li.quantity;
+          return { ...base, numero };
+        });
+      } else {
+        const numero = o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity ?? 0;
+        lines = [
+          {
+            producto: summarizeProducts(o.productIds || []),
+            diseño: '',
+            color: '',
+            numero,
+            talla: '',
+            nombre: '',
+            variable: 'NO APLICA',
+          },
+        ];
+      }
+      return {
+        orderIndex: orderIdx + 1,
+        cliente: o.client,
+        celular: o.phoneLocal || '',
+        direccion: dirLine,
+        ciudad,
+        cobro: o.total_a_pagar ?? 0,
+        observacion: String(observacion || '').trim(),
+        lines,
+      };
+    });
+    setGuidesExcelPreviewLoading(true);
+    try {
+      const built = await buildMoticoGuidesLayoutExcelBlob(payload, undefined, templateCurrency);
+      if (!built) {
+        setGuideHint('No hay filas para exportar.');
+        return;
+      }
+      const previewRows = buildMoticoGuidesExcelPreviewRows(payload, templateCurrency);
+      setGuidesExcelPreview({
+        previewRows,
+        blob: built.blob,
+        filename: built.filename,
+      });
+    } catch {
+      setGuideHint('No se pudo generar el Excel. Intenta de nuevo.');
+    } finally {
+      setGuidesExcelPreviewLoading(false);
+    }
+  }, [shopifyOrders, selectedOrderIds, summarizeProducts, templateCurrency]);
+
+  const handleDownloadGuidesExcelFromPreview = useCallback(() => {
+    if (!guidesExcelPreview) return;
+    const url = URL.createObjectURL(guidesExcelPreview.blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = guidesExcelPreview.filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [guidesExcelPreview]);
+
+  const onLogoFile = useCallback((file: File | null) => {
+    setLogoMessage('');
+    if (!file) return;
+    if (!/^image\/(png|jpeg)$/i.test(file.type)) {
+      setLogoMessage('Usa PNG o JPEG.');
+      return;
+    }
+    if (file.size > MAX_LOGO_BYTES) {
+      setLogoMessage('Archivo demasiado grande (máx. ~400 KB).');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const r = reader.result;
+      if (typeof r !== 'string') return;
+      void (async () => {
+        setLogoSaving(true);
+        try {
+          const res = await apiFetch('/api/motico/settings', {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ logo_data_url: r }),
+          });
+          const data = (await res.json().catch(() => ({}))) as { error?: string };
+          if (!res.ok) {
+            setLogoMessage(typeof data.error === 'string' ? data.error : 'No se pudo guardar');
+            return;
+          }
+          setLogoDataUrl(r);
+          setLogoMessage(`Logo guardado. Se usará en las guías (hasta ${GUIAS_POR_HOJA} por hoja carta).`);
+        } finally {
+          setLogoSaving(false);
+        }
+      })();
+    };
+    reader.readAsDataURL(file);
+  }, []);
+
+  const removeLogo = useCallback(async () => {
+    setLogoMessage('');
+    setLogoSaving(true);
+    try {
+      const res = await apiFetch('/api/motico/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ logo_data_url: null }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setLogoMessage(typeof data.error === 'string' ? data.error : 'No se pudo eliminar el logo');
+        return;
+      }
+      setLogoDataUrl(null);
+      setLogoMessage('Logo eliminado.');
+    } finally {
+      setLogoSaving(false);
+    }
+  }, []);
+
   const filteredShopifyIds = useMemo(
     () => filteredShopify.filter((r) => !isOrderLockedInPedidos(r)).map((r) => r.id),
     [filteredShopify],
@@ -1016,7 +1430,7 @@ export default function PedidosPage() {
               <button
                 type="button"
                 disabled={refreshing || shopifyLoading}
-                onClick={() => navigate('/motico?crear_manual=1')}
+                onClick={() => navigate('/pedidos/orden-manual?crear_manual=1')}
                 style={{
                   padding: '7px 14px',
                   borderRadius: 8,
@@ -1282,6 +1696,450 @@ export default function PedidosPage() {
         <div style={{ marginBottom: 14, fontSize: 12, color: ds.textMuted }}>
           Última sincronización con Shopify:{' '}
           <span style={{ color: ds.textSecondary, fontWeight: 600 }}>{formatDate(fetchedAt)}</span>
+        </div>
+      ) : null}
+
+      {useLive ? (
+        <>
+          <div
+            style={{
+              marginBottom: 14,
+              display: 'flex',
+              flexWrap: 'wrap',
+              gap: 10,
+              alignItems: 'center',
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => {
+                setLogoMessage('');
+                setLogoPanelOpen(true);
+              }}
+              style={{
+                padding: '7px 14px',
+                borderRadius: 8,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.bgCard,
+                color: ds.textSecondary,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              Logo guías{logoDataUrl ? ' ✓' : ''}
+            </button>
+            <button
+              type="button"
+              disabled={!printableSelectedCount}
+              title={
+                selectedOrderIds.size === 0
+                  ? 'Marca pedidos con la casilla de la primera columna'
+                  : !printableSelectedCount
+                    ? 'Solo se imprimen pedidos en estado «Confirmado»'
+                    : 'Abrir vista previa para imprimir guías'
+              }
+              onClick={() => void handlePrintSelectedGuides()}
+              style={{
+                padding: '7px 14px',
+                borderRadius: 8,
+                border: 'none',
+                background: ds.brand,
+                color: '#fff',
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: printableSelectedCount ? 'pointer' : 'not-allowed',
+                opacity: printableSelectedCount ? 1 : 0.5,
+              }}
+            >
+              Imprimir guías ({printableSelectedCount}) · {GUIAS_POR_HOJA}/hoja
+            </button>
+            <button
+              type="button"
+              disabled={!printableSelectedCount || guidesExcelPreviewLoading}
+              title={
+                selectedOrderIds.size === 0
+                  ? 'Marca pedidos con la casilla de la primera columna'
+                  : !printableSelectedCount
+                    ? 'Solo se exportan pedidos en estado «Confirmado»'
+                    : 'Vista previa Excel; luego descarga el archivo'
+              }
+              onClick={() => void handleOpenGuidesExcelPreview()}
+              style={{
+                padding: '7px 14px',
+                borderRadius: 8,
+                border: `1px solid ${ds.brand}`,
+                background: ds.brandBg,
+                color: ds.brand,
+                fontSize: 12,
+                fontWeight: 700,
+                cursor: printableSelectedCount && !guidesExcelPreviewLoading ? 'pointer' : 'not-allowed',
+                opacity: printableSelectedCount && !guidesExcelPreviewLoading ? 1 : 0.5,
+              }}
+            >
+              {guidesExcelPreviewLoading
+                ? 'Generando vista previa…'
+                : `Excel guías (${printableSelectedCount})`}
+            </button>
+          </div>
+          {guideHint ? (
+            <div
+              style={{
+                marginBottom: 12,
+                padding: '10px 14px',
+                borderRadius: 10,
+                background: '#fef3c7',
+                color: '#92400e',
+                fontSize: 13,
+              }}
+            >
+              {guideHint}
+            </div>
+          ) : null}
+        </>
+      ) : null}
+
+      {logoPanelOpen ? (
+        <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Logo para guías de envío"
+          style={{
+            position: 'fixed',
+            inset: 0,
+            zIndex: 1200,
+            background: 'rgba(0,0,0,0.45)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onClick={() => setLogoPanelOpen(false)}
+        >
+          <div
+            style={{
+              width: '100%',
+              maxWidth: 420,
+              background: ds.bgCard,
+              borderRadius: 14,
+              padding: 20,
+              border: `1px solid ${ds.borderCard}`,
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h2 style={{ margin: '0 0 12px', fontSize: 17, fontWeight: 700, color: ds.textPrimary }}>Agregar logo</h2>
+            <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.55 }}>
+              Formato <strong>PNG</strong> o <strong>JPEG</strong>. Peso máximo aprox. <strong>400 KB</strong>. Se usa en
+              la parte superior de cada guía (hasta {GUIAS_POR_HOJA} por hoja).
+            </p>
+            <input
+              ref={logoFileInputRef}
+              type="file"
+              accept="image/png,image/jpeg"
+              disabled={logoSaving}
+              style={{ display: 'none' }}
+              onChange={(e) => {
+                onLogoFile(e.target.files?.[0] ?? null);
+                e.target.value = '';
+              }}
+            />
+            <div
+              style={{
+                width: '100%',
+                maxWidth: 280,
+                height: 180,
+                margin: '0 auto 18px',
+                borderRadius: 12,
+                border: `1px solid ${ds.borderCard}`,
+                overflow: 'hidden',
+                background: '#fff',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}
+            >
+              {logoDataUrl ? (
+                <img
+                  src={logoDataUrl}
+                  alt="Vista previa del logo para guías"
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', objectPosition: 'center', display: 'block' }}
+                />
+              ) : (
+                <span style={{ fontSize: 12, color: ds.textHint, padding: 16, textAlign: 'center' }}>
+                  Aún no hay logo. Usa «Elegir archivo».
+                </span>
+              )}
+            </div>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 14 }}>
+              <button
+                type="button"
+                disabled={logoSaving}
+                onClick={() => logoFileInputRef.current?.click()}
+                style={{
+                  padding: '8px 16px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.brand}`,
+                  background: ds.brandBg,
+                  color: ds.brand,
+                  fontWeight: 600,
+                  fontSize: 13,
+                  cursor: logoSaving ? 'wait' : 'pointer',
+                }}
+              >
+                {logoDataUrl ? 'Cambiar logo' : 'Elegir archivo'}
+              </button>
+              {logoDataUrl ? (
+                <button
+                  type="button"
+                  disabled={logoSaving}
+                  onClick={() => void removeLogo()}
+                  style={{
+                    padding: '8px 16px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    background: ds.bgSubtle,
+                    color: ds.dangerText,
+                    fontWeight: 600,
+                    fontSize: 13,
+                    cursor: logoSaving ? 'wait' : 'pointer',
+                  }}
+                >
+                  Eliminar logo
+                </button>
+              ) : null}
+            </div>
+            {logoSaving ? <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 10 }}>Guardando…</div> : null}
+            {logoMessage ? (
+              <div
+                style={{
+                  fontSize: 12,
+                  marginBottom: 14,
+                  color:
+                    logoMessage.includes('guardado') || logoMessage.includes('eliminado') ? ds.brand : ds.dangerText,
+                }}
+              >
+                {logoMessage}
+              </div>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => setLogoPanelOpen(false)}
+              style={{
+                padding: '8px 16px',
+                borderRadius: 8,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.bgCard,
+                color: ds.textSecondary,
+                fontWeight: 600,
+                fontSize: 13,
+                cursor: 'pointer',
+              }}
+            >
+              Cerrar
+            </button>
+          </div>
+        </div>
+      ) : null}
+
+      {guidesExcelPreview ? (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            background: 'rgba(0,0,0,0.22)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+            zIndex: 96,
+          }}
+          role="dialog"
+          aria-modal
+          aria-labelledby="pedidos-excel-preview-title"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setGuidesExcelPreview(null);
+          }}
+        >
+          <div
+            style={{
+              background: ds.bgCard,
+              borderRadius: 16,
+              padding: 22,
+              width: '100%',
+              maxWidth: 980,
+              border: `1px solid ${ds.borderCard}`,
+              maxHeight: '92vh',
+              display: 'flex',
+              flexDirection: 'column',
+              boxShadow: '0 24px 60px rgba(15, 23, 42, 0.14)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                justifyContent: 'space-between',
+                gap: 12,
+                marginBottom: 10,
+              }}
+            >
+              <h2 id="pedidos-excel-preview-title" style={{ margin: 0, fontSize: 17, fontWeight: 700, color: ds.textPrimary }}>
+                Relación Excel · vista previa
+              </h2>
+              <button
+                type="button"
+                aria-label="Cerrar vista previa"
+                onClick={() => setGuidesExcelPreview(null)}
+                style={{
+                  flexShrink: 0,
+                  width: 36,
+                  height: 36,
+                  borderRadius: 10,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgSubtle,
+                  color: ds.textPrimary,
+                  fontSize: 22,
+                  lineHeight: 1,
+                  cursor: 'pointer',
+                  fontWeight: 600,
+                }}
+              >
+                ×
+              </button>
+            </div>
+            <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.45 }}>
+              Misma información que irá en <strong style={{ color: ds.textPrimary }}>{guidesExcelPreview.filename}</strong>.
+            </p>
+            <div
+              style={{
+                flex: 1,
+                minHeight: 0,
+                overflow: 'auto',
+                border: `1px solid ${ds.borderCard}`,
+                borderRadius: 10,
+              }}
+            >
+              <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, color: ds.textPrimary }}>
+                <thead>
+                  <tr>
+                    {MOTICO_GUIAS_EXCEL_COLUMN_HEADERS.map((h) => (
+                      <th
+                        key={h}
+                        scope="col"
+                        style={{
+                          padding: '8px 6px',
+                          textAlign: 'center',
+                          fontWeight: 700,
+                          background: '#6c47ff',
+                          color: '#fff',
+                          borderBottom: '1px solid #4f29d6',
+                          whiteSpace: 'nowrap',
+                          position: 'sticky',
+                          top: 0,
+                          zIndex: 1,
+                        }}
+                      >
+                        {h}
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {guidesExcelPreview.previewRows.map((row, idx) => {
+                    const cell: CSSProperties = {
+                      padding: '7px 6px',
+                      borderBottom: `1px solid ${ds.borderCard}`,
+                      verticalAlign: 'top',
+                      wordBreak: 'break-word',
+                    };
+                    const rs = row.lineCount > 1 ? row.lineCount : 1;
+                    return (
+                      <tr
+                        key={`${row.orderIndex}-${row.lineIndex}-${idx}`}
+                        style={{ background: idx % 2 === 0 ? ds.bgCard : ds.bgSubtle }}
+                      >
+                        {row.lineIndex === 0 ? (
+                          <>
+                            <td rowSpan={rs} style={{ ...cell, textAlign: 'center', fontWeight: 600 }}>
+                              {row.orderIndex}
+                            </td>
+                            <td rowSpan={rs} style={cell}>
+                              {row.cliente}
+                            </td>
+                            <td rowSpan={rs} style={cell}>
+                              {row.celular}
+                            </td>
+                            <td rowSpan={rs} style={cell}>
+                              {row.direccion}
+                            </td>
+                            <td rowSpan={rs} style={{ ...cell, textAlign: 'center' }}>
+                              {row.ciudad}
+                            </td>
+                          </>
+                        ) : null}
+                        <td style={cell}>{row.producto}</td>
+                        <td style={cell}>{row.variable}</td>
+                        <td style={{ ...cell, textAlign: 'center' }}>{row.talla}</td>
+                        {row.lineIndex === 0 ? (
+                          <>
+                            <td rowSpan={rs} style={{ ...cell, textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                              {row.cobro}
+                            </td>
+                            <td rowSpan={rs} style={cell}>
+                              {row.observacion}
+                            </td>
+                          </>
+                        ) : null}
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 10,
+                marginTop: 16,
+                justifyContent: 'flex-end',
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setGuidesExcelPreview(null)}
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: 10,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: ds.bgSubtle,
+                  color: ds.textPrimary,
+                  fontSize: 13,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Cerrar
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDownloadGuidesExcelFromPreview()}
+                style={{
+                  padding: '9px 18px',
+                  borderRadius: 10,
+                  border: 'none',
+                  background: ds.brand,
+                  color: '#fff',
+                  fontSize: 13,
+                  fontWeight: 700,
+                  cursor: 'pointer',
+                }}
+              >
+                Descargar .xlsx
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 

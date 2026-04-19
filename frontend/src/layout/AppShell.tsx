@@ -48,7 +48,6 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
     { to: '/inicio', label: 'Inicio', icon: <IconLayout />, moduleId: 'dashboard' },
     { to: '/analisis-producto', label: 'Análisis de productos', icon: <IconProduct />, moduleId: 'analisis_producto' },
     { to: '/pedidos', label: 'Pedidos', icon: <IconCart />, moduleId: 'pedidos' },
-    { to: '/motico', label: 'Motico', icon: <IconTruck />, moduleId: 'motico' },
     { to: '/inventario', label: 'Inventario', icon: <IconPackage />, moduleId: 'inventario' },
   ];
   const marketing: NavItem[] = [
@@ -131,7 +130,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
     const mobileNav: NavItem[] = [
       mainVisible[0],
       mainVisible[1],
-      mainVisible[3],
+      mainVisible[2],
       ...mktMobile,
       account[account.length - 1],
     ].filter((it): it is NavItem => Boolean(it));

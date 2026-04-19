@@ -50,7 +50,7 @@ export default function App() {
               <Route path="/analisis-producto" element={<AnalisisProductoPage />} />
               <Route path="/pedidos" element={<PedidosPage />} />
               <Route path="/pedidos/editar/:orderId" element={<PedidosOrderEditPage />} />
-              <Route path="/motico" element={<MoticoPage />} />
+              <Route path="/pedidos/orden-manual" element={<MoticoPage />} />
               <Route path="/inventario" element={<InventarioPage />} />
               <Route path="/meta-ads" element={<MetaAdsPage />} />
               <Route path="/ads-funnel" element={<AdsFunnelPage />} />

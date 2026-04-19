@@ -2032,11 +2032,15 @@ export default function MoticoPage() {
   return (
     <>
       <PageHeader
-        title="Motico"
+        title={location.pathname.includes('orden-manual') ? 'Pedido manual' : 'Motico'}
         subtitle={
-          useLive
-            ? `Pedidos con mensajero Motico · ${shopDomain}. Los datos vienen de Shopify; las ediciones se guardan solo en KOVO.`
-            : 'Conecta Shopify en Canales. Asigna Motico en Pedidos.'
+          location.pathname.includes('orden-manual')
+            ? useLive
+              ? `Crear pedido solo en KOVO · ${shopDomain}. También aparece en la lista de Pedidos.`
+              : 'Conecta Shopify en Canales para enlazar la tienda.'
+            : useLive
+              ? `Pedidos con mensajero Motico · ${shopDomain}. Los datos vienen de Shopify; las ediciones se guardan solo en KOVO.`
+              : 'Conecta Shopify en Canales. Asigna Motico en Pedidos.'
         }
         right={
           useLive ? (

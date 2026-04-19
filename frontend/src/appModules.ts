@@ -3,7 +3,6 @@ export const APP_MODULE_IDS = [
   'dashboard',
   'analisis_producto',
   'pedidos',
-  'motico',
   'inventario',
   'meta_ads',
   'ads_funnel',
@@ -22,7 +21,6 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'dashboard', label: 'Inicio', group: 'Principal' },
   { id: 'analisis_producto', label: 'Análisis de productos', group: 'Principal' },
   { id: 'pedidos', label: 'Pedidos', group: 'Principal' },
-  { id: 'motico', label: 'Motico', group: 'Principal' },
   { id: 'inventario', label: 'Inventario', group: 'Principal' },
   { id: 'meta_ads', label: 'Anuncios Meta', group: 'Marketing' },
   { id: 'ads_funnel', label: 'Embudo de anuncios', group: 'Marketing' },
@@ -40,7 +38,6 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/dashboard': 'dashboard',
   '/analisis-producto': 'analisis_producto',
   '/pedidos': 'pedidos',
-  '/motico': 'motico',
   '/inventario': 'inventario',
   '/meta-ads': 'meta_ads',
   '/ads-funnel': 'ads_funnel',
@@ -57,7 +54,6 @@ const MODULE_TO_PATH: Record<AppModuleId, string> = {
   dashboard: '/inicio',
   analisis_producto: '/analisis-producto',
   pedidos: '/pedidos',
-  motico: '/motico',
   inventario: '/inventario',
   meta_ads: '/meta-ads',
   ads_funnel: '/ads-funnel',
@@ -79,6 +75,7 @@ export function pathToModuleId(pathname: string): AppModuleId | null {
   if (direct) return direct;
   // Detalle bajo la misma ruta base (React Router nested).
   if (p === '/planeacion-ventas' || p.startsWith('/planeacion-ventas/')) return 'planeacion_ventas';
+  if (p.startsWith('/pedidos/')) return 'pedidos';
   return null;
 }
 
