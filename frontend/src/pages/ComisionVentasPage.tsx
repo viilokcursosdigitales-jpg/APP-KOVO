@@ -121,15 +121,13 @@ export default function ComisionVentasPage() {
   const [cutsError, setCutsError] = useState('');
   const [patchingCutId, setPatchingCutId] = useState<number | null>(null);
   const [canEditCutPayment, setCanEditCutPayment] = useState(false);
-  const [cutsAsOf, setCutsAsOf] = useState(localTodayYmd);
-  const [cutsAsOfApplied, setCutsAsOfApplied] = useState(localTodayYmd);
   const [payModalCut, setPayModalCut] = useState<CommissionCutRow | null>(null);
   const [payProofDataUrl, setPayProofDataUrl] = useState<string | null>(null);
   const [payProofErr, setPayProofErr] = useState('');
   const [proofView, setProofView] = useState<{ title: string; url: string } | null>(null);
 
-  const loadCuts = useCallback(async (asOfOverride?: string) => {
-    const asOf = String(asOfOverride ?? cutsAsOf).trim() || localTodayYmd();
+  const loadCuts = useCallback(async () => {
+    const asOf = localTodayYmd();
     setCutsLoading(true);
     setCutsError('');
     try {
@@ -144,7 +142,6 @@ export default function ComisionVentasPage() {
       }
       setCuts(Array.isArray(data.cuts) ? data.cuts : []);
       setCanEditCutPayment(Boolean(data.can_edit_payment));
-      setCutsAsOfApplied(typeof data.as_of === 'string' && data.as_of ? data.as_of : asOf);
       setAccumulated(
         data.accumulated && typeof data.accumulated === 'object'
           ? {
@@ -162,7 +159,7 @@ export default function ComisionVentasPage() {
     } finally {
       setCutsLoading(false);
     }
-  }, [cutsAsOf]);
+  }, []);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -551,46 +548,10 @@ export default function ComisionVentasPage() {
           </h2>
           <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, maxWidth: 720 }}>
             El primer corte va desde la primera fecha con pedidos despachados hasta el último día de ese mes. Después,
-            cada mes se divide en 1–15 y 16–último día (según la fecha de actualización del pedido a despachado). Por
-            defecto solo ves cortes con fin de período hasta el día elegido. Para marcar pagado, el propietario debe
-            adjuntar una imagen de soporte; todos los que tienen acceso al módulo pueden verla.
+            cada mes se divide en 1–15 y 16–último día (según la fecha de actualización del pedido a despachado). Solo
+            ves cortes con fin de período hasta la fecha de hoy. Para marcar pagado, el propietario debe adjuntar una
+            imagen de soporte; todos los que tienen acceso al módulo pueden verla.
           </p>
-
-          <div
-            style={{
-              marginBottom: 12,
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              gap: 10,
-            }}
-          >
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 13, color: ds.textSecondary }}>
-              Cortes hasta el día
-              <input
-                type="date"
-                value={cutsAsOf}
-                max={localTodayYmd()}
-                onChange={(e) => {
-                  const v = e.target.value;
-                  const next = v && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : localTodayYmd();
-                  setCutsAsOf(next);
-                  void loadCuts(next);
-                }}
-                style={{
-                  border: `1px solid ${ds.borderCard}`,
-                  background: ds.bgCard,
-                  borderRadius: 8,
-                  padding: '6px 8px',
-                  fontSize: 13,
-                  color: ds.textPrimary,
-                }}
-              />
-            </label>
-            <span style={{ fontSize: 12, color: ds.textMuted }}>
-              Aplicado en servidor: <strong style={{ color: ds.textPrimary }}>{cutsAsOfApplied}</strong>
-            </span>
-          </div>
 
           {accumulated ? (
             <div
