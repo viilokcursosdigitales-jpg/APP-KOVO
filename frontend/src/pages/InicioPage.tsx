@@ -166,7 +166,7 @@ function deltaTag(n: number | null): React.ReactNode {
   return (
     <span style={{ fontSize: 12, color: up ? ds.successText : ds.dangerText }}>
       {up ? '+' : ''}
-      {n.toFixed(1)}% vs periodo anterior
+      {n.toFixed(1)}% vs. período anterior
     </span>
   );
 }
@@ -394,7 +394,7 @@ export default function InicioPage() {
   }, [filtered, metaSpend]);
 
   const alerts = useMemo(() => {
-    if (!secondaryReady) return [{ text: 'Cargando insights secundarios...', tone: 'success' as const }];
+    if (!secondaryReady) return [{ text: 'Cargando insights secundarios…', tone: 'success' as const }];
     const out: { text: string; tone: 'warning' | 'success' }[] = [];
     const low = topProducts.find((p) => p.roas > 0 && p.roasEq > 0 && p.roas < p.roasEq);
     if (low) out.push({ text: `${low.name} bajo el ROAS de equilibrio.`, tone: 'warning' });
@@ -403,7 +403,7 @@ export default function InicioPage() {
       out.push({ text: `CTR promedio ha caído un ${drop}%.`, tone: 'warning' });
     }
     if (roas >= roasTarget) out.push({ text: 'ROAS general arriba del objetivo.', tone: 'success' });
-    if (!out.length) out.push({ text: 'Sin alertas críticas para el periodo seleccionado.', tone: 'success' });
+    if (!out.length) out.push({ text: 'Sin alertas críticas para el período seleccionado.', tone: 'success' });
     return out;
   }, [ctrCurrent, ctrPrevious, roas, roasTarget, topProducts]);
 
@@ -456,7 +456,7 @@ export default function InicioPage() {
           >
             K
           </div>
-          <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 29, fontWeight: 700 }}>Dashboard Overview</h1>
+          <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 29, fontWeight: 700 }}>Resumen del panel</h1>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <input
@@ -489,7 +489,7 @@ export default function InicioPage() {
           >
             <option value="hoy">Hoy</option>
             <option value="ayer">Ayer</option>
-            <option value="7d">Ultimos 7 dias</option>
+            <option value="7d">Últimos 7 días</option>
           </select>
           <button
             type="button"
@@ -504,7 +504,7 @@ export default function InicioPage() {
               fontWeight: 600,
             }}
           >
-            {loading ? 'Actualizando...' : 'Actualizar'}
+            {loading ? 'Actualizando…' : 'Actualizar'}
           </button>
         </div>
       </header>
@@ -616,7 +616,7 @@ export default function InicioPage() {
               {!topProducts.length ? (
                 <tr>
                   <td colSpan={3} style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '10px 6px', color: ds.textMuted }}>
-                    {loading ? 'Cargando...' : 'Sin productos para este periodo.'}
+                    {loading ? 'Cargando…' : 'Sin productos para este período.'}
                   </td>
                 </tr>
               ) : null}

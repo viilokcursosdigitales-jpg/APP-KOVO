@@ -209,9 +209,9 @@ export default function CanalesPage() {
             </div>
             <StatusBadge variant="success">Conectado</StatusBadge>
           </div>
-          <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Meta Ads</div>
+          <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Anuncios Meta</div>
           <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 6, lineHeight: 1.45 }}>
-            Campañas y embudo desde el módulo Meta Ads.
+            Campañas y embudo desde el módulo Anuncios Meta.
           </div>
           <Link
             to="/meta-ads"
@@ -224,7 +224,7 @@ export default function CanalesPage() {
               textDecoration: 'none',
             }}
           >
-            Gestionar en Meta Ads →
+            Gestionar en Anuncios Meta →
           </Link>
         </div>
 

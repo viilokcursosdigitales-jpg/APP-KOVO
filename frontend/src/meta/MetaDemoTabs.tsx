@@ -171,7 +171,7 @@ export function TabCreativo({
     { label: 'CPM', value: formatMoney2(metrics.cpm) },
     { label: 'CTR enlace', value: formatPct(metrics.ctrLink, 1) },
     { label: 'CPC', value: formatMoney2(metrics.cpc) },
-    { label: 'Hook rate', value: formatPct(metrics.hookRate, 1) },
+    { label: 'Enganche (hook)', value: formatPct(metrics.hookRate, 1) },
     { label: 'Retención video', value: formatPct(metrics.videoRetention, 1) },
     { label: 'ROAS', value: `${Math.round(metrics.roas)}×`, highlight: true },
     { label: 'CPA', value: formatMoney2(metrics.cpa), highlight: true },
@@ -194,7 +194,7 @@ export function TabCreativo({
       <PeriodCaption period={period} product={product} />
       <p style={{ margin: '12px 0 0', fontSize: 13, color: ds.textSecondary, lineHeight: 1.45, maxWidth: 720 }}>
         Vista de demostración: los números y anuncios listados se generan en la app según período y producto. Las métricas
-        reales aparecen <strong>en esta misma pestaña</strong> cuando en <strong>Conexión Meta ADS</strong> guardas{' '}
+        reales aparecen <strong>en esta misma pestaña</strong> cuando en <strong>Conexión con Meta</strong> guardas{' '}
         <strong>token de usuario</strong> y al menos una cuenta publicitaria seleccionada.
       </p>
 
@@ -205,7 +205,7 @@ export function TabCreativo({
       </div>
 
       <div style={{ marginTop: 24 }}>
-        <DataTable title="Rendimiento por anuncio" subtitle="Datos de ejemplo · demo">
+        <DataTable title="Rendimiento por anuncio" subtitle="Datos de ejemplo · demostración">
           <table style={{ ...tableBase, minWidth: 920 }}>
             <thead>
               <tr>
@@ -216,7 +216,7 @@ export function TabCreativo({
                   'CPM',
                   'CTR enlace',
                   'CPC',
-                  'Hook rate',
+                  'Enganche (hook)',
                   'Retención',
                   'ROAS',
                   'CPA',
@@ -306,7 +306,7 @@ export function TabEmbudo({
         : i === 1
           ? 'Tráfico que carga la ficha o colección.'
           : i === 2
-            ? 'Intención de compra en checkout.'
+            ? 'Intención de compra en el proceso de compra (checkout).'
             : 'Usuarios que completaron datos de pago.',
   }));
 
@@ -326,7 +326,7 @@ export function TabEmbudo({
       <PeriodCaption period={period} product={product} />
       <p style={{ margin: '12px 0 0', fontSize: 13, color: ds.textSecondary, lineHeight: 1.45, maxWidth: 720 }}>
         Vista de demostración: el embudo y los costes son <strong>datos de ejemplo</strong>. El embudo real aparece aquí
-        con token y cuentas configuradas en <strong>Conexión Meta ADS</strong>.
+        con token y cuentas configuradas en <strong>Conexión con Meta</strong>.
       </p>
 
       <div

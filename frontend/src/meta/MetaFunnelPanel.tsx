@@ -34,7 +34,7 @@ const STAGE_NOTES: Record<string, string> = {
   clk: 'Clics en enlace u otros clics que Meta agrega en esta fila.',
   lpv: 'Vistas de landing o eventos de contenido (según pixel / CAPI).',
   atc: 'Eventos de añadir al carrito atribuidos.',
-  ico: 'Inicios de checkout.',
+  ico: 'Inicios del proceso de compra (checkout).',
   pur: 'Compras atribuidas (pixel, web o informadas por Meta).',
 };
 

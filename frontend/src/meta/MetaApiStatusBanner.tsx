@@ -155,7 +155,7 @@ export function MetaDataIssueCard({ issue }: { issue: MetaDataIssue }) {
           permisos de anuncios y guardarlo en la conexión.
         </p>
         <Link to={META_CONEXION_TAB_PATH} style={linkBtn}>
-          Ir a Conexión Meta ADS
+          Ir a conexión con Meta
         </Link>
         {issue.sampleMessage ? (
           <details style={detailsStyle}>
@@ -247,7 +247,7 @@ export function MetaDataIssueCard({ issue }: { issue: MetaDataIssue }) {
       <p style={{ margin: '0 0 12px', fontSize: 13, color: ds.textSecondary, lineHeight: 1.45 }}>
         Revisa cada cuenta abajo. Si el problema persiste, confirma que el token siga vigente en{' '}
         <Link to={META_CONEXION_TAB_PATH} style={{ color: ds.brand, fontWeight: 600 }}>
-          Conexión Meta ADS
+          Conexión con Meta
         </Link>
         .
       </p>
@@ -295,7 +295,7 @@ export function MetaFetchErrorPanel({
       )}
       {showConexion && (
         <Link to={META_CONEXION_TAB_PATH} style={{ ...linkBtn, background: ds.dangerText, marginTop: 14 }}>
-          Abrir Conexión Meta ADS
+          Abrir conexión con Meta
         </Link>
       )}
     </div>

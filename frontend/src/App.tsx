@@ -33,7 +33,7 @@ const Settings = lazy(() => import('./pages/Settings'));
 
 export default function App() {
   return (
-    <Suspense fallback={<div style={{ padding: 20 }}>Cargando...</div>}>
+    <Suspense fallback={<div style={{ padding: 20 }}>Cargando…</div>}>
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Login />} />

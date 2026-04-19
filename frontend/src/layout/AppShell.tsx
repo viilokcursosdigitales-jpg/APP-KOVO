@@ -46,16 +46,16 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
 
   const main: NavItem[] = [
     { to: '/inicio', label: 'Inicio', icon: <IconLayout />, moduleId: 'dashboard' },
-    { to: '/analisis-producto', label: 'Analisis de productos', icon: <IconProduct />, moduleId: 'analisis_producto' },
+    { to: '/analisis-producto', label: 'Análisis de productos', icon: <IconProduct />, moduleId: 'analisis_producto' },
     { to: '/pedidos', label: 'Pedidos', icon: <IconCart />, moduleId: 'pedidos' },
     { to: '/motico', label: 'Motico', icon: <IconTruck />, moduleId: 'motico' },
     { to: '/inventario', label: 'Inventario', icon: <IconPackage />, moduleId: 'inventario' },
   ];
   const marketing: NavItem[] = [
-    { to: '/meta-ads', label: 'Meta Ads', icon: <IconMegaphone />, moduleId: 'meta_ads' },
+    { to: '/meta-ads', label: 'Anuncios Meta', icon: <IconMegaphone />, moduleId: 'meta_ads' },
     { to: '/calculadora-cod', label: 'Calculadora COD', icon: <IconCalculadora />, moduleId: 'calculadora_cod' },
-    { to: '/ads-funnel', label: 'Ads Funnel', icon: <IconFunnel />, moduleId: 'ads_funnel' },
-    { to: '/finanza', label: 'Finanza', icon: <IconTrendingUp />, moduleId: 'finanza' },
+    { to: '/ads-funnel', label: 'Embudo de anuncios', icon: <IconFunnel />, moduleId: 'ads_funnel' },
+    { to: '/finanza', label: 'Finanzas', icon: <IconTrendingUp />, moduleId: 'finanza' },
     {
       to: '/indicadores-marketing',
       label: 'Indicadores',
@@ -65,7 +65,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
     { to: '/canales', label: 'Canales', icon: <IconShare />, moduleId: 'canales' },
     {
       to: '/ganancia-diaria',
-      label: 'Ganancia Diaria',
+      label: 'Ganancia diaria',
       icon: <IconTrendingUp />,
       moduleId: 'ganancia_diaria',
     },

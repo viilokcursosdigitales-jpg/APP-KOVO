@@ -1075,7 +1075,7 @@ export function MetaInsightsPanel({
   const setCampaignStatusOnMeta = useCallback(
     async (campaignId: string, name: string, next: 'PAUSED' | 'ACTIVE') => {
       const verb = next === 'PAUSED' ? 'pausar' : 'reactivar';
-      if (!window.confirm(`¿${verb.charAt(0).toUpperCase() + verb.slice(1)} la campaña «${name}» en Meta Ads?`)) {
+      if (!window.confirm(`¿${verb.charAt(0).toUpperCase() + verb.slice(1)} la campaña «${name}» en Meta?`)) {
         return;
       }
       setCampaignStatusBanner(null);
@@ -1092,7 +1092,7 @@ export function MetaInsightsPanel({
         if (!res.ok) {
           const hint =
             data.code === 'ads_management_required'
-              ? ' Genera un token con permiso ads_management (además de ads_read) en Conexión Meta ADS.'
+              ? ' Genera un token con permiso ads_management (además de ads_read) en Conexión con Meta.'
               : '';
           setCampaignStatusBanner({
             kind: 'err',
@@ -1124,8 +1124,8 @@ export function MetaInsightsPanel({
   const metricCards: MetricCard[] = useMemo(() => {
     const metaComprasTitle =
       level === 'ads'
-        ? 'Compras de sitio web que Meta atribuye a los anuncios de esta tabla (periodo del selector). Suele ser mayor que Shopify: ventana de atribución, view-through, modelado y conversiones sin pedido enlazable aquí. Para comparar con Ads Manager usa la misma pestaña (Campañas vs Anuncios) y los mismos filtros.'
-        : 'Compras de sitio web que Meta atribuye a las filas visibles en este periodo.';
+        ? 'Compras de sitio web que Meta atribuye a los anuncios de esta tabla (período del selector). Suele ser mayor que Shopify: ventana de atribución, view-through, modelado y conversiones sin pedido enlazable aquí. Para comparar con el administrador de anuncios de Meta usa la misma pestaña (Campañas vs. anuncios) y los mismos filtros.'
+        : 'Compras de sitio web que Meta atribuye a las filas visibles en este período.';
 
     const cards: MetricCard[] = [
       { label: 'Impresiones', value: formatNumber(displayTotals.impressions) },
@@ -1137,7 +1137,7 @@ export function MetaInsightsPanel({
         label: 'Comp. Shopify (Σ)',
         value: formatNumber(shopifyComprasTotalAttributed),
         title:
-          'Total de pedidos Shopify del periodo (calendario de la tienda) que se pudieron enlazar a algún anuncio de esta lista (UTMs, URL, nombre). Cada pedido cuenta una vez. No incluye pedidos sin señal clara ni anuncios fuera de la lista.',
+          'Total de pedidos Shopify del período (calendario de la tienda) que se pudieron enlazar a algún anuncio de esta lista (UTMs, URL, nombre). Cada pedido cuenta una vez. No incluye pedidos sin señal clara ni anuncios fuera de la lista.',
       });
     }
     const roasValue =
@@ -1274,7 +1274,7 @@ export function MetaInsightsPanel({
         <select
           value={filterProductId}
           onChange={(e) => setFilterProductId(e.target.value)}
-          title="Muestra solo filas cuya campaña tiene vinculado este producto"
+          title="Muestra solo filas cuya campaña tiene asociado este producto"
           style={{
             padding: '8px 12px',
             borderRadius: 8,
@@ -1353,7 +1353,7 @@ export function MetaInsightsPanel({
       {level === 'campaigns' ? (
         <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textMuted, maxWidth: 720, lineHeight: 1.45 }}>
           En <strong style={{ color: ds.textSecondary }}>Campañas</strong>, la columna <strong>Act.</strong> usa el mismo
-          tipo de interruptor que Meta Ads Manager (azul = entregando, gris = pausada). Requiere{' '}
+          tipo de interruptor que el Administrador de anuncios de Meta (azul = entregando, gris = pausada). Requiere{' '}
           <code style={{ fontSize: 11 }}>ads_management</code> en el token.
         </p>
       ) : null}
@@ -1361,10 +1361,10 @@ export function MetaInsightsPanel({
       {level === 'ads' ? (
         <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textMuted, maxWidth: 900, lineHeight: 1.45 }}>
           La columna <strong style={{ color: ds.textSecondary }}>Compras</strong> es la de Meta (píxel / conversiones
-          del periodo). <strong>Compras Shopify</strong> es otra cosa: pedidos del checkout enlazados a cada anuncio por
+          del período). <strong>Compras Shopify</strong> es otra cosa: pedidos del proceso de compra enlazados a cada anuncio por
           UTMs o URL. Por eso el total de Shopify suele ser <strong>menor</strong> que el de Meta (view-through, ventana
-          de atribución, compras sin UTMs en el pedido, anuncios que no están en esta tabla, etc.). Si comparas con Ads
-          Manager, revisa la misma vista (Campañas vs Anuncios) y filtros activos.
+          de atribución, compras sin UTMs en el pedido, anuncios que no están en esta tabla, etc.). Si comparas con el
+          Administrador de anuncios de Meta, revisa la misma vista (Campañas vs. anuncios) y filtros activos.
         </p>
       ) : null}
 
@@ -1477,7 +1477,7 @@ export function MetaInsightsPanel({
                   {tokenBlocked ? (
                     <>
                       Meta no devolvió filas porque el access token no es válido.{' '}
-                      <strong style={{ color: ds.textSecondary }}>Renueva el token</strong> en la pestaña Conexión Meta ADS
+                      <strong style={{ color: ds.textSecondary }}>Renueva el token</strong> en la pestaña Conexión con Meta
                       y vuelve a actualizar.
                     </>
                   ) : rows.length === 0 ? (

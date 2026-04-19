@@ -559,7 +559,7 @@ export default function GananciaDiariaPage() {
       {!seriesError ? (
         <>
           <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted }}>
-            Periodo aplicado:{' '}
+            Período aplicado:{' '}
             <strong style={{ color: ds.textSecondary }}>
               {(seriesData?.months_applied || selectedMonths).length
                 ? (seriesData?.months_applied || selectedMonths).map(formatMonthLabel).join(', ')

@@ -455,7 +455,7 @@ export default function ConexionMetaADS() {
 
   const handleConfirmAccountsSave = useCallback(async () => {
     if (selectedAccountIds.length === 0) {
-      setPreviewError('Selecciona al menos una cuenta publicitaria para ver métricas en el dashboard.');
+      setPreviewError('Selecciona al menos una cuenta publicitaria para ver métricas en el panel.');
       return;
     }
     setLoading(true);
@@ -605,7 +605,7 @@ export default function ConexionMetaADS() {
   const handleDisconnect = useCallback(async () => {
     if (
       !window.confirm(
-        '¿Desconectar tu cuenta de Meta Ads? Deberás volver a introducir las credenciales para sincronizar datos.',
+        '¿Desconectar tu cuenta de anuncios en Meta? Deberás volver a introducir las credenciales para sincronizar datos.',
       )
     ) {
       return;
@@ -718,11 +718,11 @@ export default function ConexionMetaADS() {
         <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16 }}>
           <CheckAnimated />
         </div>
-        <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>¡Conectado exitosamente con Meta ADS!</h2>
+        <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>¡Conexión correcta con Meta!</h2>
         <p style={{ margin: '0 0 20px', color: ds.textSecondary, fontSize: 15, lineHeight: 1.5 }}>
           Tu app de Meta está vinculada. Si elegiste cuentas publicitarias y guardaste un token de usuario, el apartado{' '}
           <strong>Análisis de creativo</strong> mostrará métricas reales (campañas, conjuntos y anuncios). Si conectaste
-          solo App ID y Secret, el dashboard seguirá en modo demostración hasta que añadas token y cuentas.
+          solo App ID y Secret, el panel seguirá en modo demostración hasta que añadas token y cuentas.
         </p>
         {saved.selectedAdAccountIds.length > 0 && (
           <p style={{ margin: '0 0 16px', fontSize: 14, color: ds.textPrimary, textAlign: 'left' }}>
@@ -1008,7 +1008,7 @@ export default function ConexionMetaADS() {
             {editing ? 'Actualizar cuentas publicitarias' : 'Elige tus cuentas publicitarias'}
           </h2>
           <p style={{ margin: '0 0 20px', color: ds.textSecondary, fontSize: 14, lineHeight: 1.5 }}>
-            Marca una o varias cuentas (act_). Las métricas del dashboard se agregarán de todas ellas.
+            Marca una o varias cuentas (act_). Las métricas del panel se agregarán de todas ellas.
           </p>
           {previewError && (
             <div
@@ -1189,7 +1189,7 @@ export default function ConexionMetaADS() {
               Access Token de usuario (para métricas en vivo)
               <FieldTooltip
                 id={`${baseId}-token`}
-                text="Token de usuario de Meta con permisos ads_read (y ads_management si gestionas anuncios). Genera uno en Graph API Explorer seleccionando tu app, o con el flujo OAuth. Sin token solo puedes validar App ID y Secret; no habrá cuentas publicitarias ni datos reales en el dashboard."
+                text="Token de usuario de Meta con permisos ads_read (y ads_management si gestionas anuncios). Genera uno en Graph API Explorer seleccionando tu app, o con el flujo OAuth. Sin token solo puedes validar App ID y Secret; no habrá cuentas publicitarias ni datos reales en el panel."
               />
             </span>
             <input
@@ -1306,7 +1306,7 @@ export default function ConexionMetaADS() {
         </div>
       )}
       <h2 style={{ margin: '0 0 12px', fontSize: 'clamp(22px, 4vw, 28px)', color: ds.textPrimary, lineHeight: 1.2 }}>
-        Conecta tu cuenta de Meta ADS
+        Conecta tu cuenta de anuncios en Meta
       </h2>
       <p style={{ margin: '0 0 28px', color: ds.textSecondary, fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>
         Enlaza tu propia app de Facebook Developer para ver métricas y gestionar anuncios con tus credenciales. Tú controlas el acceso; nosotros solo usamos lo que autorices en Meta.
@@ -1334,7 +1334,7 @@ export default function ConexionMetaADS() {
             width: '100%',
           }}
         >
-          Conectar con Meta ADS
+          Conectar con Meta
         </button>
       </div>
     </div>,

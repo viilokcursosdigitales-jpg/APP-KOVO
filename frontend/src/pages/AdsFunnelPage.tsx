@@ -496,7 +496,7 @@ export default function AdsFunnelPage() {
         >
           Conecta Meta y elige cuentas publicitarias para ver datos reales.{' '}
           <Link to="/meta-ads?tab=conexion" style={{ color: ds.warningText, fontWeight: 700 }}>
-            Ir a Conexión Meta ADS
+            Ir a conexión con Meta
           </Link>
         </p>
       )}
@@ -517,7 +517,7 @@ export default function AdsFunnelPage() {
           <div style={{ fontSize: 11, fontWeight: 600, letterSpacing: '0.04em', color: ds.textHint, marginBottom: 6 }}>
             KOVO
           </div>
-          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: ds.textPrimary }}>Ads Funnel</h1>
+          <h1 style={{ margin: 0, fontSize: 22, fontWeight: 700, color: ds.textPrimary }}>Embudo de anuncios</h1>
           <p style={{ margin: '8px 0 0', fontSize: 13, color: ds.textSecondary, maxWidth: 520 }}>
             Embudo (acciones agregadas por cuenta), anuncios con mejor gasto y tendencias diarias desde la API de Meta.
           </p>
@@ -663,7 +663,7 @@ export default function AdsFunnelPage() {
                         verticalAlign: 'middle',
                       }}
                     >
-                      No hay filas de anuncios para este periodo.
+                      No hay filas de anuncios para este período.
                     </td>
                   </tr>
                 ) : (
@@ -730,7 +730,7 @@ export default function AdsFunnelPage() {
               </span>
             </>
           }
-          emptyHint={daily.length === 0 ? 'Meta no devolvió serie diaria para este periodo.' : undefined}
+          emptyHint={daily.length === 0 ? 'Meta no devolvió serie diaria para este período.' : undefined}
         >
           {daily.length > 0 ? (
             <svg

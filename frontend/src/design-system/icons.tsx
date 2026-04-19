@@ -57,7 +57,7 @@ export function IconPackage() {
   );
 }
 
-/** Analisis de producto */
+/** Análisis de producto */
 export function IconProduct() {
   return strokeSvg(
     <>

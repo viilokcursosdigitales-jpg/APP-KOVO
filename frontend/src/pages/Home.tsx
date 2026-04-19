@@ -28,7 +28,7 @@ export default function Home() {
           Panel de anuncios y tienda
         </h1>
         <p style={{ margin: '0 0 24px', color: ds.textSecondary, fontSize: 13, lineHeight: 1.55 }}>
-          Gestiona Meta Ads, pedidos e inventario desde un solo lugar. Inicia sesión para entrar al panel.
+          Gestiona anuncios en Meta, pedidos e inventario desde un solo lugar. Inicia sesión para entrar al panel.
         </p>
 
         {!isLoading && (

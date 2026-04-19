@@ -35,7 +35,7 @@ export default function MetaAdsPage() {
   return (
     <>
       <PageHeader
-        title="Meta Ads"
+        title="Anuncios Meta"
         subtitle={
           metaTab === 'conexion'
             ? 'Vincula tu app de Facebook Developer y gestiona el acceso a tus anuncios'
@@ -55,8 +55,8 @@ export default function MetaAdsPage() {
         {(
           [
             { id: 'creativo' as const, label: 'Análisis de creativo' },
-            { id: 'embudo' as const, label: 'Análisis embudo' },
-            { id: 'conexion' as const, label: 'Conexión Meta ADS' },
+            { id: 'embudo' as const, label: 'Análisis de embudo' },
+            { id: 'conexion' as const, label: 'Conexión con Meta' },
           ] as const
         ).map((t) => (
           <button

@@ -74,7 +74,7 @@ export function SensitivitySection(props: Props) {
   const tabBtns: { id: Tab; label: string }[] = [
     { id: 'cancelados', label: 'Por cancelados' },
     { id: 'devueltos', label: 'Por devueltos' },
-    { id: 'admin', label: 'Por % admin' },
+    { id: 'admin', label: 'Por % administración' },
   ];
 
   return (

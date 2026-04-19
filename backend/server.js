@@ -1747,7 +1747,7 @@ app.post(
         return res.status(400).json({ error: 'El nombre del rol debe tener entre 2 y 120 caracteres' });
       }
       if (base_role !== 'admin' && base_role !== 'member') {
-        return res.status(400).json({ error: 'El nivel debe ser admin o member' });
+        return res.status(400).json({ error: 'El nivel debe ser administrador (admin) o miembro (member).' });
       }
       const slug = await uniqueCustomRoleSlug(req.organizationId, label);
       const ins = await pool.query(
@@ -1900,7 +1900,7 @@ app.put(
     try {
       const entries = req.body?.entries;
       if (!Array.isArray(entries)) {
-        return res.status(400).json({ error: 'Se esperaba entries: array' });
+        return res.status(400).json({ error: 'Se esperaba una lista bajo la clave JSON «entries».' });
       }
 
       let customSlugs = new Set();
@@ -1918,7 +1918,7 @@ app.put(
       for (const ent of entries) {
         const slug = String(ent?.role_slug || '').trim();
         if (!slug || slug === 'owner' || !allowedSlugs.has(slug)) {
-          return res.status(400).json({ error: `Rol no válido en entries: ${slug || '(vacío)'}` });
+          return res.status(400).json({ error: `Rol no válido en la lista enviada: ${slug || '(vacío)'}` });
         }
         const full_access = Boolean(ent?.full_access);
         const modules = normalizeConfigurableModulesList(ent?.modules);
@@ -2355,7 +2355,7 @@ app.put(
   async (req, res) => {
     try {
       const entries = Array.isArray(req.body?.entries) ? req.body.entries : null;
-      if (!entries) return res.status(400).json({ error: 'Se esperaba el campo entries como lista.' });
+      if (!entries) return res.status(400).json({ error: 'Se esperaba una lista bajo la clave JSON «entries».' });
       const roleRows = await listOrganizationRoleRows(req.organizationId);
       const allowed = new Set(roleRows.map((r) => String(r.slug)));
       for (const ent of entries) {

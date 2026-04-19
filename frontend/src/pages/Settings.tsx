@@ -58,7 +58,7 @@ type RoleModuleRow = {
 
 const TEMPLATE_CURRENCY_OPTIONS = [
   { value: 'COP', label: 'COP - Peso colombiano' },
-  { value: 'USD', label: 'USD - Dolar estadounidense' },
+  { value: 'USD', label: 'USD - Dólar estadounidense' },
   { value: 'EUR', label: 'EUR - Euro' },
   { value: 'MXN', label: 'MXN - Peso mexicano' },
   { value: 'PEN', label: 'PEN - Sol peruano' },

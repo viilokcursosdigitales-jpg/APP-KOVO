@@ -33,11 +33,11 @@ export function UpgradeButton() {
             cursor: disabled ? 'not-allowed' : 'pointer',
           }}
         >
-          Upgrade a Pro
+          Pasar a plan Pro
         </button>
         {disabled ? (
           <span style={{ fontSize: 11, color: ds.textHint }}>
-            Define <code style={{ fontSize: 10 }}>VITE_HOTMART_CHECKOUT_URL</code> para abrir el checkout.
+            Define <code style={{ fontSize: 10 }}>VITE_HOTMART_CHECKOUT_URL</code> para abrir la página de pago.
           </span>
         ) : null}
       </div>

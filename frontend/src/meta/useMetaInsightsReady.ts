@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { useAuth } from '../auth/AuthContext';
 
-/** Disparar con `window.dispatchEvent` tras guardar / actualizar / desconectar Meta en Conexión Meta ADS. */
+/** Disparar con `window.dispatchEvent` tras guardar / actualizar / desconectar Meta en Conexión con Meta. */
 export const KOVO_META_CONNECTION_EVENT = 'kovo-meta-connection-changed';
 
 export function useMetaInsightsReady() {

@@ -227,7 +227,7 @@ export default function AnalisisProductoPage() {
       const spendData = (await spendRes.json().catch(() => ({}))) as MetaSpendPayload;
       const ordersData = (await ordersRes.json().catch(() => ({}))) as ShopifyOrdersPayload;
       if (!seriesRes.ok) {
-        setError(typeof data.error === 'string' ? data.error : 'No se pudo cargar analisis de producto');
+        setError(typeof data.error === 'string' ? data.error : 'No se pudo cargar el análisis de productos');
         setDays([]);
         return;
       }
@@ -441,7 +441,7 @@ export default function AnalisisProductoPage() {
           >
             K
           </div>
-          <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 30, fontWeight: 700 }}>Analisis de productos</h1>
+          <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 30, fontWeight: 700 }}>Análisis de productos</h1>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <input
@@ -460,10 +460,10 @@ export default function AnalisisProductoPage() {
           >
             <option value="hoy">Hoy</option>
             <option value="ayer">Ayer</option>
-            <option value="3d">Ultimos 3 dias</option>
-            <option value="7d">Ultimos 7 dias</option>
-            <option value="14d">Ultimos 14 dias</option>
-            <option value="30d">Ultimos 30 dias</option>
+            <option value="3d">Últimos 3 días</option>
+            <option value="7d">Últimos 7 días</option>
+            <option value="14d">Últimos 14 días</option>
+            <option value="30d">Últimos 30 días</option>
             <option value="custom">Custom</option>
           </select>
           <button type="button" style={{ ...inputStyle, width: 'auto', cursor: 'pointer', fontWeight: 600 }}>
@@ -474,7 +474,7 @@ export default function AnalisisProductoPage() {
             onClick={() => void load()}
             style={{ ...inputStyle, width: 'auto', cursor: loading ? 'wait' : 'pointer', fontWeight: 600 }}
           >
-            {loading ? 'Actualizando...' : 'Actualizar'}
+            {loading ? 'Actualizando…' : 'Actualizar'}
           </button>
         </div>
       </header>
@@ -506,7 +506,7 @@ export default function AnalisisProductoPage() {
             fontSize: 13,
           }}
         >
-          Hay {money(metaUnlinkedSpend)} de campañas Meta sin vinculo campaña→producto; no se asignaron a ningún producto.
+          Hay {money(metaUnlinkedSpend)} de campañas Meta sin vínculo campaña → producto; no se asignaron a ningún producto.
         </div>
       ) : null}
 
@@ -580,7 +580,7 @@ export default function AnalisisProductoPage() {
                       colSpan={7}
                       style={{ padding: '12px 16px', fontSize: 12, color: ds.textMuted, borderBottom: 'none' }}
                     >
-                      {loading ? 'Cargando productos...' : 'No hay datos para los filtros seleccionados.'}
+                      {loading ? 'Cargando productos…' : 'No hay datos para los filtros seleccionados.'}
                     </td>
                   </tr>
                 ) : null}
@@ -690,7 +690,7 @@ export default function AnalisisProductoPage() {
             </>
           ) : (
             <div style={{ fontSize: 13, color: ds.textMuted }}>
-              {loading ? 'Cargando detalle...' : 'No hay producto seleccionado.'}
+              {loading ? 'Cargando detalle…' : 'No hay producto seleccionado.'}
             </div>
           )}
         </aside>

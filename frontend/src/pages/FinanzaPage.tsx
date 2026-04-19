@@ -175,7 +175,7 @@ export default function FinanzaPage() {
       ]);
       const seriesData = (await seriesRes.json().catch(() => ({}))) as SeriesPayload;
       if (!seriesRes.ok) {
-        setError(typeof seriesData.error === 'string' ? seriesData.error : 'No se pudo cargar Finanza');
+        setError(typeof seriesData.error === 'string' ? seriesData.error : 'No se pudo cargar Finanzas');
         setDays([]);
         return;
       }
@@ -275,10 +275,10 @@ export default function FinanzaPage() {
   }, [current, metaSpendByProduct]);
 
   const resumen = [
-    { label: 'Ingresos Netos', value: ingresosNetos },
-    { label: 'Costos Producto', value: costoProducto },
-    { label: 'Gasto en Ads', value: gastoAds },
-    { label: 'Otros Gastos', value: Math.max(0, ingresosNetos - utilidadNeta - costoProducto - costoEnvio - gastoAds) },
+    { label: 'Ingresos netos', value: ingresosNetos },
+    { label: 'Costos de producto', value: costoProducto },
+    { label: 'Gasto en anuncios', value: gastoAds },
+    { label: 'Otros gastos', value: Math.max(0, ingresosNetos - utilidadNeta - costoProducto - costoEnvio - gastoAds) },
   ];
 
   return (
@@ -309,7 +309,7 @@ export default function FinanzaPage() {
           >
             K
           </div>
-          <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 29, fontWeight: 700 }}>Finanza</h1>
+          <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 29, fontWeight: 700 }}>Finanzas</h1>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           <input
@@ -320,7 +320,7 @@ export default function FinanzaPage() {
             title="Porcentaje administrativo"
             style={{ border: `1px solid ${ds.borderCard}`, background: ds.bgCard, borderRadius: 8, padding: '8px 10px', fontSize: 13, width: 86 }}
           />
-          <span style={{ alignSelf: 'center', fontSize: 12, color: ds.textMuted }}>Admin %</span>
+          <span style={{ alignSelf: 'center', fontSize: 12, color: ds.textMuted }}>% administración</span>
           <select
             style={{ border: `1px solid ${ds.borderCard}`, background: ds.bgCard, borderRadius: 8, padding: '8px 10px', fontSize: 13 }}
             defaultValue="co"
@@ -334,14 +334,14 @@ export default function FinanzaPage() {
           >
             <option value="hoy">Hoy</option>
             <option value="ayer">Ayer</option>
-            <option value="7d">Ultimos 7 dias</option>
+            <option value="7d">Últimos 7 días</option>
           </select>
           <button
             type="button"
             onClick={() => void load()}
             style={{ border: `1px solid ${ds.borderCard}`, background: ds.bgCard, borderRadius: 8, padding: '8px 12px', fontSize: 13, cursor: loading ? 'wait' : 'pointer', fontWeight: 600 }}
           >
-            {loading ? 'Actualizando...' : 'Actualizar'}
+            {loading ? 'Actualizando…' : 'Actualizar'}
           </button>
         </div>
       </header>
@@ -353,10 +353,10 @@ export default function FinanzaPage() {
       ) : null}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(150px,1fr))', gap: 10, marginBottom: 12 }}>
-        <Kpi title="Ingresos Netos" value={money(ingresosNetos)} subtitle={changeTag(change(ingresosNetos, prevIngresos))} />
-        <Kpi title="Utilidad Bruta" value={money(utilidadBruta)} subtitle={changeTag(change(utilidadBruta, prevUtilidadBruta))} />
-        <Kpi title="Gross Margin" value={`${grossMarginPct.toFixed(1)}%`} subtitle={changeTag(change(grossMarginPct, prevGross))} />
-        <Kpi title="Utilidad Neta" value={money(utilidadNeta)} subtitle={changeTag(change(utilidadNeta, prevUtilidad))} />
+        <Kpi title="Ingresos netos" value={money(ingresosNetos)} subtitle={changeTag(change(ingresosNetos, prevIngresos))} />
+        <Kpi title="Utilidad bruta" value={money(utilidadBruta)} subtitle={changeTag(change(utilidadBruta, prevUtilidadBruta))} />
+        <Kpi title="Margen bruto" value={`${grossMarginPct.toFixed(1)}%`} subtitle={changeTag(change(grossMarginPct, prevGross))} />
+        <Kpi title="Utilidad neta" value={money(utilidadNeta)} subtitle={changeTag(change(utilidadNeta, prevUtilidad))} />
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 12 }}>
@@ -392,7 +392,7 @@ export default function FinanzaPage() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.4fr 1fr', gap: 12, marginBottom: 12 }}>
-        <DataTable title="Costos de Producto & Envío">
+        <DataTable title="Costos de producto y envío">
           <table style={tableBase}>
             <thead>
               <tr>

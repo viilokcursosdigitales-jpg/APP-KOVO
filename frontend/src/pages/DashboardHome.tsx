@@ -179,7 +179,7 @@ export default function DashboardHome() {
 
       if (!dashRes.ok) {
         const err = (await dashRes.json().catch(() => ({}))) as { error?: string };
-        setError(typeof err.error === 'string' ? err.error : 'Error al cargar el dashboard');
+        setError(typeof err.error === 'string' ? err.error : 'Error al cargar el panel');
         setTotals({
           sales_all: 0,
           sales_despachados: 0,
@@ -246,7 +246,7 @@ export default function DashboardHome() {
   return (
     <>
       <PageHeader
-        title="Dashboard"
+        title="Panel"
         subtitle={
           shopifyOk
             ? 'Ventas y pedidos desde Shopify (estado Despachado / Cancelado según KOVO y pago en Shopify).'
@@ -420,10 +420,10 @@ export default function DashboardHome() {
         </div>
       ) : !loading ? (
         <div className="kovo-kpi-grid-dash" style={{ marginBottom: 24 }}>
-          <KpiCard variant="sales" label="Ingresos (30 días) — demo" value="€ 18.420,00" icon={<IconCart />} />
-          <KpiCard variant="traffic" label="Pedidos — demo" value="326" icon={<IconCart />} />
-          <KpiCard variant="spend" label="Ticket medio — demo" value="€ 56,50" icon={<IconCart />} />
-          <KpiCard variant="conversion" label="Tasa conversión — demo" value="3,2 %" icon={<IconCart />} />
+          <KpiCard variant="sales" label="Ingresos (30 días) — demostración" value="€ 18.420,00" icon={<IconCart />} />
+          <KpiCard variant="traffic" label="Pedidos — demostración" value="326" icon={<IconCart />} />
+          <KpiCard variant="spend" label="Ticket medio — demostración" value="€ 56,50" icon={<IconCart />} />
+          <KpiCard variant="conversion" label="Tasa de conversión — demostración" value="3,2 %" icon={<IconCart />} />
         </div>
       ) : null}
 
@@ -449,7 +449,7 @@ export default function DashboardHome() {
             Ventas por día
           </div>
           <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 16 }}>
-            {shopifyOk ? 'Importe por fecha de creación del pedido (colores por día)' : 'Serie demo'}
+            {shopifyOk ? 'Importe por fecha de creación del pedido (colores por día)' : 'Serie de demostración'}
           </div>
           {shopifyOk && chart.length > 0 ? (
             <>
@@ -646,7 +646,7 @@ export default function DashboardHome() {
       <div style={{ marginTop: 24 }}>
         <DataTable
           title="Pedidos recientes"
-          subtitle={shopifyOk ? 'En el rango y filtro de producto actual' : 'Últimas transacciones (demo)'}
+          subtitle={shopifyOk ? 'En el rango y filtro de producto actual' : 'Últimas transacciones (demostración)'}
           action={
             <Link to="/pedidos" style={{ fontSize: 13, fontWeight: 600, color: ds.brand, textDecoration: 'none' }}>
               Ver todos →

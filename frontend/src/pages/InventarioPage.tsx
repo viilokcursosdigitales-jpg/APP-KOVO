@@ -795,7 +795,7 @@ export default function InventarioPage() {
                   cursor: savingPricing[p.id] ? 'wait' : 'pointer',
                 }}
               >
-                {savingPricing[p.id] ? 'Guardando...' : 'Guardar configuración'}
+                {savingPricing[p.id] ? 'Guardando…' : 'Guardar configuración'}
               </button>
             </div>
           </div>

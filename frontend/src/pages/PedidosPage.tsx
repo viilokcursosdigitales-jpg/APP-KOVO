@@ -1000,7 +1000,7 @@ export default function PedidosPage() {
               type="search"
               value={searchInput}
               onChange={(e) => setSearchInput(e.target.value)}
-              placeholder="Buscar pedido, cliente, email, teléfono..."
+              placeholder="Buscar pedido, cliente, correo, teléfono…"
               style={{
                 minWidth: 260,
                 maxWidth: 360,
@@ -1364,7 +1364,7 @@ export default function PedidosPage() {
                   ? ` · ${selectedCityKeys.length} ciudad(es) en el filtro`
                   : ''
               }${normalizedSearchTerm ? ' · búsqueda activa' : ''}`
-            : `Mostrando ${filteredDemo.length} resultados · demo`
+            : `Mostrando ${filteredDemo.length} resultados · demostración`
         }
         action={
           useLive && selectedOrderIds.size > 0 ? (
@@ -1883,7 +1883,7 @@ export default function PedidosPage() {
               <textarea
                 value={unlockReason}
                 onChange={(e) => setUnlockReason(e.target.value)}
-                placeholder="Escribe el motivo del desbloqueo..."
+                placeholder="Escribe el motivo del desbloqueo…"
                 style={{
                   marginTop: 6,
                   width: '100%',
