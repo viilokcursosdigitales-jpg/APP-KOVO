@@ -129,6 +129,7 @@ const CONFIGURABLE_MODULE_IDS = [
   'dashboard',
   'analisis_producto',
   'pedidos',
+  'relacion_pagos_motico',
   'inventario',
   'meta_ads',
   'ads_funnel',
@@ -145,6 +146,7 @@ const MODULE_CATALOG_FOR_API = [
   { id: 'dashboard', label: 'Inicio', group: 'Principal' },
   { id: 'analisis_producto', label: 'Analisis de productos', group: 'Principal' },
   { id: 'pedidos', label: 'Pedidos', group: 'Principal' },
+  { id: 'relacion_pagos_motico', label: 'Relación de Pagos Motico', group: 'Principal' },
   { id: 'inventario', label: 'Inventario', group: 'Principal' },
   { id: 'meta_ads', label: 'Meta Ads', group: 'Marketing' },
   { id: 'ads_funnel', label: 'Ads Funnel', group: 'Marketing' },
@@ -4108,6 +4110,7 @@ const SHOPIFY_MOTICO_STATUSES = SHOPIFY_INTERNAL_STATUSES;
 const SHOPIFY_MENSAJEROS = new Set(['motico', 'dropi', 'effix']);
 const MOTICO_STATUS_DEFAULT = 'sin_revisar';
 const MOTICO_PAYMENT_STATUSES = new Set(['pending', 'paid', 'refunded', 'double_freight', 'cancelado']);
+const MOTICO_RELACION_PAGO_ESTADOS = new Set(['pendiente_pago', 'pagado', 'cancelado', 'devolucion']);
 const LOCKED_MOTICO_STATUSES = new Set(['despachado', 'cancelado']);
 const LOCKED_INTERNAL_STATUSES = new Set(['despachado', 'cancelado']);
 
@@ -7436,6 +7439,63 @@ app.put(
     }
   },
 );
+
+app.get('/api/motico/relacion-pagos/estados', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT order_ref, estado_pago, updated_at
+       FROM motico_relacion_pago_estado
+       WHERE organization_id = $1`,
+      [req.organizationId],
+    );
+    res.json({ rows });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Falta la tabla motico_relacion_pago_estado. Reinicia el backend para ejecutar initDb.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    res.status(500).json({ error: 'Error al leer estados de relación de pagos' });
+  }
+});
+
+app.put('/api/motico/relacion-pagos/estado', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const orderRef = String(body.order_ref || '').trim();
+    const estadoPago = String(body.estado_pago || '').trim();
+    if (!orderRef || !MOTICO_RELACION_PAGO_ESTADOS.has(estadoPago)) {
+      return res.status(400).json({ error: 'order_ref o estado_pago no válido' });
+    }
+    if (!/^shopify:\d+$/.test(orderRef) && !/^motico_manual:\d+$/.test(orderRef)) {
+      return res.status(400).json({ error: 'order_ref debe ser shopify:<id> o motico_manual:<id>' });
+    }
+    const uid = req.user?.userId || null;
+    const ins = await pool.query(
+      `INSERT INTO motico_relacion_pago_estado (organization_id, order_ref, estado_pago, updated_by)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (organization_id, order_ref)
+       DO UPDATE SET
+         estado_pago = EXCLUDED.estado_pago,
+         updated_at = now(),
+         updated_by = EXCLUDED.updated_by
+       RETURNING order_ref, estado_pago, updated_at`,
+      [req.organizationId, orderRef, estadoPago, uid],
+    );
+    res.json(ins.rows[0] || { order_ref: orderRef, estado_pago: estadoPago });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Falta la tabla motico_relacion_pago_estado. Reinicia el backend para ejecutar initDb.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    res.status(500).json({ error: 'Error al guardar estado de pago' });
+  }
+});
 
 app.get('/api/motico/settings', verifyToken, scopeToOrganization, async (req, res) => {
   try {

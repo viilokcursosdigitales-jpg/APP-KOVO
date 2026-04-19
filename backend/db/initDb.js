@@ -270,6 +270,22 @@ async function initDb(pool) {
   );
 
   await pool.query(`
+    CREATE TABLE IF NOT EXISTS motico_relacion_pago_estado (
+      id SERIAL PRIMARY KEY,
+      organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+      order_ref VARCHAR(96) NOT NULL,
+      estado_pago VARCHAR(32) NOT NULL DEFAULT 'pendiente_pago'
+        CHECK (estado_pago IN ('pendiente_pago', 'pagado', 'cancelado', 'devolucion')),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      updated_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
+      UNIQUE (organization_id, order_ref)
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_motico_relacion_pago_org ON motico_relacion_pago_estado (organization_id)`,
+  );
+
+  await pool.query(`
     CREATE TABLE IF NOT EXISTS order_change_logs (
       id BIGSERIAL PRIMARY KEY,
       organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,

@@ -21,6 +21,7 @@ const ComisionVentasPage = lazy(() => import('./pages/ComisionVentasPage'));
 const MetaAdsPage = lazy(() => import('./pages/MetaAdsPage'));
 const MoticoPage = lazy(() => import('./pages/MoticoPage'));
 const PedidosPage = lazy(() => import('./pages/PedidosPage'));
+const RelacionPagosMoticoPage = lazy(() => import('./pages/RelacionPagosMoticoPage'));
 const PedidosOrderEditPage = lazy(() => import('./pages/PedidosOrderEditPage'));
 const Profile = lazy(() => import('./pages/Profile'));
 const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'));
@@ -49,6 +50,7 @@ export default function App() {
               <Route path="/dashboard" element={<InicioPage />} />
               <Route path="/analisis-producto" element={<AnalisisProductoPage />} />
               <Route path="/pedidos" element={<PedidosPage />} />
+              <Route path="/relacion-pagos-motico" element={<RelacionPagosMoticoPage />} />
               <Route path="/pedidos/editar/:orderId" element={<PedidosOrderEditPage />} />
               <Route path="/pedidos/orden-manual" element={<MoticoPage />} />
               <Route path="/inventario" element={<InventarioPage />} />

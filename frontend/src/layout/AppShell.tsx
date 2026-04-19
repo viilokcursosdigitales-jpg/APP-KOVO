@@ -48,6 +48,12 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
     { to: '/inicio', label: 'Inicio', icon: <IconLayout />, moduleId: 'dashboard' },
     { to: '/analisis-producto', label: 'Análisis de productos', icon: <IconProduct />, moduleId: 'analisis_producto' },
     { to: '/pedidos', label: 'Pedidos', icon: <IconCart />, moduleId: 'pedidos' },
+    {
+      to: '/relacion-pagos-motico',
+      label: 'Relación Pagos Motico',
+      icon: <IconTruck />,
+      moduleId: 'relacion_pagos_motico',
+    },
     { to: '/inventario', label: 'Inventario', icon: <IconPackage />, moduleId: 'inventario' },
   ];
   const marketing: NavItem[] = [
