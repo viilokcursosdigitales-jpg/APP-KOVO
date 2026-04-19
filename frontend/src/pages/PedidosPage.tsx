@@ -195,26 +195,22 @@ function pedidosPrecioTotalNum(o: Pick<ShopifyOrderRow, 'price_override' | 'shop
   return Number.isFinite(raw) && raw >= 0 ? raw : 0;
 }
 
-function pedidosOutstandingNum(o: Pick<ShopifyOrderRow, 'totalOutstanding'>): number | null {
-  const s = o.totalOutstanding;
-  if (s == null || String(s).trim() === '') return null;
-  const n = Number.parseFloat(String(s).replace(',', '.'));
-  return Number.isFinite(n) && n >= 0 ? n : null;
-}
-
-/** Pago anticipado: total del pedido menos `total_outstanding` de Shopify; si no hay dato, el total si el pedido consta como pagado. */
-function pedidosAnticipoNum(o: ShopifyOrderRow): number {
+/**
+ * Pago anticipado en listado: total pagado por adelantado solo si el pedido en Shopify está «paid»
+ * o si en el editor se guardó un importe en «pago anticipado» (`pago_al_recibir_override` > 0).
+ */
+function pedidosPagoAnticipadoNum(o: ShopifyOrderRow): number {
   const T = pedidosPrecioTotalNum(o);
-  const out = pedidosOutstandingNum(o);
-  if (out != null) return Math.max(0, Math.min(T, T - out));
   const fin = String(o.financialStatus || '').toLowerCase();
   if (fin === 'paid') return T;
+  const editorAnticipo = Number(o.pago_al_recibir_override);
+  if (Number.isFinite(editorAnticipo) && editorAnticipo > 0) return Math.min(T, editorAnticipo);
   return 0;
 }
 
-/** Pendiente de pago al recibir = precio total − anticipo. */
-function pedidosPendienteAlRecibirNum(precioTotal: number, anticipo: number): number {
-  return Math.max(0, precioTotal - anticipo);
+/** Pendiente de pago al recibir = precio total − pago anticipado. */
+function pedidosPendienteAlRecibirNum(precioTotal: number, pagoAnticipado: number): number {
+  return Math.max(0, precioTotal - pagoAnticipado);
 }
 
 function formatDate(iso: string) {
@@ -1201,8 +1197,8 @@ export default function PedidosPage() {
         properties: li.properties,
       }));
       const precioT = pedidosPrecioTotalNum(o);
-      const anticipo = pedidosAnticipoNum(o);
-      const totalAmount = pedidosPendienteAlRecibirNum(precioT, anticipo);
+      const pagoAnticipado = pedidosPagoAnticipadoNum(o);
+      const totalAmount = pedidosPendienteAlRecibirNum(precioT, pagoAnticipado);
       return buildMoticoGuideLabelData({
         orderName: o.orderName,
         client: o.client,
@@ -1329,7 +1325,7 @@ export default function PedidosPage() {
         celular: o.phoneLocal || '',
         direccion: dirLine,
         ciudad,
-        cobro: pedidosPendienteAlRecibirNum(pedidosPrecioTotalNum(o), pedidosAnticipoNum(o)),
+        cobro: pedidosPendienteAlRecibirNum(pedidosPrecioTotalNum(o), pedidosPagoAnticipadoNum(o)),
         observacion: String(observacion || '').trim(),
         lines,
       };
@@ -2564,7 +2560,9 @@ export default function PedidosPage() {
                     </>
                   ) : null}
                   <Th style={{ ...orderListTheadStickyCell, textAlign: 'right' }}>Precio Total</Th>
-                  <Th style={{ ...orderListTheadStickyCell, textAlign: 'right' }}>Anticipo</Th>
+                  <Th style={{ ...orderListTheadStickyCell, textAlign: 'right', whiteSpace: 'normal', maxWidth: 128 }}>
+                    Pago anticipado
+                  </Th>
                   <Th style={{ ...orderListTheadStickyCell, textAlign: 'right', whiteSpace: 'normal', maxWidth: 140 }}>
                     Pendiente de pago al recibir
                   </Th>
@@ -2585,8 +2583,8 @@ export default function PedidosPage() {
                       const stLower = String(o.internal_status || '').toLowerCase();
                       const editDisabledFromPedidos = o.id < 0;
                       const precioTotal = pedidosPrecioTotalNum(o);
-                      const anticipo = pedidosAnticipoNum(o);
-                      const pendienteRecibir = pedidosPendienteAlRecibirNum(precioTotal, anticipo);
+                      const pagoAnticipado = pedidosPagoAnticipadoNum(o);
+                      const pendienteRecibir = pedidosPendienteAlRecibirNum(precioTotal, pagoAnticipado);
                       return (
                         <tr key={o.id}>
                           <Td
@@ -2772,7 +2770,7 @@ export default function PedidosPage() {
                               color: ds.textSecondary,
                             }}
                           >
-                            {formatMoneyAmount(anticipo, o.currency)}
+                            {formatMoneyAmount(pagoAnticipado, o.currency)}
                           </Td>
                           <Td
                             isLast={i === arr.length - 1}
@@ -2783,7 +2781,7 @@ export default function PedidosPage() {
                               fontVariantNumeric: 'tabular-nums',
                               color: ds.textPrimary,
                             }}
-                            title="Precio total menos anticipo (pago anticipado)."
+                            title="Precio total menos pago anticipado (Shopify pagado o valor del editor)."
                           >
                             {formatMoneyAmount(pendienteRecibir, o.currency)}
                           </Td>

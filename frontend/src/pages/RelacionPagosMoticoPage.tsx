@@ -85,21 +85,19 @@ function relacionPrecioTotal(o: OrderRow): number {
   return Number.isFinite(raw) && raw >= 0 ? raw : 0;
 }
 
-function relacionAnticipo(o: OrderRow): number {
+/** Misma lógica que Pedidos: pago anticipado si Shopify «paid» o valor del editor (`pago_al_recibir_override`). */
+function relacionPagoAnticipado(o: OrderRow): number {
   const T = relacionPrecioTotal(o);
-  const s = o.totalOutstanding;
-  if (s != null && String(s).trim() !== '') {
-    const out = Number.parseFloat(String(s).replace(',', '.'));
-    if (Number.isFinite(out) && out >= 0) return Math.max(0, Math.min(T, T - out));
-  }
   const fin = String(o.financialStatus || '').toLowerCase();
   if (fin === 'paid') return T;
+  const editor = Number(o.pago_al_recibir_override);
+  if (Number.isFinite(editor) && editor > 0) return Math.min(T, editor);
   return 0;
 }
 
-/** Misma lógica que Pedidos: pendiente al recibir = precio total − anticipo. */
+/** Pendiente al recibir = precio total − pago anticipado. */
 function pagoAlRecibirAmount(o: OrderRow): number {
-  return Math.max(0, relacionPrecioTotal(o) - relacionAnticipo(o));
+  return Math.max(0, relacionPrecioTotal(o) - relacionPagoAnticipado(o));
 }
 
 function numOrZero(v: unknown): number {
