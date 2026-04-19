@@ -239,6 +239,7 @@ CREATE TABLE IF NOT EXISTS motico_relacion_pago_estado (
     CHECK (estado_pago IN ('pendiente_pago', 'pagado', 'cancelado', 'devolucion')),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
+  pagos_por_nequi NUMERIC(14, 4) NOT NULL DEFAULT 0,
   UNIQUE (organization_id, order_ref)
 );
 

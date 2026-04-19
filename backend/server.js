@@ -7470,7 +7470,7 @@ app.put(
 app.get('/api/motico/relacion-pagos/estados', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const { rows } = await pool.query(
-      `SELECT order_ref, estado_pago, updated_at
+      `SELECT order_ref, estado_pago, pagos_por_nequi, updated_at
        FROM motico_relacion_pago_estado
        WHERE organization_id = $1`,
       [req.organizationId],
@@ -7521,6 +7521,52 @@ app.put('/api/motico/relacion-pagos/estado', verifyToken, scopeToOrganization, a
     }
     console.error(e);
     res.status(500).json({ error: 'Error al guardar estado de pago' });
+  }
+});
+
+app.put('/api/motico/relacion-pagos/pagos-nequi', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const orderRef = String(body.order_ref || '').trim();
+    if (!/^shopify:\d+$/.test(orderRef) && !/^motico_manual:\d+$/.test(orderRef)) {
+      return res.status(400).json({ error: 'order_ref debe ser shopify:<id> o motico_manual:<id>' });
+    }
+    let pagos = body.pagos_por_nequi;
+    if (typeof pagos === 'string') {
+      const t = String(pagos).trim().replace(/\s/g, '');
+      pagos = Number.parseFloat(t.replace(/\./g, '').replace(',', '.'));
+    } else {
+      pagos = Number(pagos);
+    }
+    if (!Number.isFinite(pagos) || pagos < 0) pagos = 0;
+    const uid = req.user?.userId || null;
+    const ins = await pool.query(
+      `INSERT INTO motico_relacion_pago_estado (organization_id, order_ref, estado_pago, pagos_por_nequi, updated_by)
+       VALUES ($1, $2, 'pendiente_pago', $3, $4)
+       ON CONFLICT (organization_id, order_ref)
+       DO UPDATE SET
+         pagos_por_nequi = EXCLUDED.pagos_por_nequi,
+         updated_at = now(),
+         updated_by = EXCLUDED.updated_by
+       RETURNING order_ref, pagos_por_nequi, estado_pago, updated_at`,
+      [req.organizationId, orderRef, pagos, uid],
+    );
+    res.json(ins.rows[0] || { order_ref: orderRef, pagos_por_nequi: pagos });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Falta la tabla motico_relacion_pago_estado. Reinicia el backend para ejecutar initDb.',
+        code: 'schema_missing',
+      });
+    }
+    if (e && e.code === '42703') {
+      return res.status(503).json({
+        error: 'Falta la columna pagos_por_nequi. Reinicia el backend para ejecutar initDb.',
+        code: 'schema_missing',
+      });
+    }
+    console.error(e);
+    res.status(500).json({ error: 'Error al guardar pagos por Nequi' });
   }
 });
 

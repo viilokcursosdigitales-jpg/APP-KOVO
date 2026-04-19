@@ -287,6 +287,9 @@ async function initDb(pool) {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_motico_relacion_pago_org ON motico_relacion_pago_estado (organization_id)`,
   );
+  await pool.query(
+    `ALTER TABLE motico_relacion_pago_estado ADD COLUMN IF NOT EXISTS pagos_por_nequi NUMERIC(14, 4) NOT NULL DEFAULT 0`,
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS order_change_logs (

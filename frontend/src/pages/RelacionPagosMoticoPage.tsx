@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { coerceOrderInternalEstadoForSelect } from '../constants/orderInternalEstado';
@@ -95,9 +95,18 @@ function relacionPagoAnticipado(o: OrderRow): number {
   return 0;
 }
 
-/** Pendiente al recibir = precio total − pago anticipado. */
-function pagoAlRecibirAmount(o: OrderRow): number {
+/** Pendiente pago al recibir = precio total − pago anticipado. */
+function pendientePagoAlRecibir(o: OrderRow): number {
   return Math.max(0, relacionPrecioTotal(o) - relacionPagoAnticipado(o));
+}
+
+function parseNequiDraftInput(s: string): number {
+  const raw = s.trim().replace(/\s/g, '');
+  if (raw === '') return 0;
+  const normalized = raw.replace(/\./g, '').replace(',', '.');
+  const n = Number.parseFloat(normalized);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
 }
 
 function numOrZero(v: unknown): number {
@@ -113,9 +122,13 @@ export default function RelacionPagosMoticoPage() {
   const [customTo, setCustomTo] = useState('');
   const [orders, setOrders] = useState<OrderRow[]>([]);
   const [estadoByRef, setEstadoByRef] = useState<Record<string, MoticoRelacionPagoEstado>>({});
+  const [pagosNequiByRef, setPagosNequiByRef] = useState<Record<string, number>>({});
+  const [pagosNequiDraft, setPagosNequiDraft] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [savingRef, setSavingRef] = useState<string | null>(null);
+  const [savingNequiRef, setSavingNequiRef] = useState<string | null>(null);
+  const nequiTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({});
 
   const dateQuery = useMemo(
     () => buildDateRange(datePreset, customFrom, customTo),
@@ -143,16 +156,20 @@ export default function RelacionPagosMoticoPage() {
     const res = await apiFetch('/api/motico/relacion-pagos/estados');
     if (!res.ok) return;
     const data = (await res.json().catch(() => ({}))) as {
-      rows?: { order_ref?: string; estado_pago?: string }[];
+      rows?: { order_ref?: string; estado_pago?: string; pagos_por_nequi?: number | string | null }[];
     };
     const next: Record<string, MoticoRelacionPagoEstado> = {};
+    const nextNequi: Record<string, number> = {};
     for (const r of data.rows || []) {
       const ref = String(r.order_ref || '');
+      if (!ref) continue;
+      const neq = Number(r.pagos_por_nequi);
+      nextNequi[ref] = Number.isFinite(neq) && neq >= 0 ? neq : 0;
       const es = String(r.estado_pago || '') as MoticoRelacionPagoEstado;
-      if (!ref || !PAGO_ESTADO_OPTIONS.some((o) => o.value === es)) continue;
-      next[ref] = es;
+      if (PAGO_ESTADO_OPTIONS.some((o) => o.value === es)) next[ref] = es;
     }
     setEstadoByRef(next);
+    setPagosNequiByRef(nextNequi);
   }, []);
 
   const loadOrders = useCallback(async () => {
@@ -203,6 +220,15 @@ export default function RelacionPagosMoticoPage() {
   }, [loadOrders]);
 
   useEffect(() => {
+    return () => {
+      for (const k of Object.keys(nequiTimersRef.current)) {
+        const t = nequiTimersRef.current[k];
+        if (t) clearTimeout(t);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     if (!shopifyConnected) return;
     void loadEstados();
   }, [shopifyConnected, loadEstados, orders.length]);
@@ -235,6 +261,49 @@ export default function RelacionPagosMoticoPage() {
       }
     },
     [estadoByRef],
+  );
+
+  const savePagosNequi = useCallback(async (ref: string, amount: number) => {
+    setSavingNequiRef(ref);
+    setError('');
+    try {
+      const res = await apiFetch('/api/motico/relacion-pagos/pagos-nequi', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ order_ref: ref, pagos_por_nequi: amount }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setError(typeof data.error === 'string' ? data.error : 'No se pudo guardar Pagos por Nequi');
+        return;
+      }
+      const row = (await res.json().catch(() => ({}))) as { pagos_por_nequi?: number };
+      const saved = Number(row.pagos_por_nequi);
+      const v = Number.isFinite(saved) ? saved : amount;
+      setPagosNequiByRef((m) => ({ ...m, [ref]: v }));
+      setPagosNequiDraft((d) => {
+        if (!Object.prototype.hasOwnProperty.call(d, ref)) return d;
+        const { [ref]: _r, ...rest } = d;
+        return rest;
+      });
+    } catch {
+      setError('Error de red al guardar');
+    } finally {
+      setSavingNequiRef(null);
+    }
+  }, []);
+
+  const schedulePagosNequiSave = useCallback(
+    (ref: string, draft: string) => {
+      const prevT = nequiTimersRef.current[ref];
+      if (prevT) clearTimeout(prevT);
+      nequiTimersRef.current[ref] = setTimeout(() => {
+        nequiTimersRef.current[ref] = undefined;
+        const amount = parseNequiDraftInput(draft);
+        void savePagosNequi(ref, amount);
+      }, 550);
+    },
+    [savePagosNequi],
   );
 
   return (
@@ -334,20 +403,26 @@ export default function RelacionPagosMoticoPage() {
         </div>
       ) : shopifyConnected ? (
         <div style={{ overflowX: 'auto', borderRadius: 12, border: `1px solid ${ds.borderCard}` }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 880 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1120 }}>
             <thead>
               <tr style={{ background: ds.bgSubtle }}>
                 <th style={{ textAlign: 'left', padding: '12px 14px', fontWeight: 700, color: ds.textPrimary }}>
                   Nombre del cliente
                 </th>
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
-                  Pago al recibir
+                  Pendiente pago al recibir
                 </th>
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
                   Costo producto Motico
                 </th>
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
                   Costo flete Motico
+                </th>
+                <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
+                  Debe proveedor
+                </th>
+                <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
+                  Pagos por Nequi
                 </th>
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
                   Saldo
@@ -365,12 +440,22 @@ export default function RelacionPagosMoticoPage() {
                   String(o.client || '').trim() ||
                   '—';
                 const cur = estadoByRef[ref] || 'pendiente_pago';
-                const pago = pagoAlRecibirAmount(o);
+                const pendiente = pendientePagoAlRecibir(o);
                 const cProd = numOrZero(o.product_cost_motico);
                 const cFlete = numOrZero(o.freight_cost_motico);
-                const saldo = pago - cProd - cFlete;
+                const debeProveedor = pendiente - cProd - cFlete;
+                const nequiCommitted = pagosNequiByRef[ref] ?? 0;
+                const nequiForSaldo =
+                  Object.prototype.hasOwnProperty.call(pagosNequiDraft, ref) && pagosNequiDraft[ref] !== undefined
+                    ? parseNequiDraftInput(String(pagosNequiDraft[ref]))
+                    : nequiCommitted;
+                const saldo = debeProveedor - nequiForSaldo;
+                const saldoColor =
+                  saldo > 0 ? ds.successText : saldo < 0 ? ds.dangerText : ds.textPrimary;
                 const curcy = o.currency || defaultCurrency;
                 const busy = savingRef === ref;
+                const nequiBusy = savingNequiRef === ref;
+                const nequiInputVal = pagosNequiDraft[ref] ?? String(nequiCommitted);
                 return (
                   <tr
                     key={ref}
@@ -387,7 +472,7 @@ export default function RelacionPagosMoticoPage() {
                       </div>
                     </td>
                     <td style={{ padding: '12px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
-                      {formatMoneyAmount(pago, curcy)}
+                      {formatMoneyAmount(pendiente, curcy)}
                     </td>
                     <td style={{ padding: '12px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                       {formatMoneyAmount(cProd, curcy)}
@@ -395,13 +480,42 @@ export default function RelacionPagosMoticoPage() {
                     <td style={{ padding: '12px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                       {formatMoneyAmount(cFlete, curcy)}
                     </td>
+                    <td style={{ padding: '12px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {formatMoneyAmount(debeProveedor, curcy)}
+                    </td>
+                    <td style={{ padding: '8px 10px', textAlign: 'right' }}>
+                      <input
+                        type="text"
+                        inputMode="decimal"
+                        autoComplete="off"
+                        value={nequiInputVal}
+                        disabled={nequiBusy}
+                        onChange={(e) => {
+                          const v = e.target.value;
+                          setPagosNequiDraft((d) => ({ ...d, [ref]: v }));
+                          schedulePagosNequiSave(ref, v);
+                        }}
+                        style={{
+                          width: 'min(132px, 22vw)',
+                          padding: '7px 9px',
+                          borderRadius: 8,
+                          border: `1px solid ${ds.borderCard}`,
+                          background: ds.bgCard,
+                          color: ds.textPrimary,
+                          fontSize: 13,
+                          textAlign: 'right',
+                          fontVariantNumeric: 'tabular-nums',
+                          cursor: nequiBusy ? 'wait' : 'text',
+                        }}
+                      />
+                    </td>
                     <td
                       style={{
                         padding: '12px 10px',
                         textAlign: 'right',
                         fontVariantNumeric: 'tabular-nums',
                         fontWeight: 600,
-                        color: saldo >= 0 ? ds.textPrimary : ds.dangerText,
+                        color: saldoColor,
                       }}
                     >
                       {formatMoneyAmount(saldo, curcy)}
