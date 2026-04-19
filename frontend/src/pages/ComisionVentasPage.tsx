@@ -37,6 +37,7 @@ type CommissionPayload = {
 
 type CommissionCutRow = {
   id: number;
+  cut_number?: number;
   period_start: string;
   period_end: string;
   cut_kind: string;
@@ -50,6 +51,7 @@ type CommissionCutRow = {
 
 type CommissionCutsPayload = {
   cuts?: CommissionCutRow[];
+  can_edit_payment?: boolean;
   accumulated?: {
     commission_total: number;
     paid_total: number;
@@ -108,6 +110,7 @@ export default function ComisionVentasPage() {
   const [cutsLoading, setCutsLoading] = useState(false);
   const [cutsError, setCutsError] = useState('');
   const [patchingCutId, setPatchingCutId] = useState<number | null>(null);
+  const [canEditCutPayment, setCanEditCutPayment] = useState(false);
 
   const loadCuts = useCallback(async () => {
     setCutsLoading(true);
@@ -119,9 +122,11 @@ export default function ComisionVentasPage() {
         setCutsError(typeof data.error === 'string' ? data.error : 'No se pudieron cargar los cortes de pago');
         setCuts([]);
         setAccumulated(null);
+        setCanEditCutPayment(false);
         return;
       }
       setCuts(Array.isArray(data.cuts) ? data.cuts : []);
+      setCanEditCutPayment(Boolean(data.can_edit_payment));
       setAccumulated(
         data.accumulated && typeof data.accumulated === 'object'
           ? {
@@ -135,6 +140,7 @@ export default function ComisionVentasPage() {
       setCutsError('Error de red al cargar cortes de pago');
       setCuts([]);
       setAccumulated(null);
+      setCanEditCutPayment(false);
     } finally {
       setCutsLoading(false);
     }
@@ -153,20 +159,14 @@ export default function ComisionVentasPage() {
         setCanEditPercent(false);
         setCuts([]);
         setAccumulated(null);
+        setCanEditCutPayment(false);
         return;
       }
       setRows(Array.isArray(data.rows) ? data.rows : []);
       setMemberRows(Array.isArray(data.member_rows) ? data.member_rows : []);
-      const isOwner = Boolean(data.can_edit_percent);
-      setCanEditPercent(isOwner);
+      setCanEditPercent(Boolean(data.can_edit_percent));
       setLastUpdatedAt(new Date());
-      if (isOwner) {
-        await loadCuts();
-      } else {
-        setCuts([]);
-        setAccumulated(null);
-        setCutsError('');
-      }
+      await loadCuts();
     } catch {
       setError('Error de red al cargar comisión por ventas');
       setRows([]);
@@ -174,6 +174,7 @@ export default function ComisionVentasPage() {
       setCanEditPercent(false);
       setCuts([]);
       setAccumulated(null);
+      setCanEditCutPayment(false);
     } finally {
       setLoading(false);
     }
@@ -472,14 +473,14 @@ export default function ComisionVentasPage() {
         </table>
       </div>
 
-      {canEditPercent ? (
-        <section style={{ marginTop: 28 }}>
+      <section style={{ marginTop: 28 }}>
           <h2 style={{ margin: '0 0 6px', fontSize: 16, fontWeight: 700, color: ds.textPrimary }}>
-            Cortes de pago (día 15 y fin de mes)
+            Cortes de pago
           </h2>
           <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary, maxWidth: 720 }}>
-            Cada quincena genera un corte con la comisión de ventas de pedidos despachados en ese rango (según fecha de
-            actualización del pedido). El segundo corte del mes cierra el día último del mes (28 a 31).
+            El primer corte va desde la primera fecha con pedidos despachados hasta el último día de ese mes. Después,
+            cada mes se divide en 1–15 y 16–último día (según la fecha de actualización del pedido a despachado). Solo el
+            propietario puede marcar pagado o pendiente.
           </p>
 
           {accumulated ? (
@@ -553,18 +554,25 @@ export default function ComisionVentasPage() {
                 ) : cuts.length === 0 ? (
                   <tr>
                     <td colSpan={7} style={{ padding: '12px', color: ds.textMuted, fontSize: 12 }}>
-                      Aún no hay cortes registrados. Aparecerán cuando existan períodos quincenales ya cerrados.
+                      Aún no hay cortes. Aparecen cuando exista al menos un despacho y se cierre el primer período (hasta
+                      fin de mes o la quincena correspondiente).
                     </td>
                   </tr>
                 ) : (
                   cuts.map((c) => {
                     const tipo =
-                      c.cut_kind === 'first_half' ? 'Corte día 15 (1–15)' : 'Corte fin de mes (16–último día)';
+                      c.cut_kind === 'first_partial'
+                        ? 'Primer corte (desde el primer despacho)'
+                        : c.cut_kind === 'first_half'
+                          ? '1 al 15 del mes'
+                          : '16 al último día del mes';
                     const isPaid = c.payment_status === 'paid';
                     const busy = patchingCutId === c.id;
+                    const num = Number(c.cut_number) || 0;
                     return (
                       <tr key={c.id}>
                         <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', color: ds.textPrimary }}>
+                          <div style={{ fontWeight: 700, color: ds.brand }}>Corte #{num}</div>
                           <div style={{ fontWeight: 600 }}>{c.period_label}</div>
                           <div style={{ fontSize: 11, color: ds.textMuted }}>
                             {c.period_start} → {c.period_end}
@@ -598,42 +606,48 @@ export default function ComisionVentasPage() {
                           {c.paid_at ? formatUpdatedAt(new Date(c.paid_at)) : '—'}
                         </td>
                         <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', textAlign: 'right', whiteSpace: 'nowrap' }}>
-                          <button
-                            type="button"
-                            onClick={() => void setCutPaymentStatus(c.id, 'pending')}
-                            disabled={busy || cutsLoading || !isPaid}
-                            style={{
-                              marginRight: 6,
-                              border: `1px solid ${ds.borderCard}`,
-                              background: ds.bgCard,
-                              borderRadius: 8,
-                              padding: '6px 10px',
-                              fontSize: 11,
-                              fontWeight: 600,
-                              cursor: busy || !isPaid ? 'not-allowed' : 'pointer',
-                              opacity: !isPaid ? 0.5 : 1,
-                            }}
-                          >
-                            Pendiente
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => void setCutPaymentStatus(c.id, 'paid')}
-                            disabled={busy || cutsLoading || isPaid}
-                            style={{
-                              border: 'none',
-                              background: ds.brand,
-                              color: '#fff',
-                              borderRadius: 8,
-                              padding: '6px 10px',
-                              fontSize: 11,
-                              fontWeight: 700,
-                              cursor: busy || isPaid ? 'not-allowed' : 'pointer',
-                              opacity: isPaid ? 0.55 : 1,
-                            }}
-                          >
-                            Pagado
-                          </button>
+                          {canEditCutPayment ? (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => void setCutPaymentStatus(c.id, 'pending')}
+                                disabled={busy || cutsLoading || !isPaid}
+                                style={{
+                                  marginRight: 6,
+                                  border: `1px solid ${ds.borderCard}`,
+                                  background: ds.bgCard,
+                                  borderRadius: 8,
+                                  padding: '6px 10px',
+                                  fontSize: 11,
+                                  fontWeight: 600,
+                                  cursor: busy || !isPaid ? 'not-allowed' : 'pointer',
+                                  opacity: !isPaid ? 0.5 : 1,
+                                }}
+                              >
+                                Pendiente
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void setCutPaymentStatus(c.id, 'paid')}
+                                disabled={busy || cutsLoading || isPaid}
+                                style={{
+                                  border: 'none',
+                                  background: ds.brand,
+                                  color: '#fff',
+                                  borderRadius: 8,
+                                  padding: '6px 10px',
+                                  fontSize: 11,
+                                  fontWeight: 700,
+                                  cursor: busy || isPaid ? 'not-allowed' : 'pointer',
+                                  opacity: isPaid ? 0.55 : 1,
+                                }}
+                              >
+                                Pagado
+                              </button>
+                            </>
+                          ) : (
+                            <span style={{ fontSize: 11, color: ds.textMuted }}>—</span>
+                          )}
                         </td>
                       </tr>
                     );
@@ -643,7 +657,6 @@ export default function ComisionVentasPage() {
             </table>
           </div>
         </section>
-      ) : null}
     </div>
   );
 }

@@ -8,7 +8,11 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { createPool } = require('./db/pool');
 const { initDb, uniqueSlug } = require('./db/initDb');
-const { computeOrganizationCommissionPeriodTotals } = require('./comisionVentasPeriod');
+const {
+  computeOrganizationCommissionPeriodTotals,
+  findMinDespachadoCommissionUpdatedAtMs,
+  buildClosedCommissionCutSpecs,
+} = require('./comisionVentasPeriod');
 const {
   normalizeActId,
   datePresetFromDashboardPeriod,
@@ -2340,7 +2344,6 @@ app.get(
   verifyToken,
   scopeToOrganization,
   requireModuleAccess('comision_ventas'),
-  requireRole('owner'),
   async (req, res) => {
     try {
       await syncCommissionPaymentCutsForOrg(req.organizationId);
@@ -2358,11 +2361,21 @@ app.get(
         [req.organizationId],
       );
       const acc = accR.rows[0] || {};
+      const roleTier = await getRoleTier(req.user.userId, req.organizationId);
+      const can_edit_payment = roleTier === 'owner';
+      const asc = [...cutsR.rows].sort((a, b) => {
+        const c = String(a.period_start).localeCompare(String(b.period_start));
+        if (c !== 0) return c;
+        return String(a.period_end).localeCompare(String(b.period_end));
+      });
+      const cutNumberById = new Map(asc.map((row, i) => [Number(row.id), i + 1]));
       const cuts = cutsR.rows.map((r) => {
         const ps = String(r.period_start).slice(0, 10);
         const pe = String(r.period_end).slice(0, 10);
+        const id = Number(r.id);
         return {
-          id: Number(r.id),
+          id,
+          cut_number: cutNumberById.get(id) || 0,
           period_start: ps,
           period_end: pe,
           cut_kind: String(r.cut_kind),
@@ -2376,6 +2389,7 @@ app.get(
       });
       return res.json({
         cuts,
+        can_edit_payment,
         accumulated: {
           commission_total: Number(acc.commission_total) || 0,
           paid_total: Number(acc.paid_total) || 0,
@@ -3990,40 +4004,44 @@ async function ensureCommissionPaymentCutRow(
   );
 }
 
-/** Crea filas faltantes para cortes ya cerrados (1–15 y 16–fin de mes, UTC). */
+/** Crea filas faltantes: primer corte desde el primer despacho hasta fin de mes; luego 1–15 y 16–fin de mes (UTC). */
 async function syncCommissionPaymentCutsForOrg(organizationId) {
-  const now = Date.now();
-  const endY = new Date().getUTCFullYear();
-  const endM = new Date().getUTCMonth();
-  const startY = endY - 4;
-  for (let y = startY; y <= endY; y += 1) {
-    for (let m = 0; m < 12; m += 1) {
-      if (y > endY || (y === endY && m > endM)) break;
-      const firstHalfEndEx = Date.UTC(y, m, 16);
-      if (now >= firstHalfEndEx) {
-        const ps = `${y}-${String(m + 1).padStart(2, '0')}-01`;
-        const pe = `${y}-${String(m + 1).padStart(2, '0')}-15`;
-        await ensureCommissionPaymentCutRow(organizationId, ps, pe, 'first_half', Date.UTC(y, m, 1), firstHalfEndEx);
-      }
-      const secondHalfEndEx = Date.UTC(y, m + 1, 1);
-      if (now >= secondHalfEndEx) {
-        const lastD = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
-        const ps2 = `${y}-${String(m + 1).padStart(2, '0')}-16`;
-        const pe2 = `${y}-${String(m + 1).padStart(2, '0')}-${String(lastD).padStart(2, '0')}`;
-        await ensureCommissionPaymentCutRow(organizationId, ps2, pe2, 'second_half', Date.UTC(y, m, 16), secondHalfEndEx);
-      }
-    }
+  const minMs = await findMinDespachadoCommissionUpdatedAtMs(
+    pool,
+    organizationId,
+    normalizeLegacyMoticoEstadoToUnified,
+  );
+  if (minMs == null || !Number.isFinite(minMs)) return;
+  const specs = buildClosedCommissionCutSpecs(minMs, Date.now());
+  for (const s of specs) {
+    await ensureCommissionPaymentCutRow(
+      organizationId,
+      s.periodStartStr,
+      s.periodEndStr,
+      s.cut_kind,
+      s.sinceMs,
+      s.untilExclusiveMs,
+    );
   }
 }
 
 function formatComisionCutPeriodLabel(periodStartStr, periodEndStr, cutKind) {
-  const [ys, ms] = periodStartStr.split('-').map(Number);
-  const [, , de] = periodEndStr.split('-').map(Number);
-  const d0 = new Date(Date.UTC(ys, ms - 1, 1));
-  const mo = d0.toLocaleString('es-CO', { month: 'short', timeZone: 'UTC' });
-  const yLabel = ys;
-  if (cutKind === 'first_half') return `1 al 15 ${mo} ${yLabel}`.replace(/\./g, '');
-  return `16 al ${de} ${mo} ${yLabel}`.replace(/\./g, '');
+  const [ys, ms, ds] = periodStartStr.split('-').map(Number);
+  const [ye, me, de] = periodEndStr.split('-').map(Number);
+  const monthLong = (y, m) =>
+    new Date(Date.UTC(y, m - 1, 1))
+      .toLocaleString('es-CO', { month: 'long', timeZone: 'UTC' })
+      .replace(/\./g, '');
+  if (ys === ye && ms === me) {
+    if (cutKind === 'first_half') {
+      return `1 al 15 de ${monthLong(ys, ms)} de ${ys}`;
+    }
+    if (cutKind === 'second_half') {
+      return `16 al ${de} de ${monthLong(ys, ms)} de ${ys}`;
+    }
+    return `${ds} al ${de} de ${monthLong(ys, ms)} de ${ys}`;
+  }
+  return `${periodStartStr} → ${periodEndStr}`;
 }
 
 function isUnifiedEstadoPrueba(raw) {

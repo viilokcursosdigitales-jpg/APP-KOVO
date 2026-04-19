@@ -263,7 +263,7 @@ CREATE TABLE IF NOT EXISTS commission_payment_cuts (
   organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
   period_start DATE NOT NULL,
   period_end DATE NOT NULL,
-  cut_kind VARCHAR(20) NOT NULL CHECK (cut_kind IN ('first_half', 'second_half')),
+  cut_kind VARCHAR(20) NOT NULL CHECK (cut_kind IN ('first_half', 'second_half', 'first_partial')),
   commission_total NUMERIC(14, 4) NOT NULL DEFAULT 0,
   ventas_despachadas_total NUMERIC(14, 4) NOT NULL DEFAULT 0,
   payment_status VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid')),

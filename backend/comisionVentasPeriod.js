@@ -228,4 +228,124 @@ async function computeOrganizationCommissionPeriodTotals(
   };
 }
 
-module.exports = { computeOrganizationCommissionPeriodTotals };
+/**
+ * Primera fecha (updated_at) de pedidos Shopify o manuales ya en estado despachado (misma regla que comisiones).
+ */
+async function findMinDespachadoCommissionUpdatedAtMs(pool, organizationId, normalizeLegacyMoticoEstadoToUnified) {
+  let min = null;
+  try {
+    const sRows = await pool.query(
+      `SELECT internal_status, updated_at FROM shopify_order_local_fields WHERE organization_id = $1`,
+      [organizationId],
+    );
+    for (const r of sRows.rows) {
+      if (normalizeLegacyMoticoEstadoToUnified(r.internal_status) !== 'despachado') continue;
+      const t = Date.parse(String(r.updated_at || ''));
+      if (!Number.isFinite(t)) continue;
+      if (min == null || t < min) min = t;
+    }
+  } catch (e) {
+    if (e && e.code !== '42P01') throw e;
+  }
+  try {
+    const mRows = await pool.query(
+      `SELECT motico_status, updated_at FROM motico_manual_orders WHERE organization_id = $1`,
+      [organizationId],
+    );
+    for (const r of mRows.rows) {
+      if (normalizeLegacyMoticoEstadoToUnified(r.motico_status) !== 'despachado') continue;
+      const t = Date.parse(String(r.updated_at || ''));
+      if (!Number.isFinite(t)) continue;
+      if (min == null || t < min) min = t;
+    }
+  } catch (e) {
+    if (e && e.code !== '42P01') throw e;
+  }
+  return min;
+}
+
+function lastDayOfMonthUTC(y, monthIndex) {
+  return new Date(Date.UTC(y, monthIndex + 1, 0)).getUTCDate();
+}
+
+function ymdUTC(y, monthIndex, day) {
+  return `${y}-${String(monthIndex + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+/**
+ * Cortes cerrados: si el primer despacho no es día 1, un corte inicial hasta fin de ese mes;
+ * luego quincenas 1–15 y 16–último día de cada mes. Un corte se incluye solo si ya terminó (now >= fin exclusivo).
+ */
+function buildClosedCommissionCutSpecs(firstDispatchMs, nowMs) {
+  const specs = [];
+  const fd = new Date(firstDispatchMs);
+  const y0 = fd.getUTCFullYear();
+  const m0 = fd.getUTCMonth();
+  const day0 = fd.getUTCDate();
+
+  const pushClosed = (cut_kind, y, monthIndex, startDay, endDay) => {
+    const untilExclusiveMs = Date.UTC(y, monthIndex, endDay + 1);
+    if (nowMs < untilExclusiveMs) return false;
+    specs.push({
+      cut_kind,
+      periodStartStr: ymdUTC(y, monthIndex, startDay),
+      periodEndStr: ymdUTC(y, monthIndex, endDay),
+      sinceMs: Date.UTC(y, monthIndex, startDay),
+      untilExclusiveMs,
+    });
+    return true;
+  };
+
+  const emitFullMonthsFrom = (startY, startM) => {
+    let cy = startY;
+    let cm = startM;
+    for (let guard = 0; guard < 2400; guard += 1) {
+      const uh1 = Date.UTC(cy, cm, 16);
+      if (nowMs < uh1) break;
+      specs.push({
+        cut_kind: 'first_half',
+        periodStartStr: ymdUTC(cy, cm, 1),
+        periodEndStr: ymdUTC(cy, cm, 15),
+        sinceMs: Date.UTC(cy, cm, 1),
+        untilExclusiveMs: uh1,
+      });
+      const ld = lastDayOfMonthUTC(cy, cm);
+      const uh2 = Date.UTC(cy, cm, ld + 1);
+      if (nowMs < uh2) break;
+      specs.push({
+        cut_kind: 'second_half',
+        periodStartStr: ymdUTC(cy, cm, 16),
+        periodEndStr: ymdUTC(cy, cm, ld),
+        sinceMs: Date.UTC(cy, cm, 16),
+        untilExclusiveMs: uh2,
+      });
+      cm += 1;
+      if (cm > 11) {
+        cm = 0;
+        cy += 1;
+      }
+    }
+  };
+
+  if (day0 > 1) {
+    const ld0 = lastDayOfMonthUTC(y0, m0);
+    pushClosed('first_partial', y0, m0, day0, ld0);
+    let ny = y0;
+    let nm = m0 + 1;
+    if (nm > 11) {
+      nm = 0;
+      ny += 1;
+    }
+    emitFullMonthsFrom(ny, nm);
+  } else {
+    emitFullMonthsFrom(y0, m0);
+  }
+
+  return specs;
+}
+
+module.exports = {
+  computeOrganizationCommissionPeriodTotals,
+  findMinDespachadoCommissionUpdatedAtMs,
+  buildClosedCommissionCutSpecs,
+};

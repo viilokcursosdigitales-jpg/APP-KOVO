@@ -338,7 +338,7 @@ async function initDb(pool) {
       organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
       period_start DATE NOT NULL,
       period_end DATE NOT NULL,
-      cut_kind VARCHAR(20) NOT NULL CHECK (cut_kind IN ('first_half', 'second_half')),
+      cut_kind VARCHAR(20) NOT NULL CHECK (cut_kind IN ('first_half', 'second_half', 'first_partial')),
       commission_total NUMERIC(14, 4) NOT NULL DEFAULT 0,
       ventas_despachadas_total NUMERIC(14, 4) NOT NULL DEFAULT 0,
       payment_status VARCHAR(16) NOT NULL DEFAULT 'pending' CHECK (payment_status IN ('pending', 'paid')),
@@ -352,6 +352,14 @@ async function initDb(pool) {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_commission_payment_cuts_org_end ON commission_payment_cuts (organization_id, period_end DESC)`,
   );
+  try {
+    await pool.query(`ALTER TABLE commission_payment_cuts DROP CONSTRAINT IF EXISTS commission_payment_cuts_cut_kind_check`);
+    await pool.query(
+      `ALTER TABLE commission_payment_cuts ADD CONSTRAINT commission_payment_cuts_cut_kind_check CHECK (cut_kind IN ('first_half', 'second_half', 'first_partial'))`,
+    );
+  } catch (e) {
+    console.warn('[initDb] commission_payment_cuts cut_kind check:', e && e.message);
+  }
 
   try {
     await pool.query(`ALTER TABLE invitations DROP CONSTRAINT IF EXISTS invitations_role_check`);
