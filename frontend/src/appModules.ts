@@ -32,7 +32,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'ganancia_diaria', label: 'Ganancia Diaria', group: 'Marketing' },
   { id: 'calculadora_cod', label: 'Calculadora COD', group: 'Marketing' },
   { id: 'planeacion_ventas', label: 'Planeación de Ventas', group: 'Marketing' },
-  { id: 'comision_ventas', label: 'Comisión por Ventas', group: 'Marketing' },
+  { id: 'comision_ventas', label: 'Comisión por venta', group: 'Marketing' },
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {

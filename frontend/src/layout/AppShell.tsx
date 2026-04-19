@@ -77,7 +77,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
     },
     {
       to: '/comision-ventas',
-      label: 'Comisión por Ventas',
+      label: 'Comisión por venta',
       icon: <IconTrendingUp />,
       moduleId: 'comision_ventas',
     },
