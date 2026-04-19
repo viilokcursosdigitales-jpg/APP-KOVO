@@ -319,6 +319,60 @@ async function appendOrderChangeLog(req, params) {
   }
 }
 
+async function listOrganizationRoleRows(organizationId) {
+  let custom = [];
+  try {
+    const cr = await pool.query(
+      `SELECT slug, label, base_role FROM organization_custom_roles WHERE organization_id = $1 ORDER BY label`,
+      [organizationId],
+    );
+    custom = cr.rows;
+  } catch (e) {
+    if (e && e.code !== '42P01') throw e;
+  }
+  return [
+    { slug: 'owner', label: 'Propietario', editable: true },
+    { slug: 'admin', label: 'Administrador', editable: true },
+    { slug: 'member', label: 'Miembro', editable: true },
+    ...custom.map((c) => ({
+      slug: c.slug,
+      label: `${c.label} (${c.base_role === 'admin' ? 'como admin' : 'como miembro'})`,
+      editable: true,
+    })),
+  ];
+}
+
+async function fetchShopifyTotalsByOrderIds(organizationId, orderIds) {
+  const out = new Map();
+  const ids = Array.isArray(orderIds)
+    ? [...new Set(orderIds.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x > 0))]
+    : [];
+  if (!ids.length) return out;
+  const shop = await getActiveShopifyConnection(organizationId);
+  if (!shop) return out;
+  const CHUNK = 100;
+  for (let i = 0; i < ids.length; i += CHUNK) {
+    const slice = ids.slice(i, i + CHUNK);
+    try {
+      const endpoint = `orders.json?status=any&ids=${encodeURIComponent(slice.join(','))}&fields=id,total_price`;
+      const r = await shopifyRequest(shop.shop_domain, shop.access_token, endpoint);
+      const rows =
+        r && r.ok && r.data && Array.isArray(r.data.orders)
+          ? r.data.orders
+          : [];
+      for (const o of rows) {
+        const id = Number(o?.id);
+        const total = Number.parseFloat(String(o?.total_price ?? '0').replace(',', '.'));
+        if (!Number.isFinite(id) || id <= 0) continue;
+        out.set(id, Number.isFinite(total) && total > 0 ? total : 0);
+      }
+    } catch (e) {
+      console.warn('[comision-ventas] fetchShopifyTotalsByOrderIds chunk error:', e && e.message);
+    }
+  }
+  return out;
+}
+
 /**
  * null = acceso a todos los módulos configurables (comportamiento por defecto).
  * array = solo esos ids.
@@ -1835,6 +1889,223 @@ app.put(
       }
       console.error(e);
       res.status(500).json({ error: 'Error al guardar permisos por módulo' });
+    }
+  },
+);
+
+app.get(
+  '/api/comision-ventas/roles',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('comision_ventas'),
+  async (req, res) => {
+    try {
+      const roleRows = await listOrganizationRoleRows(req.organizationId);
+
+      const commissionBySlug = new Map();
+      try {
+        const cRows = await pool.query(
+          `SELECT role_slug, commission_percent FROM organization_role_commissions WHERE organization_id = $1`,
+          [req.organizationId],
+        );
+        for (const r of cRows.rows) {
+          const slug = String(r.role_slug || '').trim();
+          const pct = Number(r.commission_percent);
+          if (!slug) continue;
+          commissionBySlug.set(slug, Number.isFinite(pct) && pct >= 0 ? pct : 0);
+        }
+      } catch (e) {
+        if (e && e.code !== '42P01') throw e;
+      }
+
+      const shopifyDespachados = [];
+      try {
+        const sRows = await pool.query(
+          `SELECT shopify_order_id, internal_status, motico_status, price_override
+           FROM shopify_order_local_fields
+           WHERE organization_id = $1`,
+          [req.organizationId],
+        );
+        for (const r of sRows.rows) {
+          const st = mergeDisplayedOrderEstado(r.internal_status, r.motico_status);
+          if (st !== 'despachado') continue;
+          const orderId = Number(r.shopify_order_id);
+          if (!Number.isFinite(orderId) || orderId <= 0) continue;
+          const amountRaw = Number(r.price_override);
+          shopifyDespachados.push({
+            orderId,
+            amount: Number.isFinite(amountRaw) && amountRaw >= 0 ? amountRaw : null,
+          });
+        }
+      } catch (e) {
+        if (e && e.code !== '42P01') throw e;
+      }
+
+      const manualDespachados = [];
+      try {
+        const mRows = await pool.query(
+          `SELECT id, motico_status, price_override, total_price
+           FROM motico_manual_orders
+           WHERE organization_id = $1`,
+          [req.organizationId],
+        );
+        for (const r of mRows.rows) {
+          const st = normalizeLegacyMoticoEstadoToUnified(r.motico_status);
+          if (st !== 'despachado') continue;
+          const orderId = Number(r.id);
+          if (!Number.isFinite(orderId) || orderId <= 0) continue;
+          const ovr = Number(r.price_override);
+          const totalPrice = Number(r.total_price);
+          const amount = Number.isFinite(ovr) && ovr >= 0 ? ovr : Number.isFinite(totalPrice) && totalPrice >= 0 ? totalPrice : 0;
+          manualDespachados.push({ orderId, amount });
+        }
+      } catch (e) {
+        if (e && e.code !== '42P01') throw e;
+      }
+
+      const queryLatestRoleMap = async (orderSource, orderIds) => {
+        const out = new Map();
+        if (!orderIds.length) return out;
+        try {
+          const q = await pool.query(
+            `SELECT DISTINCT ON (order_id) order_id, user_role
+             FROM order_change_logs
+             WHERE organization_id = $1 AND order_source = $2 AND order_id = ANY($3::bigint[])
+             ORDER BY order_id, created_at DESC, id DESC`,
+            [req.organizationId, orderSource, orderIds],
+          );
+          for (const r of q.rows) {
+            const id = Number(r.order_id);
+            if (!Number.isFinite(id) || id <= 0) continue;
+            const slug = String(r.user_role || '').trim();
+            out.set(id, slug || 'sin_asignar');
+          }
+        } catch (e) {
+          if (e && e.code === '42P01') return out;
+          throw e;
+        }
+        return out;
+      };
+
+      const shopRoleMap = await queryLatestRoleMap(
+        'shopify',
+        shopifyDespachados.map((x) => x.orderId),
+      );
+      const manualRoleMap = await queryLatestRoleMap(
+        'motico_manual',
+        manualDespachados.map((x) => x.orderId),
+      );
+
+      const missingShopifyTotals = shopifyDespachados.filter((x) => x.amount == null).map((x) => x.orderId);
+      const shopifyFetchedTotals = await fetchShopifyTotalsByOrderIds(req.organizationId, missingShopifyTotals);
+
+      const ventasByRole = new Map();
+      const addToRole = (slugRaw, amountRaw) => {
+        const amount = Number(amountRaw);
+        if (!Number.isFinite(amount) || amount <= 0) return;
+        const slug = String(slugRaw || '').trim() || 'sin_asignar';
+        ventasByRole.set(slug, Number(ventasByRole.get(slug) || 0) + amount);
+      };
+
+      for (const o of shopifyDespachados) {
+        const roleSlug = shopRoleMap.get(o.orderId) || 'sin_asignar';
+        const amount = o.amount != null ? o.amount : Number(shopifyFetchedTotals.get(o.orderId) || 0);
+        addToRole(roleSlug, amount);
+      }
+      for (const o of manualDespachados) {
+        const roleSlug = manualRoleMap.get(o.orderId) || 'sin_asignar';
+        addToRole(roleSlug, o.amount);
+      }
+
+      const baseRows = roleRows.map((r) => {
+        const slug = String(r.slug);
+        const ventas = Number(ventasByRole.get(slug) || 0);
+        const percent = Number(commissionBySlug.get(slug) || 0);
+        const gain = ventas * (percent / 100);
+        return {
+          role_slug: slug,
+          role_label: String(r.label || slug),
+          ventas_despachadas_total: ventas,
+          commission_percent: percent,
+          gain,
+          editable: Boolean(r.editable),
+        };
+      });
+
+      if (ventasByRole.has('sin_asignar')) {
+        baseRows.push({
+          role_slug: 'sin_asignar',
+          role_label: 'Sin rol asignado',
+          ventas_despachadas_total: Number(ventasByRole.get('sin_asignar') || 0),
+          commission_percent: 0,
+          gain: 0,
+          editable: false,
+        });
+      }
+
+      const totals = baseRows.reduce(
+        (acc, r) => {
+          acc.ventas_despachadas_total += Number(r.ventas_despachadas_total || 0);
+          acc.commission_percent_total += Number(r.commission_percent || 0);
+          acc.gain_total += Number(r.gain || 0);
+          return acc;
+        },
+        { ventas_despachadas_total: 0, commission_percent_total: 0, gain_total: 0 },
+      );
+
+      const roleTier = await getRoleTier(req.user.userId, req.organizationId);
+      return res.json({
+        can_edit_percent: roleTier === 'owner',
+        rows: baseRows,
+        totals,
+      });
+    } catch (e) {
+      console.error('[comision-ventas GET]', e);
+      return res.status(500).json({ error: 'Error al cargar comisión por ventas' });
+    }
+  },
+);
+
+app.put(
+  '/api/comision-ventas/roles',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('comision_ventas'),
+  requireRole('owner'),
+  async (req, res) => {
+    try {
+      const entries = Array.isArray(req.body?.entries) ? req.body.entries : null;
+      if (!entries) return res.status(400).json({ error: 'Se esperaba entries: array' });
+      const roleRows = await listOrganizationRoleRows(req.organizationId);
+      const allowed = new Set(roleRows.map((r) => String(r.slug)));
+      for (const ent of entries) {
+        const slug = String(ent?.role_slug || '').trim();
+        if (!slug || !allowed.has(slug)) {
+          return res.status(400).json({ error: `Rol no válido: ${slug || '(vacío)'}` });
+        }
+        const pct = Number(ent?.commission_percent);
+        if (!Number.isFinite(pct) || pct < 0 || pct > 100) {
+          return res.status(400).json({ error: `Porcentaje no válido para ${slug}` });
+        }
+        await pool.query(
+          `INSERT INTO organization_role_commissions (organization_id, role_slug, commission_percent, updated_by, updated_at)
+           VALUES ($1, $2, $3, $4, now())
+           ON CONFLICT (organization_id, role_slug) DO UPDATE SET
+             commission_percent = EXCLUDED.commission_percent,
+             updated_by = EXCLUDED.updated_by,
+             updated_at = now()`,
+          [req.organizationId, slug, pct, req.user.userId],
+        );
+      }
+      return res.json({ ok: true });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error: 'Falta la tabla organization_role_commissions. Reinicia el backend para ejecutar initDb.',
+        });
+      }
+      console.error('[comision-ventas PUT]', e);
+      return res.status(500).json({ error: 'Error al guardar porcentajes de comisión' });
     }
   },
 );

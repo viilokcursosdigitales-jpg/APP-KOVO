@@ -280,6 +280,20 @@ async function initDb(pool) {
     `CREATE INDEX IF NOT EXISTS idx_order_change_logs_org_order
      ON order_change_logs (organization_id, order_source, order_id, created_at DESC)`,
   );
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS organization_role_commissions (
+      organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+      role_slug VARCHAR(64) NOT NULL,
+      commission_percent NUMERIC(8, 4) NOT NULL DEFAULT 0,
+      updated_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+      PRIMARY KEY (organization_id, role_slug)
+    )
+  `);
+  await pool.query(
+    `CREATE INDEX IF NOT EXISTS idx_org_role_commissions_org
+     ON organization_role_commissions (organization_id)`,
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS organization_custom_roles (

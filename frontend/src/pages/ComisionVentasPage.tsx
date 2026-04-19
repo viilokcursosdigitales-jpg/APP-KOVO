@@ -1,29 +1,27 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
 
-type CommissionRole = {
-  id: string;
-  roleName: string;
-  percentInput: string;
+type CommissionRoleRow = {
+  role_slug: string;
+  role_label: string;
+  ventas_despachadas_total: number;
+  commission_percent: number;
+  gain: number;
+  editable: boolean;
 };
 
-function parseAmount(raw: string): number {
-  const normalized = String(raw || '')
-    .replace(/\s+/g, '')
-    .replace(/\./g, '')
-    .replace(',', '.');
-  const n = Number.parseFloat(normalized);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return n;
-}
-
-function parsePercent(raw: string): number {
-  const normalized = String(raw || '').replace(',', '.');
-  const n = Number.parseFloat(normalized);
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return n;
-}
+type CommissionPayload = {
+  can_edit_percent?: boolean;
+  rows?: CommissionRoleRow[];
+  totals?: {
+    ventas_despachadas_total?: number;
+    commission_percent_total?: number;
+    gain_total?: number;
+  };
+  error?: string;
+};
 
 function formatMoney(amount: number): string {
   try {
@@ -37,93 +35,146 @@ function formatMoney(amount: number): string {
   }
 }
 
-function fmtPercent(value: number): string {
+function parsePercentInput(value: string): number {
+  const n = Number.parseFloat(String(value || '').replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  if (n > 100) return 100;
+  return n;
+}
+
+function formatPercent(value: number): string {
   if (!Number.isFinite(value)) return '0.00%';
   return `${value.toFixed(2)}%`;
 }
 
 export default function ComisionVentasPage() {
-  const [totalDespachadoInput, setTotalDespachadoInput] = useState('');
-  const [roles, setRoles] = useState<CommissionRole[]>([
-    { id: 'asesor', roleName: 'Asesor de ventas', percentInput: '5' },
-    { id: 'lider', roleName: 'Lider comercial', percentInput: '2' },
-  ]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState('');
+  const [canEditPercent, setCanEditPercent] = useState(false);
+  const [rows, setRows] = useState<CommissionRoleRow[]>([]);
 
-  const totalDespachado = useMemo(() => parseAmount(totalDespachadoInput), [totalDespachadoInput]);
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError('');
+    try {
+      const res = await apiFetch('/api/comision-ventas/roles');
+      const data = (await res.json().catch(() => ({}))) as CommissionPayload;
+      if (!res.ok) {
+        setError(typeof data.error === 'string' ? data.error : 'No se pudo cargar la comisión por ventas');
+        setRows([]);
+        setCanEditPercent(false);
+        return;
+      }
+      setRows(Array.isArray(data.rows) ? data.rows : []);
+      setCanEditPercent(Boolean(data.can_edit_percent));
+    } catch {
+      setError('Error de red al cargar comisión por ventas');
+      setRows([]);
+      setCanEditPercent(false);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
-  const rolesCalculated = useMemo(() => {
-    return roles.map((row) => {
-      const percent = parsePercent(row.percentInput);
-      const gain = totalDespachado * (percent / 100);
-      return { ...row, percent, gain };
-    });
-  }, [roles, totalDespachado]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const totalPercent = rolesCalculated.reduce((acc, row) => acc + row.percent, 0);
-  const totalComision = rolesCalculated.reduce((acc, row) => acc + row.gain, 0);
-  const restante = Math.max(0, totalDespachado - totalComision);
-  const overAssigned = totalPercent > 100;
+  const totals = useMemo(() => {
+    return rows.reduce(
+      (acc, row) => {
+        acc.ventas += Number(row.ventas_despachadas_total || 0);
+        acc.percent += Number(row.commission_percent || 0);
+        acc.gain += Number(row.gain || 0);
+        return acc;
+      },
+      { ventas: 0, percent: 0, gain: 0 },
+    );
+  }, [rows]);
+
+  const remaining = Math.max(0, totals.ventas - totals.gain);
+  const overAssigned = totals.percent > 100;
+
+  const onPercentChange = (roleSlug: string, value: string) => {
+    if (!canEditPercent) return;
+    setRows((prev) =>
+      prev.map((row) => {
+        if (row.role_slug !== roleSlug || !row.editable) return row;
+        const pct = parsePercentInput(value);
+        const gain = Number(row.ventas_despachadas_total || 0) * (pct / 100);
+        return { ...row, commission_percent: pct, gain };
+      }),
+    );
+  };
+
+  const save = useCallback(async () => {
+    if (!canEditPercent) return;
+    setSaving(true);
+    setError('');
+    try {
+      const entries = rows
+        .filter((r) => r.editable)
+        .map((r) => ({
+          role_slug: r.role_slug,
+          commission_percent: parsePercentInput(String(r.commission_percent)),
+        }));
+      const res = await apiFetch('/api/comision-ventas/roles', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ entries }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string };
+      if (!res.ok) {
+        setError(typeof data.error === 'string' ? data.error : 'No se pudieron guardar los porcentajes');
+        return;
+      }
+      await load();
+    } catch {
+      setError('Error de red al guardar porcentajes');
+    } finally {
+      setSaving(false);
+    }
+  }, [canEditPercent, rows, load]);
 
   return (
     <div style={{ width: '100%', maxWidth: 1080, margin: '0 auto' }}>
       <PageHeader
         title="Comisión por Ventas"
-        subtitle="Asigna manualmente un porcentaje por rol y calcula la ganancia estimada a partir del total despachado."
+        subtitle="El total de ventas despachadas se toma automáticamente desde Pedidos (estado despachado) y se distribuye por rol."
       />
 
-      <div
-        style={{
-          background: ds.bgCard,
-          border: `1px solid ${ds.borderCard}`,
-          borderRadius: 14,
-          padding: 16,
-          marginBottom: 14,
-          display: 'flex',
-          gap: 10,
-          flexWrap: 'wrap',
-          alignItems: 'center',
-        }}
-      >
-        <label style={{ display: 'flex', flexDirection: 'column', gap: 6, minWidth: 260 }}>
-          <span style={{ fontSize: 12, fontWeight: 600, color: ds.textSecondary }}>Total despachado (COP)</span>
-          <input
-            type="text"
-            inputMode="decimal"
-            placeholder="Ej: 25000000"
-            value={totalDespachadoInput}
-            onChange={(e) => setTotalDespachadoInput(e.target.value)}
-            style={{
-              border: `1px solid ${ds.borderCard}`,
-              background: ds.bgApp,
-              borderRadius: 8,
-              padding: '9px 10px',
-              fontSize: 14,
-              color: ds.textPrimary,
-            }}
-          />
-        </label>
-
-        <button
-          type="button"
-          onClick={() => {
-            const nextId = `rol_${Date.now()}`;
-            setRoles((prev) => [...prev, { id: nextId, roleName: '', percentInput: '0' }]);
-          }}
+      {!canEditPercent ? (
+        <div
           style={{
-            marginTop: 24,
-            border: 'none',
-            background: ds.brand,
-            color: '#fff',
-            borderRadius: 8,
-            padding: '9px 12px',
+            marginBottom: 10,
+            padding: '10px 12px',
+            borderRadius: 10,
+            background: ds.bgSubtle,
+            color: ds.textSecondary,
+            border: `1px solid ${ds.borderCard}`,
             fontSize: 12,
-            fontWeight: 700,
-            cursor: 'pointer',
           }}
         >
-          + Agregar rol
-        </button>
-      </div>
+          Solo el propietario puede modificar el porcentaje de ventas asignado.
+        </div>
+      ) : null}
+
+      {error ? (
+        <div
+          style={{
+            marginBottom: 10,
+            padding: '10px 12px',
+            borderRadius: 10,
+            background: ds.dangerBg,
+            color: ds.dangerText,
+            border: `1px solid ${ds.borderCard}`,
+            fontSize: 12,
+          }}
+        >
+          {error}
+        </div>
+      ) : null}
 
       {overAssigned ? (
         <div
@@ -146,36 +197,51 @@ export default function ComisionVentasPage() {
           <thead>
             <tr style={{ background: ds.bgSubtle }}>
               <th style={{ textAlign: 'left', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Rol</th>
-              <th style={{ textAlign: 'right', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>% comisión</th>
+              <th style={{ textAlign: 'right', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>
+                Ventas despachadas
+              </th>
+              <th style={{ textAlign: 'right', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>
+                % ventas asignadas
+              </th>
               <th style={{ textAlign: 'right', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Ganancia</th>
-              <th style={{ textAlign: 'center', padding: '10px 12px', fontSize: 12, color: ds.textSecondary }}>Acción</th>
             </tr>
           </thead>
           <tbody>
-            {rolesCalculated.map((row) => (
-              <tr key={row.id}>
-                <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px' }}>
-                  <input
-                    type="text"
-                    placeholder="Nombre del rol"
-                    value={row.roleName}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setRoles((prev) => prev.map((it) => (it.id === row.id ? { ...it, roleName: value } : it)));
-                    }}
-                    style={{ width: '100%', border: `1px solid ${ds.borderCard}`, borderRadius: 8, padding: '8px 10px' }}
-                  />
+            {loading ? (
+              <tr>
+                <td colSpan={4} style={{ padding: '12px', color: ds.textMuted, fontSize: 12 }}>
+                  Cargando...
+                </td>
+              </tr>
+            ) : rows.length === 0 ? (
+              <tr>
+                <td colSpan={4} style={{ padding: '12px', color: ds.textMuted, fontSize: 12 }}>
+                  No hay datos de roles.
+                </td>
+              </tr>
+            ) : (
+              rows.map((row) => (
+              <tr key={row.role_slug}>
+                <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', color: ds.textPrimary }}>
+                  {row.role_label}
+                </td>
+                <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', textAlign: 'right' }}>
+                  <strong style={{ color: ds.textPrimary }}>{formatMoney(row.ventas_despachadas_total)}</strong>
                 </td>
                 <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', textAlign: 'right' }}>
                   <input
                     type="text"
                     inputMode="decimal"
-                    value={row.percentInput}
-                    onChange={(e) => {
-                      const value = e.target.value;
-                      setRoles((prev) => prev.map((it) => (it.id === row.id ? { ...it, percentInput: value } : it)));
+                    value={String(Number(row.commission_percent || 0))}
+                    onChange={(e) => onPercentChange(row.role_slug, e.target.value)}
+                    disabled={!canEditPercent || !row.editable || saving}
+                    style={{
+                      width: 92,
+                      border: `1px solid ${ds.borderCard}`,
+                      borderRadius: 8,
+                      padding: '8px 10px',
+                      opacity: !canEditPercent || !row.editable ? 0.65 : 1,
                     }}
-                    style={{ width: 92, border: `1px solid ${ds.borderCard}`, borderRadius: 8, padding: '8px 10px' }}
                   />
                 </td>
                 <td
@@ -190,28 +256,48 @@ export default function ComisionVentasPage() {
                 >
                   {formatMoney(row.gain)}
                 </td>
-                <td style={{ borderTop: `1px solid ${ds.borderRow}`, padding: '8px 12px', textAlign: 'center' }}>
-                  <button
-                    type="button"
-                    onClick={() => setRoles((prev) => prev.filter((it) => it.id !== row.id))}
-                    disabled={roles.length <= 1}
-                    style={{
-                      border: `1px solid ${ds.borderCard}`,
-                      background: ds.bgCard,
-                      borderRadius: 8,
-                      padding: '7px 10px',
-                      fontSize: 12,
-                      cursor: roles.length <= 1 ? 'not-allowed' : 'pointer',
-                      opacity: roles.length <= 1 ? 0.55 : 1,
-                    }}
-                  >
-                    Eliminar
-                  </button>
-                </td>
               </tr>
-            ))}
+            ))
+            )}
           </tbody>
         </table>
+      </div>
+
+      <div style={{ marginTop: 12, display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
+        <button
+          type="button"
+          onClick={() => void load()}
+          disabled={loading || saving}
+          style={{
+            border: `1px solid ${ds.borderCard}`,
+            background: ds.bgCard,
+            borderRadius: 8,
+            padding: '8px 12px',
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: loading || saving ? 'not-allowed' : 'pointer',
+          }}
+        >
+          Actualizar
+        </button>
+        <button
+          type="button"
+          onClick={() => void save()}
+          disabled={!canEditPercent || saving || loading}
+          style={{
+            border: 'none',
+            background: ds.brand,
+            color: '#fff',
+            borderRadius: 8,
+            padding: '8px 12px',
+            fontSize: 12,
+            fontWeight: 700,
+            cursor: !canEditPercent || saving || loading ? 'not-allowed' : 'pointer',
+            opacity: !canEditPercent || saving || loading ? 0.6 : 1,
+          }}
+        >
+          {saving ? 'Guardando...' : 'Guardar porcentajes'}
+        </button>
       </div>
 
       <div
@@ -223,20 +309,23 @@ export default function ComisionVentasPage() {
         }}
       >
         <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: 12 }}>
+          <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 6 }}>Total ventas despachadas</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>{formatMoney(totals.ventas)}</div>
+        </div>
+        <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: 12 }}>
           <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 6 }}>Total % asignado</div>
           <div style={{ fontSize: 24, fontWeight: 700, color: overAssigned ? ds.warningText : ds.textPrimary }}>
-            {fmtPercent(totalPercent)}
+            {formatPercent(totals.percent)}
           </div>
         </div>
         <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: 12 }}>
           <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 6 }}>Comisión total</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>{formatMoney(totalComision)}</div>
-        </div>
-        <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: 12 }}>
-          <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 6 }}>Restante estimado</div>
-          <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>{formatMoney(restante)}</div>
+          <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>{formatMoney(totals.gain)}</div>
         </div>
       </div>
+      <p style={{ marginTop: 10, fontSize: 12, color: ds.textMuted }}>
+        Restante estimado después de comisión: <strong style={{ color: ds.textPrimary }}>{formatMoney(remaining)}</strong>
+      </p>
     </div>
   );
 }
