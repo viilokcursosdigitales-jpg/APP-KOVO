@@ -163,6 +163,9 @@ async function initDb(pool) {
   await pool.query(
     `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS updated_by INTEGER REFERENCES users (id) ON DELETE SET NULL`,
   );
+  await pool.query(
+    `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS last_despachado_at TIMESTAMPTZ`,
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS meta_campaign_product_links (
@@ -267,6 +270,9 @@ async function initDb(pool) {
   );
   await pool.query(
     `ALTER TABLE motico_manual_orders ADD COLUMN IF NOT EXISTS created_by INTEGER REFERENCES users (id) ON DELETE SET NULL`,
+  );
+  await pool.query(
+    `ALTER TABLE motico_manual_orders ADD COLUMN IF NOT EXISTS last_despachado_at TIMESTAMPTZ`,
   );
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_motico_manual_org_created ON motico_manual_orders (organization_id, created_at DESC)`,

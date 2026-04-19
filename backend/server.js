@@ -4441,6 +4441,8 @@ function mapMoticoManualOrderRowFromDb(r) {
       ? String(ship.assigned_date || ship.fecha_asignada || ship.assignedDate || '').trim()
       : '';
   const assigned_date = /^\d{4}-\d{2}-\d{2}$/.test(assignedDateRaw) ? assignedDateRaw : null;
+  const last_despachado_at =
+    r.last_despachado_at != null ? new Date(r.last_despachado_at).toISOString() : null;
   return {
     id: vid,
     orderName: String(r.order_name || `M-${r.id}`),
@@ -4481,6 +4483,7 @@ function mapMoticoManualOrderRowFromDb(r) {
     payment_status_override,
     assigned_date,
     is_motico_manual: true,
+    last_despachado_at,
   };
 }
 
@@ -4754,7 +4757,7 @@ async function loadLocalFieldsMap(organizationId, orderIds) {
   for (let i = 0; i < orderIds.length; i += CHUNK) {
     const slice = orderIds.slice(i, i + CHUNK);
     const { rows } = await pool.query(
-      `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, pagado_al_recibir_override, total_a_pagar_override, shipping_address_override, line_items_override_json
+      `SELECT shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, pagado_al_recibir_override, total_a_pagar_override, shipping_address_override, line_items_override_json, last_despachado_at
        FROM shopify_order_local_fields WHERE organization_id = $1 AND shopify_order_id = ANY($2::bigint[])`,
       [organizationId, slice],
     );
@@ -5686,6 +5689,8 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         payment_status_override,
         shopifyTotal: o.total,
         shopifyQuantity: o.defaultQuantity,
+        last_despachado_at:
+          lf?.last_despachado_at != null ? new Date(lf.last_despachado_at).toISOString() : null,
       };
     });
     try {
@@ -5838,6 +5843,8 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
       payment_status_override,
       shopifyTotal: o.total,
       shopifyQuantity: o.defaultQuantity,
+      last_despachado_at:
+        lf?.last_despachado_at != null ? new Date(lf.last_despachado_at).toISOString() : null,
     };
     res.json({
       source: 'shopify',
@@ -6966,6 +6973,11 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         delete shipping_json.removed_from_motico_at;
         delete shipping_json.removed_from_motico_reason;
       }
+      const prevManualUnifiedDespacho = normalizeLegacyMoticoEstadoToUnified(currentMoticoStatus);
+      const nextManualUnifiedDespacho = normalizeLegacyMoticoEstadoToUnified(motico_status);
+      const manualStampLastDespachado =
+        nextManualUnifiedDespacho === 'despachado' && prevManualUnifiedDespacho !== 'despachado';
+      const manualLastDespachadoParam = manualStampLastDespachado ? new Date() : null;
       await pool.query(
         `UPDATE motico_manual_orders SET
           price_override = $1,
@@ -6977,8 +6989,9 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           line_items_json = $7::jsonb,
           product_summary = $8,
           shipping_json = $9::jsonb,
+          last_despachado_at = COALESCE($10::timestamptz, motico_manual_orders.last_despachado_at),
           updated_at = now()
-        WHERE id = $10 AND organization_id = $11`,
+        WHERE id = $11 AND organization_id = $12`,
         [
           price_override,
           quantity_override,
@@ -6989,6 +7002,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           JSON.stringify(line_items_json),
           product_summary,
           JSON.stringify(shipping_json),
+          manualLastDespachadoParam,
           manualId,
           req.organizationId,
         ],
@@ -7183,8 +7197,14 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       }
     }
 
-    const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, pagado_al_recibir_override, total_a_pagar_override, shipping_address_override, line_items_override_json, updated_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14)
+    const prevUnifiedDespacho = mergeDisplayedOrderEstado(cur.internal_status, cur.motico_status);
+    const nextUnifiedDespacho = mergeDisplayedOrderEstado(internal_status, motico_status);
+    const shouldStampLastDespachado =
+      nextUnifiedDespacho === 'despachado' && prevUnifiedDespacho !== 'despachado';
+    const lastDespachadoParam = shouldStampLastDespachado ? new Date() : null;
+
+    const insertSql = `INSERT INTO shopify_order_local_fields (organization_id, shopify_order_id, internal_status, price_override, quantity_override, mensajero, motico_status, payment_status_override, pago_al_recibir_override, pagado_al_recibir_override, total_a_pagar_override, shipping_address_override, line_items_override_json, last_despachado_at, updated_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13::jsonb, $14, $15)
        ON CONFLICT (organization_id, shopify_order_id) DO UPDATE SET
          internal_status = EXCLUDED.internal_status,
          price_override = EXCLUDED.price_override,
@@ -7197,6 +7217,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
          total_a_pagar_override = EXCLUDED.total_a_pagar_override,
          shipping_address_override = EXCLUDED.shipping_address_override,
          line_items_override_json = EXCLUDED.line_items_override_json,
+         last_despachado_at = COALESCE(EXCLUDED.last_despachado_at, shopify_order_local_fields.last_despachado_at),
          updated_by = EXCLUDED.updated_by,
          updated_at = now()`;
     const insertParams = [
@@ -7217,6 +7238,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       line_items_override_json && typeof line_items_override_json === 'object'
         ? JSON.stringify(line_items_override_json)
         : null,
+      lastDespachadoParam,
       req.user.userId,
     ];
 

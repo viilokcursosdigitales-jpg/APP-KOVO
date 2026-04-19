@@ -103,6 +103,7 @@ CREATE TABLE IF NOT EXISTS shopify_order_local_fields (
   line_items_override_json JSONB,
   updated_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  last_despachado_at TIMESTAMPTZ,
   UNIQUE (organization_id, shopify_order_id)
 );
 
@@ -225,7 +226,8 @@ CREATE TABLE IF NOT EXISTS motico_manual_orders (
   quantity_override INTEGER,
   motico_status VARCHAR(32) NOT NULL DEFAULT 'sin_revisar',
   pago_al_recibir_override NUMERIC(14, 4) NOT NULL DEFAULT 0,
-  total_a_pagar_override NUMERIC(14, 4)
+  total_a_pagar_override NUMERIC(14, 4),
+  last_despachado_at TIMESTAMPTZ
 );
 
 CREATE INDEX IF NOT EXISTS idx_motico_manual_org_created ON motico_manual_orders (organization_id, created_at DESC);

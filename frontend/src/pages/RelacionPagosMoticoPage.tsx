@@ -35,6 +35,8 @@ type OrderRow = {
   total_a_pagar?: number | null;
   product_cost_motico?: number | null;
   freight_cost_motico?: number | null;
+  /** ISO: última vez que el pedido pasó a estado operativo Despachado (servidor). */
+  last_despachado_at?: string | null;
 };
 
 function formatMoneyAmount(n: number, currency: string) {
@@ -112,6 +114,21 @@ function parseNequiDraftInput(s: string): number {
 function numOrZero(v: unknown): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+/** Fecha/hora del último pase a Despachado; vacío si no hay registro (p. ej. pedidos anteriores a la columna). */
+function formatFechaUltimoDespachado(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const t = Date.parse(iso);
+  if (!Number.isFinite(t)) return '—';
+  try {
+    return new Intl.DateTimeFormat('es-CO', {
+      dateStyle: 'short',
+      timeStyle: 'short',
+    }).format(new Date(t));
+  } catch {
+    return '—';
+  }
 }
 
 export default function RelacionPagosMoticoPage() {
@@ -403,9 +420,15 @@ export default function RelacionPagosMoticoPage() {
         </div>
       ) : shopifyConnected ? (
         <div style={{ overflowX: 'auto', borderRadius: 12, border: `1px solid ${ds.borderCard}` }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1120 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1240 }}>
             <thead>
               <tr style={{ background: ds.bgSubtle }}>
+                <th
+                  title="Momento en que el pedido pasó por última vez a estado operativo Despachado"
+                  style={{ textAlign: 'left', padding: '12px 12px', fontWeight: 700, color: ds.textPrimary, whiteSpace: 'nowrap' }}
+                >
+                  Fecha
+                </th>
                 <th style={{ textAlign: 'left', padding: '12px 14px', fontWeight: 700, color: ds.textPrimary }}>
                   Nombre del cliente
                 </th>
@@ -464,6 +487,18 @@ export default function RelacionPagosMoticoPage() {
                       background: idx % 2 === 0 ? ds.bgCard : ds.bgSubtle,
                     }}
                   >
+                    <td
+                      title="Último estado Despachado"
+                      style={{
+                        padding: '12px 12px',
+                        color: ds.textSecondary,
+                        fontSize: 12,
+                        whiteSpace: 'nowrap',
+                        fontVariantNumeric: 'tabular-nums',
+                      }}
+                    >
+                      {formatFechaUltimoDespachado(o.last_despachado_at)}
+                    </td>
                     <td style={{ padding: '12px 14px', color: ds.textPrimary, fontWeight: 500 }}>
                       <div>{nombre}</div>
                       <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 4 }}>
