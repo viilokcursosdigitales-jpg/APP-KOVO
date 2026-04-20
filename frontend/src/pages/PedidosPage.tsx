@@ -2601,6 +2601,7 @@ export default function PedidosPage() {
                     Estado
                   </Th>
                   {useLive ? <Th style={mensajeroColumnThStyle}>Mensajero</Th> : null}
+                  {useLive ? <Th style={pedidosEditColTh}>Editar</Th> : null}
                   <Th style={orderListTheadStickyCell}>Pedido</Th>
                   <Th style={orderListTheadStickyCell}>Fecha</Th>
                   <Th style={orderListTheadStickyCell}>Cliente</Th>
@@ -2622,7 +2623,6 @@ export default function PedidosPage() {
                   <Th style={orderListTheadStickyCell}>Cant.</Th>
                   <Th style={orderListTheadStickyCell}>Productos</Th>
                   <Th style={orderListTheadStickyCell}>Pago (Shopify)</Th>
-                  {useLive ? <Th style={pedidosEditColTh}>Editar</Th> : null}
                   {useLive ? <Th style={orderListTheadStickyCell} /> : null}
                 </tr>
               </thead>
@@ -2715,6 +2715,36 @@ export default function PedidosPage() {
                                 </option>
                               ))}
                             </select>
+                          </Td>
+                          <Td isLast={i === arr.length - 1} style={pedidosEditColTd}>
+                            <button
+                              type="button"
+                              onClick={() => handleOpenOrderEdit(o)}
+                              disabled={editDisabledFromPedidos}
+                              aria-label={`Editar pedido ${o.orderName}`}
+                              title={
+                                o.id < 0
+                                  ? 'Edita desde el módulo Motico.'
+                                  : stLower === 'despachado' || stLower === 'cancelado'
+                                    ? 'Responde motivo y desbloquea para editar'
+                                    : 'Abrir editor'
+                              }
+                              style={{
+                                width: 32,
+                                height: 32,
+                                borderRadius: 8,
+                                border: `1px solid ${ds.borderCard}`,
+                                background: ds.bgCard,
+                                color: ds.brand,
+                                display: 'inline-flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                                cursor: editDisabledFromPedidos ? 'not-allowed' : 'pointer',
+                                opacity: editDisabledFromPedidos ? 0.72 : 1,
+                              }}
+                            >
+                              <IconPencil size={14} />
+                            </button>
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>
@@ -2868,36 +2898,6 @@ export default function PedidosPage() {
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <StatusBadge variant={o.badgeVariant}>{o.label}</StatusBadge>
-                          </Td>
-                          <Td isLast={i === arr.length - 1} style={pedidosEditColTd}>
-                            <button
-                              type="button"
-                              onClick={() => handleOpenOrderEdit(o)}
-                              disabled={editDisabledFromPedidos}
-                              aria-label={`Editar pedido ${o.orderName}`}
-                              title={
-                                o.id < 0
-                                  ? 'Edita desde el módulo Motico.'
-                                  : stLower === 'despachado' || stLower === 'cancelado'
-                                    ? 'Responde motivo y desbloquea para editar'
-                                    : 'Abrir editor'
-                              }
-                              style={{
-                                width: 32,
-                                height: 32,
-                                borderRadius: 8,
-                                border: `1px solid ${ds.borderCard}`,
-                                background: ds.bgCard,
-                                color: ds.brand,
-                                display: 'inline-flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                cursor: editDisabledFromPedidos ? 'not-allowed' : 'pointer',
-                                opacity: editDisabledFromPedidos ? 0.72 : 1,
-                              }}
-                            >
-                              <IconPencil size={14} />
-                            </button>
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             {shopDomain ? (
