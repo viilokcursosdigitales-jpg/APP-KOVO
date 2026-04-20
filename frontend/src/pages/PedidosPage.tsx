@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { KpiCard } from '../design-system/KpiCard';
@@ -291,6 +291,38 @@ function orderMatchesInternalStatusFilter(
   return coerceOrderInternalEstadoForSelect(row.internal_status) === statusFilter;
 }
 
+function isDatePreset(value: string): value is DatePreset {
+  return DATE_PRESETS.some((p) => p.id === value);
+}
+
+function readInitialPedidosFiltersFromSearch(search: string) {
+  const qs = new URLSearchParams(search);
+  const rawFilter = String(qs.get('fin') || 'all');
+  const rawInternalStatus = String(qs.get('estado') || 'all');
+  const rawDatePreset = String(qs.get('fecha') || 'hoy');
+  const q = String(qs.get('q') || '');
+  const from = String(qs.get('desde') || '');
+  const to = String(qs.get('hasta') || '');
+  const cityKeys = qs.getAll('ciudad').map((v) => String(v || '').trim()).filter(Boolean);
+
+  const filter: 'all' | 'active' | 'done' =
+    rawFilter === 'active' || rawFilter === 'done' ? rawFilter : 'all';
+  const internalStatusFilter: 'all' | InternalStatusValue =
+    rawInternalStatus === 'all' ? 'all' : coerceOrderInternalEstadoForSelect(rawInternalStatus);
+  const datePreset: DatePreset = isDatePreset(rawDatePreset) ? rawDatePreset : 'hoy';
+
+  return {
+    filter,
+    internalStatusFilter,
+    searchInput: q,
+    searchTerm: q,
+    datePreset,
+    customFrom: from,
+    customTo: to,
+    selectedCityKeys: cityKeys,
+  };
+}
+
 function escapeRegExp(v: string) {
   return v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -508,13 +540,17 @@ const inputStyle: CSSProperties = {
 
 export default function PedidosPage() {
   const navigate = useNavigate();
-  const [filter, setFilter] = useState<'all' | 'active' | 'done'>('all');
-  const [internalStatusFilter, setInternalStatusFilter] = useState<'all' | InternalStatusValue>('all');
-  const [searchInput, setSearchInput] = useState('');
-  const [searchTerm, setSearchTerm] = useState('');
-  const [datePreset, setDatePreset] = useState<DatePreset>('hoy');
-  const [customFrom, setCustomFrom] = useState('');
-  const [customTo, setCustomTo] = useState('');
+  const location = useLocation();
+  const initialFilters = useMemo(() => readInitialPedidosFiltersFromSearch(location.search), [location.search]);
+  const [filter, setFilter] = useState<'all' | 'active' | 'done'>(initialFilters.filter);
+  const [internalStatusFilter, setInternalStatusFilter] = useState<'all' | InternalStatusValue>(
+    initialFilters.internalStatusFilter,
+  );
+  const [searchInput, setSearchInput] = useState(initialFilters.searchInput);
+  const [searchTerm, setSearchTerm] = useState(initialFilters.searchTerm);
+  const [datePreset, setDatePreset] = useState<DatePreset>(initialFilters.datePreset);
+  const [customFrom, setCustomFrom] = useState(initialFilters.customFrom);
+  const [customTo, setCustomTo] = useState(initialFilters.customTo);
 
   const [shopifyConnected, setShopifyConnected] = useState(false);
   const [shopDomain, setShopDomain] = useState<string | null>(null);
@@ -523,7 +559,7 @@ export default function PedidosPage() {
   const [shopifyError, setShopifyError] = useState('');
   const [fetchedAt, setFetchedAt] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
-  const [selectedCityKeys, setSelectedCityKeys] = useState<string[]>([]);
+  const [selectedCityKeys, setSelectedCityKeys] = useState<string[]>(initialFilters.selectedCityKeys);
   const [selectedOrderIds, setSelectedOrderIds] = useState<Set<number>>(() => new Set());
   const [bulkInternalStatus, setBulkInternalStatus] = useState<InternalStatusValue>('sin_revisar');
   const [bulkStatusApplying, setBulkStatusApplying] = useState(false);
@@ -925,6 +961,26 @@ export default function PedidosPage() {
     [patchLocalFields],
   );
 
+  const pedidosFilterSearch = useMemo(() => {
+    const qs = new URLSearchParams();
+    if (filter !== 'all') qs.set('fin', filter);
+    if (internalStatusFilter !== 'all') qs.set('estado', internalStatusFilter);
+    const q = searchInput.trim();
+    if (q) qs.set('q', q);
+    if (datePreset !== 'hoy') qs.set('fecha', datePreset);
+    if (datePreset === 'personalizado') {
+      const from = customFrom.trim();
+      const to = customTo.trim();
+      if (from) qs.set('desde', from);
+      if (to) qs.set('hasta', to);
+    }
+    selectedCityKeys.forEach((city) => {
+      const c = String(city || '').trim();
+      if (c) qs.append('ciudad', c);
+    });
+    return qs.toString();
+  }, [filter, internalStatusFilter, searchInput, datePreset, customFrom, customTo, selectedCityKeys]);
+
   const handleOpenOrderEdit = useCallback((row: ShopifyOrderRow) => {
     const st = String(row.internal_status || '').toLowerCase() as InternalStatusValue;
     if (row.id < 0) {
@@ -937,8 +993,8 @@ export default function PedidosPage() {
       setShopifyError('');
       return;
     }
-    navigate(`/pedidos/editar/${row.id}`);
-  }, [navigate]);
+    navigate(`/pedidos/editar/${row.id}${pedidosFilterSearch ? `?${pedidosFilterSearch}` : ''}`);
+  }, [navigate, pedidosFilterSearch]);
 
   const submitUnlockDespachado = useCallback(async () => {
     if (!unlockOrder) return;
@@ -956,11 +1012,11 @@ export default function PedidosPage() {
       if (!ok) return;
       setUnlockOrder(null);
       setUnlockReason('');
-      navigate(`/pedidos/editar/${unlockOrder.id}`);
+      navigate(`/pedidos/editar/${unlockOrder.id}${pedidosFilterSearch ? `?${pedidosFilterSearch}` : ''}`);
     } finally {
       setUnlocking(false);
     }
-  }, [navigate, patchLocalFields, unlockOrder, unlockReason]);
+  }, [navigate, patchLocalFields, unlockOrder, unlockReason, pedidosFilterSearch]);
 
   useEffect(() => {
     return () => {

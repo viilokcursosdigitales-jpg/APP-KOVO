@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { labelStyle } from './authStyles';
@@ -207,11 +207,16 @@ function formatAuditDate(iso: string | null): string {
 
 export default function PedidosOrderEditPage() {
   const navigate = useNavigate();
+  const location = useLocation();
   const params = useParams();
   const orderId = Number(params.orderId);
+  const pedidosReturnPath = useMemo(() => {
+    const qs = String(location.search || '');
+    return qs ? `/pedidos${qs}` : '/pedidos';
+  }, [location.search]);
   const closeToPedidos = useCallback(() => {
-    navigate('/pedidos', { replace: true });
-  }, [navigate]);
+    navigate(pedidosReturnPath, { replace: true });
+  }, [navigate, pedidosReturnPath]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -561,11 +566,11 @@ export default function PedidosOrderEditPage() {
         setError(typeof dataLocal.error === 'string' ? dataLocal.error : 'No se pudo guardar el pedido');
         return;
       }
-      navigate('/pedidos', { replace: true });
+      navigate(pedidosReturnPath, { replace: true });
     } finally {
       setSaving(false);
     }
-  }, [order, locked, draft, draftLines, navigate, products]);
+  }, [order, locked, draft, draftLines, navigate, pedidosReturnPath, products]);
 
   const livePrice = parseNonNegativeDecimalInput(draft.price);
   const liveAnticipo = parseNonNegativeDecimalInput(draft.anticipo);
