@@ -1,14 +1,63 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { coerceOrderInternalEstadoForSelect } from '../constants/orderInternalEstado';
 import { ds } from '../design-system/ds';
-import { IconCart, IconPackage, IconTruck, IconTrendingUp } from '../design-system/icons';
+import { IconCart, IconPackage, IconProduct, IconTruck, IconTrendingUp } from '../design-system/icons';
 import { KpiCard } from '../design-system/KpiCard';
 import { PageHeader } from '../design-system/PageHeader';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
 
 type MoticoRelacionPagoEstado = 'pendiente_pago' | 'pagado' | 'cancelado' | 'devolucion';
+
+/** Anchos fijos (px) para columnas sticky al scroll horizontal. */
+const REL_STICKY_CHK_W = 48;
+const REL_STICKY_FECHA_W = 128;
+const REL_STICKY_NOMBRE_W = 248;
+const REL_STICKY_FECHA_LEFT = REL_STICKY_CHK_W;
+const REL_STICKY_NOMBRE_LEFT = REL_STICKY_CHK_W + REL_STICKY_FECHA_W;
+const REL_STICKY_SHADOW = '4px 0 14px -6px rgba(15, 23, 42, 0.14)';
+
+function relacionStickyCheckbox(bg: string, z: number): CSSProperties {
+  return {
+    position: 'sticky',
+    left: 0,
+    zIndex: z,
+    width: REL_STICKY_CHK_W,
+    minWidth: REL_STICKY_CHK_W,
+    maxWidth: REL_STICKY_CHK_W,
+    textAlign: 'center',
+    verticalAlign: 'middle',
+    background: bg,
+    boxShadow: REL_STICKY_SHADOW,
+  };
+}
+
+function relacionStickyFecha(bg: string, z: number): CSSProperties {
+  return {
+    position: 'sticky',
+    left: REL_STICKY_FECHA_LEFT,
+    zIndex: z,
+    width: REL_STICKY_FECHA_W,
+    minWidth: REL_STICKY_FECHA_W,
+    maxWidth: REL_STICKY_FECHA_W,
+    background: bg,
+    boxShadow: REL_STICKY_SHADOW,
+  };
+}
+
+function relacionStickyNombre(bg: string, z: number): CSSProperties {
+  return {
+    position: 'sticky',
+    left: REL_STICKY_NOMBRE_LEFT,
+    zIndex: z,
+    width: REL_STICKY_NOMBRE_W,
+    minWidth: REL_STICKY_NOMBRE_W,
+    maxWidth: REL_STICKY_NOMBRE_W,
+    background: bg,
+    boxShadow: REL_STICKY_SHADOW,
+  };
+}
 
 const PAGO_ESTADO_OPTIONS: { value: MoticoRelacionPagoEstado; label: string }[] = [
   { value: 'pendiente_pago', label: 'Pendiente de pago' },
@@ -152,7 +201,9 @@ export default function RelacionPagosMoticoPage() {
   const [error, setError] = useState('');
   const [savingRef, setSavingRef] = useState<string | null>(null);
   const [savingNequiRef, setSavingNequiRef] = useState<string | null>(null);
+  const [selectedRefs, setSelectedRefs] = useState<Set<string>>(() => new Set());
   const nequiTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({});
+  const headerSelectAllRef = useRef<HTMLInputElement>(null);
 
   const dateQuery = useMemo(
     () => buildDateRange(datePreset, customFrom, customTo),
@@ -175,6 +226,18 @@ export default function RelacionPagosMoticoPage() {
     });
     return out;
   }, [orders]);
+
+  useEffect(() => {
+    const allowed = new Set(rows.map((o) => orderRef(o)));
+    setSelectedRefs((prev) => {
+      const next = new Set<string>();
+      for (const r of prev) {
+        if (allowed.has(r)) next.add(r);
+      }
+      if (next.size === prev.size && [...prev].every((x) => next.has(x))) return prev;
+      return next;
+    });
+  }, [rows]);
 
   const loadEstados = useCallback(async () => {
     const res = await apiFetch('/api/motico/relacion-pagos/estados');
@@ -261,6 +324,7 @@ export default function RelacionPagosMoticoPage() {
 
   const relacionPagosKpis = useMemo(() => {
     let totalVentasDespachado = 0;
+    let totalGananciaMotico = 0;
     let totalPendienteRecibir = 0;
     let totalNequi = 0;
     let totalSaldo = 0;
@@ -272,6 +336,7 @@ export default function RelacionPagosMoticoPage() {
     for (const o of rows) {
       const ref = orderRef(o);
       totalVentasDespachado += relacionPrecioTotal(o);
+      totalGananciaMotico += gananciaMotico(o);
       const pendiente = pendientePagoAlRecibir(o);
       totalPendienteRecibir += pendiente;
       const cProd = numOrZero(o.product_cost_motico);
@@ -294,6 +359,7 @@ export default function RelacionPagosMoticoPage() {
     return {
       n,
       totalVentasDespachado,
+      totalGananciaMotico,
       totalPendienteRecibir,
       totalNequi,
       totalSaldo,
@@ -307,6 +373,32 @@ export default function RelacionPagosMoticoPage() {
       pctCancelado: pct(cancelado),
     };
   }, [rows, estadoByRef, pagosNequiByRef, pagosNequiDraft]);
+
+  const allRowsSelected = rows.length > 0 && rows.every((o) => selectedRefs.has(orderRef(o)));
+  const someRowsSelected = rows.some((o) => selectedRefs.has(orderRef(o)));
+
+  useLayoutEffect(() => {
+    const el = headerSelectAllRef.current;
+    if (el) el.indeterminate = someRowsSelected && !allRowsSelected;
+  }, [someRowsSelected, allRowsSelected, rows.length]);
+
+  const toggleRowSelected = useCallback((ref: string, checked: boolean) => {
+    setSelectedRefs((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(ref);
+      else next.delete(ref);
+      return next;
+    });
+  }, []);
+
+  const toggleSelectAll = useCallback(() => {
+    setSelectedRefs((prev) => {
+      const ids = rows.map(orderRef);
+      const all = ids.length > 0 && ids.every((id) => prev.has(id));
+      if (all) return new Set();
+      return new Set(ids);
+    });
+  }, [rows]);
 
   const onEstadoChange = useCallback(
     async (ref: string, next: MoticoRelacionPagoEstado) => {
@@ -459,6 +551,25 @@ export default function RelacionPagosMoticoPage() {
               icon={<IconCart />}
             />
             <KpiCard
+              variant="stock"
+              label="Total ganancia Motico"
+              value={
+                <span
+                  style={{
+                    color:
+                      relacionPagosKpis.totalGananciaMotico > 0
+                        ? ds.successText
+                        : relacionPagosKpis.totalGananciaMotico < 0
+                          ? ds.dangerText
+                          : ds.textPrimary,
+                  }}
+                >
+                  {formatMoneyAmount(relacionPagosKpis.totalGananciaMotico, defaultCurrency)}
+                </span>
+              }
+              icon={<IconProduct />}
+            />
+            <KpiCard
               variant="traffic"
               label="Total pendiente pago al recibir"
               value={formatMoneyAmount(relacionPagosKpis.totalPendienteRecibir, defaultCurrency)}
@@ -590,17 +701,87 @@ export default function RelacionPagosMoticoPage() {
           No hay pedidos Despachado con mensajero Motico en el rango seleccionado.
         </div>
       ) : shopifyConnected ? (
-        <div style={{ overflowX: 'auto', borderRadius: 12, border: `1px solid ${ds.borderCard}` }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1400 }}>
+        <div>
+          {rows.length > 0 ? (
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                gap: 10,
+                marginBottom: 10,
+                fontSize: 13,
+                color: ds.textSecondary,
+              }}
+            >
+              <span>
+                {selectedRefs.size > 0 ? (
+                  <>
+                    <strong style={{ color: ds.textPrimary }}>{selectedRefs.size}</strong> pedido
+                    {selectedRefs.size === 1 ? '' : 's'} seleccionado
+                    {selectedRefs.size === 1 ? '' : 's'}
+                  </>
+                ) : (
+                  <>Selecciona pedidos con la casilla de la izquierda.</>
+                )}
+              </span>
+              {selectedRefs.size > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => setSelectedRefs(new Set())}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    background: ds.bgCard,
+                    color: ds.brand,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  Quitar selección
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          <div style={{ overflowX: 'auto', borderRadius: 12, border: `1px solid ${ds.borderCard}` }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1448 }}>
             <thead>
               <tr style={{ background: ds.bgSubtle }}>
+                <th style={{ ...relacionStickyCheckbox(ds.bgSubtle, 12), padding: '10px 4px' }}>
+                  <input
+                    ref={headerSelectAllRef}
+                    type="checkbox"
+                    checked={allRowsSelected}
+                    onChange={() => toggleSelectAll()}
+                    disabled={rows.length === 0}
+                    aria-label="Seleccionar o anular todos los pedidos visibles"
+                    style={{ width: 16, height: 16, cursor: rows.length === 0 ? 'default' : 'pointer' }}
+                  />
+                </th>
                 <th
                   title="Momento en que el pedido pasó por última vez a estado operativo Despachado"
-                  style={{ textAlign: 'left', padding: '12px 12px', fontWeight: 700, color: ds.textPrimary, whiteSpace: 'nowrap' }}
+                  style={{
+                    ...relacionStickyFecha(ds.bgSubtle, 11),
+                    textAlign: 'left',
+                    padding: '12px 10px',
+                    fontWeight: 700,
+                    color: ds.textPrimary,
+                    whiteSpace: 'nowrap',
+                  }}
                 >
                   Fecha
                 </th>
-                <th style={{ textAlign: 'left', padding: '12px 14px', fontWeight: 700, color: ds.textPrimary }}>
+                <th
+                  style={{
+                    ...relacionStickyNombre(ds.bgSubtle, 10),
+                    textAlign: 'left',
+                    padding: '12px 12px',
+                    fontWeight: 700,
+                    color: ds.textPrimary,
+                  }}
+                >
                   Nombre del cliente
                 </th>
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
@@ -661,18 +842,32 @@ export default function RelacionPagosMoticoPage() {
                 const busy = savingRef === ref;
                 const nequiBusy = savingNequiRef === ref;
                 const nequiInputVal = pagosNequiDraft[ref] ?? String(nequiCommitted);
+                const rowBg = idx % 2 === 0 ? ds.bgCard : ds.bgSubtle;
+                const isSelected = selectedRefs.has(ref);
                 return (
                   <tr
                     key={ref}
                     style={{
                       borderTop: `1px solid ${ds.borderCard}`,
-                      background: idx % 2 === 0 ? ds.bgCard : ds.bgSubtle,
+                      background: rowBg,
+                      outline: isSelected ? `2px solid ${ds.brand}` : undefined,
+                      outlineOffset: -2,
                     }}
                   >
+                    <td style={{ ...relacionStickyCheckbox(rowBg, 6), padding: '10px 4px' }}>
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={(e) => toggleRowSelected(ref, e.target.checked)}
+                        aria-label={`Seleccionar pedido ${o.orderName || ref}`}
+                        style={{ width: 16, height: 16, cursor: 'pointer' }}
+                      />
+                    </td>
                     <td
                       title="Último estado Despachado"
                       style={{
-                        padding: '12px 12px',
+                        ...relacionStickyFecha(rowBg, 5),
+                        padding: '12px 10px',
                         color: ds.textSecondary,
                         fontSize: 12,
                         whiteSpace: 'nowrap',
@@ -681,9 +876,26 @@ export default function RelacionPagosMoticoPage() {
                     >
                       {formatFechaUltimoDespachado(o.last_despachado_at)}
                     </td>
-                    <td style={{ padding: '12px 14px', color: ds.textPrimary, fontWeight: 500 }}>
-                      <div>{nombre}</div>
-                      <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 4 }}>
+                    <td
+                      style={{
+                        ...relacionStickyNombre(rowBg, 4),
+                        padding: '10px 12px',
+                        color: ds.textPrimary,
+                        fontWeight: 500,
+                        verticalAlign: 'top',
+                      }}
+                    >
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{nombre}</div>
+                      <div
+                        style={{
+                          fontSize: 11,
+                          color: ds.textMuted,
+                          marginTop: 4,
+                          overflow: 'hidden',
+                          textOverflow: 'ellipsis',
+                          whiteSpace: 'nowrap',
+                        }}
+                      >
                         {o.orderName || `#${o.id}`}
                         {o.is_motico_manual ? ' · Manual' : ''}
                       </div>
@@ -773,6 +985,7 @@ export default function RelacionPagosMoticoPage() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       ) : null}
     </div>
