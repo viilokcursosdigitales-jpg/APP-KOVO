@@ -162,6 +162,8 @@ type ShopifyOrderRow = {
   /** True si el anticipo se guardó explícitamente desde KOVO (incluye 0). */
   anticipo_kovo_explicit?: boolean;
   is_motico_manual?: boolean;
+  product_cost_motico?: number | null;
+  freight_cost_motico?: number | null;
 };
 
 type ShopifyOrdersPayload = {
@@ -626,6 +628,8 @@ export default function PedidosPage() {
       pago_al_recibir_override?: number;
       anticipo_kovo_explicit?: boolean;
       is_motico_manual?: boolean;
+      product_cost_motico?: number | null;
+      freight_cost_motico?: number | null;
     };
     const totalDef = Number(ext.total_a_pagar_default);
     const totalOv = ext.total_a_pagar_override;
@@ -671,6 +675,14 @@ export default function PedidosPage() {
           : 0,
       anticipo_kovo_explicit: Boolean(ext.anticipo_kovo_explicit),
       is_motico_manual: Boolean(ext.is_motico_manual),
+      product_cost_motico:
+        ext.product_cost_motico != null && Number.isFinite(Number(ext.product_cost_motico))
+          ? Number(ext.product_cost_motico)
+          : null,
+      freight_cost_motico:
+        ext.freight_cost_motico != null && Number.isFinite(Number(ext.freight_cost_motico))
+          ? Number(ext.freight_cost_motico)
+          : null,
     };
   }, []);
 
@@ -2569,7 +2581,7 @@ export default function PedidosPage() {
           <div style={{ padding: 24, color: ds.textMuted, fontSize: 13 }}>Cargando pedidos de Shopify…</div>
         ) : (
           <div style={orderListTableScrollWrapperStyle}>
-            <table style={{ ...tableBase, tableLayout: 'auto', minWidth: useLive ? 1980 : 1180 }}>
+            <table style={{ ...tableBase, tableLayout: 'auto', minWidth: useLive ? 2200 : 1180 }}>
               <thead>
                 <tr>
                   {useLive ? (
@@ -2626,6 +2638,8 @@ export default function PedidosPage() {
                   <Th style={{ ...orderListTheadStickyCell, textAlign: 'right', whiteSpace: 'normal', maxWidth: 140 }}>
                     Pendiente de pago al recibir
                   </Th>
+                  {useLive ? <Th style={{ ...orderListTheadStickyCell, textAlign: 'right' }}>COSTO PRODUCTO</Th> : null}
+                  {useLive ? <Th style={{ ...orderListTheadStickyCell, textAlign: 'right' }}>COSTO FLETE</Th> : null}
                   <Th style={orderListTheadStickyCell}>Cant.</Th>
                   <Th style={orderListTheadStickyCell}>Productos</Th>
                   <Th style={orderListTheadStickyCell}>Pago (Shopify)</Th>
@@ -2641,6 +2655,14 @@ export default function PedidosPage() {
                       const precioTotal = pedidosPrecioTotalNum(o);
                       const pagoAnticipado = pedidosPagoAnticipadoNum(o);
                       const pendienteRecibir = pedidosPendienteAlRecibirNum(precioTotal, pagoAnticipado);
+                      const costoProductoMotico =
+                        o.product_cost_motico != null && Number.isFinite(Number(o.product_cost_motico))
+                          ? Number(o.product_cost_motico)
+                          : null;
+                      const costoFleteMotico =
+                        o.freight_cost_motico != null && Number.isFinite(Number(o.freight_cost_motico))
+                          ? Number(o.freight_cost_motico)
+                          : null;
                       return (
                         <tr key={o.id}>
                           <Td
@@ -2870,6 +2892,28 @@ export default function PedidosPage() {
                             title="Precio total − pago anticipado (si Shopify está pagado: total o valor ajustado en KOVO; si no: valor del editor)."
                           >
                             {formatMoneyAmount(pendienteRecibir, o.currency)}
+                          </Td>
+                          <Td
+                            isLast={i === arr.length - 1}
+                            style={{
+                              textAlign: 'right',
+                              fontSize: 12,
+                              fontVariantNumeric: 'tabular-nums',
+                              color: ds.textSecondary,
+                            }}
+                          >
+                            {costoProductoMotico != null ? formatMoneyAmount(costoProductoMotico, o.currency) : '—'}
+                          </Td>
+                          <Td
+                            isLast={i === arr.length - 1}
+                            style={{
+                              textAlign: 'right',
+                              fontSize: 12,
+                              fontVariantNumeric: 'tabular-nums',
+                              color: ds.textSecondary,
+                            }}
+                          >
+                            {costoFleteMotico != null ? formatMoneyAmount(costoFleteMotico, o.currency) : '—'}
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <input
