@@ -4,6 +4,7 @@ import { AdminRoute } from './auth/AdminRoute';
 import { ModuleGuard } from './auth/ModuleGuard';
 import { PrivateRoute } from './auth/PrivateRoute';
 import { AppShell } from './layout/AppShell';
+import PedidosOrderEditPage from './pages/PedidosOrderEditPage';
 
 const CanalesPage = lazy(() => import('./pages/CanalesPage'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
@@ -22,7 +23,6 @@ const MetaAdsPage = lazy(() => import('./pages/MetaAdsPage'));
 const MoticoPage = lazy(() => import('./pages/MoticoPage'));
 const PedidosPage = lazy(() => import('./pages/PedidosPage'));
 const RelacionPagosMoticoPage = lazy(() => import('./pages/RelacionPagosMoticoPage'));
-const PedidosOrderEditPage = lazy(() => import('./pages/PedidosOrderEditPage'));
 const Profile = lazy(() => import('./pages/Profile'));
 const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'));
 const AnalisisProductoPage = lazy(() => import('./pages/AnalisisProductoPage'));
