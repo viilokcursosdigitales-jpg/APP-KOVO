@@ -237,9 +237,19 @@ export default function PedidosOrderEditPage() {
     };
   }, [products]);
 
+  const draftLines = useMemo(
+    () =>
+      Array.isArray(draft.line_items) && draft.line_items.length > 0
+        ? draft.line_items
+        : [buildFallbackLine()],
+    [draft.line_items, buildFallbackLine],
+  );
+
   useEffect(() => {
     setDraft((prev) => {
-      const nextLines = prev.line_items.map((line) => {
+      const prevLines =
+        Array.isArray(prev.line_items) && prev.line_items.length > 0 ? prev.line_items : [buildFallbackLine()];
+      const nextLines = prevLines.map((line) => {
         const pid = Number(line.product_id);
         if (!Number.isFinite(pid) || pid <= 0) return line;
         const p = products.find((x) => x.id === pid);
@@ -251,8 +261,8 @@ export default function PedidosOrderEditPage() {
       });
       if (nextLines.length === 0) nextLines.push(buildFallbackLine());
       const changed =
-        nextLines.length !== prev.line_items.length ||
-        nextLines.some((li, i) => li !== prev.line_items[i]);
+        nextLines.length !== prevLines.length ||
+        nextLines.some((li, i) => li !== prevLines[i]);
       return changed ? { ...prev, line_items: nextLines } : prev;
     });
   }, [products, buildFallbackLine]);
@@ -475,11 +485,11 @@ export default function PedidosOrderEditPage() {
         setError('El pago anticipado no puede ser mayor al precio total');
         return;
       }
-      if (!Array.isArray(draft.line_items) || draft.line_items.length === 0) {
+      if (!draftLines.length) {
         setError('Agrega al menos un producto');
         return;
       }
-      const parsedLines = draft.line_items
+      const parsedLines = draftLines
         .map((line) => {
           const productId = Number(line.product_id);
           if (!Number.isFinite(productId) || productId <= 0) return null;
@@ -508,7 +518,7 @@ export default function PedidosOrderEditPage() {
         barcode: string;
         quantity: number;
       }>;
-      if (parsedLines.length !== draft.line_items.length) {
+      if (parsedLines.length !== draftLines.length) {
         setError('Revisa producto, variante y cantidad en todas las líneas');
         return;
       }
@@ -555,7 +565,7 @@ export default function PedidosOrderEditPage() {
     } finally {
       setSaving(false);
     }
-  }, [order, locked, draft, navigate, products]);
+  }, [order, locked, draft, draftLines, navigate, products]);
 
   const livePrice = parseNonNegativeDecimalInput(draft.price);
   const liveAnticipo = parseNonNegativeDecimalInput(draft.anticipo);
@@ -791,7 +801,7 @@ export default function PedidosOrderEditPage() {
             Productos y variantes
           </p>
           <div style={{ display: 'grid', gap: 8 }}>
-            {draft.line_items.map((line, idx) => {
+            {draftLines.map((line, idx) => {
               const pid = Number(line.product_id);
               const selected = Number.isFinite(pid) && pid > 0 ? products.find((p) => p.id === pid) || null : null;
               return (
@@ -853,7 +863,7 @@ export default function PedidosOrderEditPage() {
                     <button
                       type="button"
                       onClick={() => removeLine(idx)}
-                      disabled={locked || saving || draft.line_items.length <= 1}
+                      disabled={locked || saving || draftLines.length <= 1}
                       style={{
                         padding: '7px 10px',
                         borderRadius: 8,
@@ -861,7 +871,7 @@ export default function PedidosOrderEditPage() {
                         background: ds.bgCard,
                         color: ds.textSecondary,
                         fontSize: 12,
-                        cursor: locked || saving || draft.line_items.length <= 1 ? 'not-allowed' : 'pointer',
+                        cursor: locked || saving || draftLines.length <= 1 ? 'not-allowed' : 'pointer',
                       }}
                     >
                       Quitar
