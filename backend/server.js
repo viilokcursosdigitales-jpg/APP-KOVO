@@ -4446,6 +4446,17 @@ function mapMoticoManualOrderRowFromDb(r) {
       ? String(ship.assigned_date || ship.fecha_asignada || ship.assignedDate || '').trim()
       : '';
   const assigned_date = /^\d{4}-\d{2}-\d{2}$/.test(assignedDateRaw) ? assignedDateRaw : null;
+  const manualMensajeroRaw = String(ship.mensajero || ship.mensajero_tag || ship.courier || '')
+    .trim()
+    .toLowerCase();
+  const removedFromMotico =
+    String(ship.removed_from_motico || '')
+      .trim()
+      .toLowerCase() === 'true';
+  let manualMensajero = SHOPIFY_MENSAJEROS.has(manualMensajeroRaw) ? manualMensajeroRaw : null;
+  if (!manualMensajero && !removedFromMotico) {
+    manualMensajero = 'motico';
+  }
   const last_despachado_at =
     r.last_despachado_at != null ? new Date(r.last_despachado_at).toISOString() : null;
   return {
@@ -4475,7 +4486,7 @@ function mapMoticoManualOrderRowFromDb(r) {
     sourceName: 'motico_manual',
     utm: {},
     internal_status: motico_status,
-    mensajero: null,
+    mensajero: manualMensajero,
     motico_status,
     price_override: po != null && Number.isFinite(po) ? po : null,
     quantity_override: qo != null && Number.isFinite(qo) ? qo : null,
@@ -5771,7 +5782,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         const internalStatus = String(o.internal_status || '')
           .trim()
           .toLowerCase();
-        return mensajero === 'motico' || internalStatus === 'motico' || Boolean(o.is_motico_manual) || Number(o.id) < 0;
+        return mensajero === 'motico' || internalStatus === 'motico';
       });
     }
     const productIdQ = typeof req.query.product_id === 'string' ? req.query.product_id.trim() : '';
@@ -7013,21 +7024,38 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
           shipping_json = {};
         }
       }
-      if (body.mensajero === null) {
-        shipping_json.removed_from_motico = true;
-        shipping_json.removed_from_motico_at = new Date().toISOString();
-        if (unlockReason.length >= 5) shipping_json.removed_from_motico_reason = unlockReason;
-      } else if (body.mensajero === 'motico') {
-        shipping_json.removed_from_motico = false;
-        // Para pedidos manuales antiguos, registrar la fecha de asignación permite que entren por filtro de fecha en Motico.
-        const assignedDateRaw = String(
-          shipping_json.assigned_date || shipping_json.fecha_asignada || shipping_json.assignedDate || '',
-        ).trim();
-        if (!/^\d{4}-\d{2}-\d{2}$/.test(assignedDateRaw)) {
-          shipping_json.assigned_date = new Date().toISOString().slice(0, 10);
+      if (body.mensajero !== undefined) {
+        if (body.mensajero === null || body.mensajero === '') {
+          delete shipping_json.mensajero;
+          shipping_json.removed_from_motico = true;
+          shipping_json.removed_from_motico_at = new Date().toISOString();
+          if (unlockReason.length >= 5) shipping_json.removed_from_motico_reason = unlockReason;
+        } else {
+          const m = String(body.mensajero).trim().toLowerCase();
+          if (!SHOPIFY_MENSAJEROS.has(m)) {
+            return res.status(400).json({ error: 'Mensajero no válido' });
+          }
+          shipping_json.mensajero = m;
+          if (m === 'motico') {
+            shipping_json.removed_from_motico = false;
+            // Para pedidos manuales antiguos, registrar la fecha de asignación permite que entren por filtro de fecha en Motico.
+            const assignedDateRaw = String(
+              shipping_json.assigned_date || shipping_json.fecha_asignada || shipping_json.assignedDate || '',
+            ).trim();
+            if (!/^\d{4}-\d{2}-\d{2}$/.test(assignedDateRaw)) {
+              shipping_json.assigned_date = new Date().toISOString().slice(0, 10);
+            }
+            delete shipping_json.removed_from_motico_at;
+            delete shipping_json.removed_from_motico_reason;
+          } else {
+            shipping_json.removed_from_motico = true;
+            shipping_json.removed_from_motico_at = new Date().toISOString();
+            if (unlockReason.length >= 5) shipping_json.removed_from_motico_reason = unlockReason;
+            delete shipping_json.assigned_date;
+            delete shipping_json.fecha_asignada;
+            delete shipping_json.assignedDate;
+          }
         }
-        delete shipping_json.removed_from_motico_at;
-        delete shipping_json.removed_from_motico_reason;
       }
       const prevManualUnifiedDespacho = normalizeLegacyMoticoEstadoToUnified(currentMoticoStatus);
       const nextManualUnifiedDespacho = normalizeLegacyMoticoEstadoToUnified(motico_status);
@@ -7078,12 +7106,18 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         },
       });
       const paymentBadge = mapFinancialToBadge(financial_status);
+      const { rows: refreshedRows } = await pool.query(
+        `SELECT * FROM motico_manual_orders WHERE id = $1 AND organization_id = $2`,
+        [manualId, req.organizationId],
+      );
+      const refreshedMapped = refreshedRows[0] ? mapMoticoManualOrderRowFromDb(refreshedRows[0]) : null;
+      const responseMensajero = refreshedMapped ? refreshedMapped.mensajero : null;
       return res.json({
         ok: true,
         internal_status: motico_status,
         price_override,
         quantity_override,
-        mensajero: 'motico',
+        mensajero: responseMensajero,
         motico_status,
         payment_status_override: financial_status,
         financial_status,
@@ -7430,16 +7464,15 @@ app.put(
           }
         }
         if (!ship || typeof ship !== 'object') ship = {};
-        const merged = {
-          name: String(ship.name || rows[0].client_name || ''),
-          address1: String(ship.address1 || ''),
-          address2: String(ship.address2 || ''),
-          city: String(ship.city || ''),
-          province: String(ship.province || ''),
-          zip: String(ship.zip || ''),
-          country: String(ship.country || ''),
-          phone: String(ship.phone || ''),
-        };
+        const merged = { ...ship };
+        merged.name = String(merged.name || rows[0].client_name || '');
+        merged.address1 = String(merged.address1 || '');
+        merged.address2 = String(merged.address2 || '');
+        merged.city = String(merged.city || '');
+        merged.province = String(merged.province || '');
+        merged.zip = String(merged.zip || '');
+        merged.country = String(merged.country || '');
+        merged.phone = String(merged.phone || '');
         for (const k of allowed) {
           if (Object.prototype.hasOwnProperty.call(updates, k)) merged[k] = updates[k];
         }

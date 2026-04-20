@@ -207,12 +207,7 @@ function isMoticoMensajeroScope(o: OrderRow) {
   const internalStatus = String(o.internal_status || '')
     .trim()
     .toLowerCase();
-  return (
-    mensajero === 'motico' ||
-    internalStatus === 'motico' ||
-    Boolean(o.is_motico_manual) ||
-    Number(o.id) < 0
-  );
+  return mensajero === 'motico' || internalStatus === 'motico';
 }
 
 function relacionPrecioTotal(o: OrderRow): number {
