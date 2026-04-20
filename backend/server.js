@@ -4102,6 +4102,7 @@ const UNIFIED_ORDER_ESTADO_LIST = [
   'sin_confirmar',
   'confirmado',
   'despachado',
+  'devolucion',
   'prueba',
   'cancelado',
 ];
@@ -4120,6 +4121,7 @@ const UNIFIED_ESTADO_RANK = {
   confirmado: 30,
   prueba: 35,
   despachado: 50,
+  devolucion: 55,
   cancelado: 60,
 };
 
@@ -8303,6 +8305,40 @@ app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, r
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener productos' });
+  }
+});
+
+app.get('/api/shopify/products/:productId/variants', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const row = await getActiveShopifyConnection(req.organizationId);
+    if (!row) {
+      return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
+    }
+    const productId = Number.parseInt(String(req.params.productId || ''), 10);
+    if (!Number.isFinite(productId) || productId <= 0) {
+      return res.status(400).json({ error: 'ID de producto inválido' });
+    }
+    const lim = Math.min(250, Math.max(1, parseInt(String(req.query.limit || '250'), 10) || 250));
+    const out = [];
+    let sinceId = null;
+    const MAX_PAGES = 60;
+    for (let page = 0; page < MAX_PAGES; page += 1) {
+      const qs = sinceId != null ? `?limit=${lim}&since_id=${sinceId}` : `?limit=${lim}`;
+      const r = await shopifyRequest(row.shop_domain, row.access_token, `products/${productId}/variants.json${qs}`);
+      if (!r.ok) {
+        return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
+      }
+      const chunk = Array.isArray(r.data?.variants) ? r.data.variants : [];
+      out.push(...chunk);
+      if (chunk.length < lim) break;
+      const lastId = Number(chunk[chunk.length - 1]?.id);
+      if (!Number.isFinite(lastId) || lastId <= 0) break;
+      sinceId = lastId;
+    }
+    res.json({ product_id: productId, variants: out });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al obtener variantes del producto' });
   }
 });
 

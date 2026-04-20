@@ -823,6 +823,7 @@ export default function MoticoPage() {
   const [shopDomain, setShopDomain] = useState<string | null>(null);
   const [orders, setOrders] = useState<MoticoOrderRow[]>([]);
   const [products, setProducts] = useState<ShopifyProduct[]>([]);
+  const variantsLoadedRef = useRef<Set<number>>(new Set());
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [syncError, setSyncError] = useState('');
@@ -911,6 +912,32 @@ export default function MoticoPage() {
     for (const p of products) m.set(p.id, p);
     return m;
   }, [products]);
+
+  const ensureProductVariantsLoaded = useCallback(async (productId: number) => {
+    if (!Number.isFinite(productId) || productId <= 0) return;
+    if (variantsLoadedRef.current.has(productId)) return;
+    const res = await apiFetch(`/api/shopify/products/${productId}/variants?limit=250`);
+    if (!res.ok) return;
+    const data = (await res.json().catch(() => ({}))) as { variants?: unknown[] };
+    const variantsRaw = Array.isArray(data.variants) ? data.variants : [];
+    const variants = variantsRaw
+      .map((v) => {
+        if (!v || typeof v !== 'object') return null;
+        const vv = v as { id?: unknown; title?: unknown; sku?: unknown; barcode?: unknown };
+        const id = Number(vv.id);
+        if (!Number.isFinite(id) || id <= 0) return null;
+        return {
+          id,
+          title: String(vv.title || '').trim() || 'Variante',
+          sku: String(vv.sku || ''),
+          barcode: String(vv.barcode || ''),
+        } satisfies ShopifyProductVariant;
+      })
+      .filter((v): v is ShopifyProductVariant => Boolean(v));
+    if (!variants.length) return;
+    variantsLoadedRef.current.add(productId);
+    setProducts((prev) => prev.map((p) => (p.id === productId ? { ...p, variants } : p)));
+  }, []);
 
   const citiesByDepartment = useMemo(() => {
     const m = new Map<string, string[]>();
@@ -1061,10 +1088,17 @@ export default function MoticoPage() {
 
         const ordRes = await apiFetch(`/api/shopify/orders?${qs.toString()}`);
         if (products.length === 0) {
-          const prodRes = await apiFetch('/api/shopify/products?limit=250&all_variants=1');
+          const prodRes = await apiFetch('/api/shopify/products?limit=250');
           if (prodRes.ok) {
             const pdata = (await prodRes.json().catch(() => ({}))) as { products?: unknown[] };
-            setProducts(normalizeShopifyProducts(pdata));
+            const normalizedProducts = normalizeShopifyProducts(pdata);
+            variantsLoadedRef.current = new Set(
+              normalizedProducts
+                .filter((p) => Array.isArray(p.variants) && p.variants.length > 0)
+                .map((p) => Number(p.id))
+                .filter((n) => Number.isFinite(n) && n > 0),
+            );
+            setProducts(normalizedProducts);
           }
         }
 
@@ -1725,8 +1759,9 @@ export default function MoticoPage() {
       const product = Number.isFinite(pid) ? productById.get(pid) : undefined;
       const firstVariantId = product?.variants?.[0]?.id ? String(product.variants[0].id) : '';
       updateManualLine(idx, { product_id: nextProductId, variant_id: firstVariantId });
+      if (Number.isFinite(pid) && pid > 0) void ensureProductVariantsLoaded(pid);
     },
-    [productById, updateManualLine],
+    [productById, updateManualLine, ensureProductVariantsLoaded],
   );
 
   const addManualLine = useCallback(() => {
@@ -1756,8 +1791,9 @@ export default function MoticoPage() {
       const product = Number.isFinite(pid) ? productById.get(pid) : undefined;
       const firstVariantId = product?.variants?.[0]?.id ? String(product.variants[0].id) : '';
       updateEditorLine(idx, { product_id: nextProductId, variant_id: firstVariantId });
+      if (Number.isFinite(pid) && pid > 0) void ensureProductVariantsLoaded(pid);
     },
-    [productById, updateEditorLine],
+    [productById, updateEditorLine, ensureProductVariantsLoaded],
   );
 
   const addEditorLine = useCallback(() => {
@@ -1770,6 +1806,16 @@ export default function MoticoPage() {
       return { ...d, line_items: next.length ? next : [emptyManualLine()] };
     });
   }, []);
+
+  useEffect(() => {
+    const ids = [
+      ...editorDraft.line_items.map((line) => Number(line.product_id)),
+      ...manualDraft.line_items.map((line) => Number(line.product_id)),
+    ].filter((n) => Number.isFinite(n) && n > 0);
+    const uniqueIds = [...new Set(ids)];
+    if (!uniqueIds.length) return;
+    void Promise.all(uniqueIds.map((pid) => ensureProductVariantsLoaded(pid)));
+  }, [editorDraft.line_items, manualDraft.line_items, ensureProductVariantsLoaded]);
 
   const submitManualOrder = useCallback(async () => {
     setManualError('');

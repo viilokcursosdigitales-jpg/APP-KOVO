@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
@@ -218,6 +218,7 @@ export default function PedidosOrderEditPage() {
   const [success, setSuccess] = useState('');
   const [order, setOrder] = useState<EditableOrder | null>(null);
   const [products, setProducts] = useState<Product[]>([]);
+  const variantsLoadedRef = useRef<Set<number>>(new Set());
   const [auditLogs, setAuditLogs] = useState<OrderAuditLog[]>([]);
   const [draft, setDraft] = useState<EditDraft>(() => emptyDraft());
   const [configuredCurrency, setConfiguredCurrency] = useState('COP');
@@ -244,7 +245,7 @@ export default function PedidosOrderEditPage() {
         const p = products.find((x) => x.id === pid);
         if (!p) return line;
         const hasVariant = p.variants.some((v) => String(v.id) === String(line.variant_id));
-        if (hasVariant) return line;
+        if (hasVariant || String(line.variant_id || '').trim() !== '') return line;
         const first = p.variants[0];
         return { ...line, variant_id: first ? String(first.id) : '' };
       });
@@ -274,8 +275,11 @@ export default function PedidosOrderEditPage() {
         product_id: productId,
         variant_id: p?.variants?.[0] ? String(p.variants[0].id) : '',
       });
+      if (Number.isFinite(pid) && pid > 0) {
+        void ensureProductVariantsLoaded(pid);
+      }
     },
-    [products, updateLine],
+    [products, updateLine, ensureProductVariantsLoaded],
   );
 
   const addLine = useCallback(() => {
@@ -292,6 +296,32 @@ export default function PedidosOrderEditPage() {
     [buildFallbackLine],
   );
 
+  const ensureProductVariantsLoaded = useCallback(
+    async (productId: number) => {
+      if (!Number.isFinite(productId) || productId <= 0) return;
+      if (variantsLoadedRef.current.has(productId)) return;
+      const res = await apiFetch(`/api/shopify/products/${productId}/variants?limit=250`);
+      if (!res.ok) return;
+      const data = (await res.json().catch(() => ({}))) as { variants?: unknown[] };
+      const variantsRaw = Array.isArray(data.variants) ? data.variants : [];
+      const variants = variantsRaw
+        .map((v) => {
+          if (!v || typeof v !== 'object') return null;
+          const vv = v as { id?: unknown; title?: unknown };
+          const id = Number(vv.id);
+          if (!Number.isFinite(id) || id <= 0) return null;
+          return { id, title: String(vv.title || '').trim() || 'Variante' };
+        })
+        .filter((v): v is ProductVariant => Boolean(v));
+      if (!variants.length) return;
+      variantsLoadedRef.current.add(productId);
+      setProducts((prev) =>
+        prev.map((p) => (p.id === productId ? { ...p, variants } : p)),
+      );
+    },
+    [],
+  );
+
   const loadData = useCallback(async () => {
     if (!Number.isFinite(orderId) || orderId <= 0) {
       setError('ID de pedido inválido');
@@ -304,7 +334,7 @@ export default function PedidosOrderEditPage() {
     try {
       const [orderRes, productsRes, settingsRes, auditRes] = await Promise.all([
         apiFetch(`/api/shopify/orders/${orderId}`),
-        apiFetch('/api/shopify/products?limit=250&all_variants=1'),
+        apiFetch('/api/shopify/products?limit=250'),
         apiFetch('/api/motico/settings'),
         apiFetch(`/api/shopify/orders/${orderId}/audit-log`),
       ]);
@@ -336,6 +366,25 @@ export default function PedidosOrderEditPage() {
       const loadedOrder = orderData.order;
       setOrder(loadedOrder);
       setProducts(list);
+      variantsLoadedRef.current = new Set(
+        list
+          .filter((p) => Array.isArray(p.variants) && p.variants.length > 0)
+          .map((p) => Number(p.id))
+          .filter((id) => Number.isFinite(id) && id > 0),
+      );
+      const orderProductIds =
+        Array.isArray(loadedOrder.lineItemsDetail) && loadedOrder.lineItemsDetail.length
+          ? [
+              ...new Set(
+                loadedOrder.lineItemsDetail
+                  .map((li) => Number(li?.product_id))
+                  .filter((n) => Number.isFinite(n) && n > 0),
+              ),
+            ]
+          : [];
+      if (orderProductIds.length > 0) {
+        await Promise.all(orderProductIds.map((pid) => ensureProductVariantsLoaded(pid)));
+      }
 
       const linesFromOrder =
         Array.isArray(loadedOrder.lineItemsDetail) && loadedOrder.lineItemsDetail.length
@@ -347,7 +396,7 @@ export default function PedidosOrderEditPage() {
                 if (!p) return null;
                 const rawVid = li?.variant_id != null ? Number(li.variant_id) : NaN;
                 const vid =
-                  Number.isFinite(rawVid) && p.variants.some((v) => v.id === rawVid)
+                  Number.isFinite(rawVid) && rawVid > 0
                     ? rawVid
                     : p.variants?.[0]?.id;
                 const q = Number(li?.quantity);
@@ -387,7 +436,7 @@ export default function PedidosOrderEditPage() {
     } finally {
       setLoading(false);
     }
-  }, [orderId]);
+  }, [orderId, ensureProductVariantsLoaded]);
 
   useEffect(() => {
     void loadData();

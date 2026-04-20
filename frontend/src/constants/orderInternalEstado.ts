@@ -7,6 +7,7 @@ export const ORDER_INTERNAL_ESTADO_OPTIONS = [
   { value: 'sin_confirmar', label: 'No confirmó' },
   { value: 'confirmado', label: 'Confirmado' },
   { value: 'despachado', label: 'Despachado' },
+  { value: 'devolucion', label: 'Devolución' },
   { value: 'prueba', label: 'Prueba' },
   { value: 'cancelado', label: 'Cancelado' },
 ] as const;
@@ -51,6 +52,12 @@ export const ORDER_INTERNAL_ESTADO_ROW_META: Record<
     chipBg: '#ccfbf1',
     chipFg: '#134e4a',
     chipBorder: '#5eead4',
+  },
+  devolucion: {
+    rowColor: '#dc2626',
+    chipBg: '#fee2e2',
+    chipFg: '#7f1d1d',
+    chipBorder: '#fca5a5',
   },
   prueba: {
     rowColor: '#78716c',

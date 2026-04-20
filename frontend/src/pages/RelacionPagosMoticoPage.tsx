@@ -10,7 +10,6 @@ import {
 } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
-import { coerceOrderInternalEstadoForSelect } from '../constants/orderInternalEstado';
 import { ds } from '../design-system/ds';
 import { IconCart, IconPackage, IconProduct, IconTruck, IconTrendingUp } from '../design-system/icons';
 import { KpiCard } from '../design-system/KpiCard';
@@ -337,8 +336,6 @@ export default function RelacionPagosMoticoPage() {
     for (const o of orders) {
       if (isPruebaRow(o)) continue;
       if (!isMoticoMensajeroScope(o)) continue;
-      const st = coerceOrderInternalEstadoForSelect(o.motico_status || o.internal_status);
-      if (st !== 'despachado') continue;
       out.push(o);
     }
     out.sort((a, b) => {
@@ -626,10 +623,10 @@ export default function RelacionPagosMoticoPage() {
         title="Relación de Pagos Motico"
         subtitle={
           shopifyConnected && shopDomain
-            ? `Pedidos con mensajero Motico y estado Despachado · ${shopDomain}. El estado de la última columna es el seguimiento de cobro a Motico.${
+            ? `Pedidos con mensajero Motico (cualquier estado) · ${shopDomain}. El estado de la última columna es el seguimiento de cobro a Motico.${
                 normalizeSearchText(searchInput) ? ' · Búsqueda activa' : ''
               }`
-            : 'Pedidos con mensajero Motico y estado Despachado. Conecta Shopify para ver datos.'
+            : 'Pedidos con mensajero Motico (cualquier estado). Conecta Shopify para ver datos.'
         }
       />
 
@@ -707,7 +704,7 @@ export default function RelacionPagosMoticoPage() {
           >
             <KpiCard
               variant="sales"
-              label="Total ventas despachado"
+              label="Total ventas"
               value={formatMoneyAmount(relacionPagosKpis.totalVentasDespachado, defaultCurrency)}
               icon={<IconCart />}
             />
@@ -859,7 +856,7 @@ export default function RelacionPagosMoticoPage() {
         <div style={{ color: ds.textMuted, fontSize: 14 }}>Cargando…</div>
       ) : shopifyConnected && baseRows.length === 0 ? (
         <div style={{ color: ds.textSecondary, fontSize: 14 }}>
-          No hay pedidos Despachado con mensajero Motico en el rango seleccionado.
+          No hay pedidos con mensajero Motico en el rango seleccionado.
         </div>
       ) : shopifyConnected && rows.length === 0 ? (
         <div style={{ color: ds.textSecondary, fontSize: 14 }}>
