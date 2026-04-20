@@ -4903,6 +4903,33 @@ function buildLineItemTitleToProductIdMap(orders) {
   return m;
 }
 
+/**
+ * IDs Shopify para `shopify_product_manual_pricing`: cada línea con `product_id` o el mismo ID inferido
+ * por título que en `calculateOrderMoticoProductCost` (así el mapa incluye costos de **todas** las líneas del lote).
+ */
+function collectOrderLineProductIdsForPricing(orders, lineTitleToProductIdMap) {
+  const pids = [];
+  const map = lineTitleToProductIdMap instanceof Map ? lineTitleToProductIdMap : new Map();
+  for (const o of Array.isArray(orders) ? orders : []) {
+    const detail = Array.isArray(o?.lineItemsDetail) ? o.lineItemsDetail : [];
+    for (const li of detail) {
+      let pid = li?.product_id != null ? Number(li.product_id) : NaN;
+      if (!Number.isFinite(pid) || pid <= 0) {
+        const key = normalizeLineItemLookupKey(li.title || li.name || '');
+        if (key && map.has(key)) pid = Number(map.get(key));
+      }
+      if (Number.isFinite(pid) && pid > 0) pids.push(pid);
+    }
+    if (Array.isArray(o?.productIds)) {
+      for (const pid of o.productIds) {
+        const n = Number(pid);
+        if (Number.isFinite(n) && n > 0) pids.push(n);
+      }
+    }
+  }
+  return pids;
+}
+
 function calculateOrderManualCosts(order, pricingMap, titleToProductIdMap) {
   const detail = Array.isArray(order?.lineItemsDetail) ? order.lineItemsDetail : [];
   let productCost = 0;
@@ -5750,20 +5777,8 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
       }
     }
     if (mensajeroFilter === 'motico' && orders.length > 0) {
-      const pidCollector = [];
-      for (const o of orders) {
-        const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
-        for (const li of detail) {
-          const pid = li?.product_id != null ? Number(li.product_id) : NaN;
-          if (Number.isFinite(pid) && pid > 0) pidCollector.push(pid);
-        }
-        if (Array.isArray(o.productIds)) {
-          for (const pid of o.productIds) {
-            const n = Number(pid);
-            if (Number.isFinite(n) && n > 0) pidCollector.push(n);
-          }
-        }
-      }
+      const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap(orders);
+      const pidCollector = collectOrderLineProductIdsForPricing(orders, lineTitleToProductIdMap);
       const uniqPids = [...new Set(pidCollector)];
       let pricingMap = new Map();
       if (uniqPids.length) {
@@ -5773,7 +5788,6 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
           if (!(pe && pe.code === '42P01')) throw pe;
         }
       }
-      const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap(orders);
       orders = orders.map((o) => ({
         ...o,
         product_cost_motico: calculateOrderMoticoProductCost(o, pricingMap, lineTitleToProductIdMap),
@@ -6039,22 +6053,9 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     const normalizedMerged = normalized.map((o) =>
       applyShopifyOrderKovoDisplayOverrides(o, localMapGanancia.get(Number(o.id))),
     );
-    const productIds = [];
-    for (const o of normalizedMerged) {
-      const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
-      for (const li of detail) {
-        const pid = Number(li?.product_id);
-        if (Number.isFinite(pid)) productIds.push(pid);
-      }
-    }
-    for (const o of manualRows) {
-      const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
-      for (const li of detail) {
-        const pid = Number(li?.product_id);
-        if (Number.isFinite(pid)) productIds.push(pid);
-      }
-    }
-    const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap([...normalizedMerged, ...manualRows]);
+    const mergedForPricing = [...normalizedMerged, ...manualRows];
+    const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap(mergedForPricing);
+    const productIds = collectOrderLineProductIdsForPricing(mergedForPricing, lineTitleToProductIdMap);
     const uniqPids = [...new Set(productIds)];
     const [metaSingle, manualPricingMap] = await Promise.all([
       gananciaFetchMetaSpendSingleDay(req.organizationId, dateStr),
@@ -6285,22 +6286,9 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     const normalizedMerged2 = normalized.map((o) =>
       applyShopifyOrderKovoDisplayOverrides(o, localMapGanancia2.get(Number(o.id))),
     );
-    const productIds = [];
-    for (const o of normalizedMerged2) {
-      const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
-      for (const li of detail) {
-        const pid = Number(li?.product_id);
-        if (Number.isFinite(pid)) productIds.push(pid);
-      }
-    }
-    for (const o of manualRows) {
-      const detail = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
-      for (const li of detail) {
-        const pid = Number(li?.product_id);
-        if (Number.isFinite(pid)) productIds.push(pid);
-      }
-    }
-    const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap([...normalizedMerged2, ...manualRows]);
+    const mergedForPricing2 = [...normalizedMerged2, ...manualRows];
+    const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap(mergedForPricing2);
+    const productIds = collectOrderLineProductIdsForPricing(mergedForPricing2, lineTitleToProductIdMap);
     const uniqPids = [...new Set(productIds)];
     const manualPricingMap = await (async () => {
       try {
