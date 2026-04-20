@@ -189,7 +189,7 @@ export default function InventarioPage() {
     else setLoading(true);
     setError('');
     try {
-      const res = await apiFetch('/api/shopify/products?limit=250');
+      const res = await apiFetch('/api/shopify/products?limit=250&all_variants=1');
       const data = (await res.json().catch(() => ({}))) as { code?: string; error?: string; products?: unknown[] };
       if (!res.ok) {
         if (data.code === 'not_connected') {
