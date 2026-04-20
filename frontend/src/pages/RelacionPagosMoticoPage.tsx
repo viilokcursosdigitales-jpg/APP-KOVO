@@ -1,4 +1,13 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ReactNode,
+} from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { coerceOrderInternalEstadoForSelect } from '../constants/orderInternalEstado';
@@ -59,6 +68,8 @@ function relacionStickyNombre(bg: string, z: number): CSSProperties {
   };
 }
 
+const SEARCH_DEBOUNCE_MS = 240;
+
 const PAGO_ESTADO_OPTIONS: { value: MoticoRelacionPagoEstado; label: string }[] = [
   { value: 'pendiente_pago', label: 'Pendiente de pago' },
   { value: 'pagado', label: 'Pagado' },
@@ -71,7 +82,9 @@ type OrderRow = {
   createdAt?: string;
   orderName?: string;
   client?: string;
-  shippingAddress?: { name?: string } | null;
+  shippingAddress?: { name?: string; phone?: string } | null;
+  email?: string;
+  phoneLocal?: string;
   mensajero?: string | null;
   internal_status?: string;
   motico_status?: string;
@@ -89,6 +102,73 @@ type OrderRow = {
   /** ISO: última vez que el pedido pasó a estado operativo Despachado (servidor). */
   last_despachado_at?: string | null;
 };
+
+function normalizeSearchText(v: string) {
+  return String(v || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .trim();
+}
+
+function buildNormalizedIndexMap(source: string) {
+  const normalizedChars: string[] = [];
+  const indexMap: number[] = [];
+  for (let i = 0; i < source.length; i += 1) {
+    const chunk = source[i]!.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+    for (let j = 0; j < chunk.length; j += 1) {
+      normalizedChars.push(chunk[j]!);
+      indexMap.push(i);
+    }
+  }
+  return { normalized: normalizedChars.join(''), indexMap };
+}
+
+/** Mismo criterio visual que Pedidos: coincide ignorando mayúsculas y tildes. */
+function highlightText(text: string, rawTerm: string): ReactNode {
+  const source = String(text || '');
+  const q = String(rawTerm || '').trim();
+  if (!source || !q) return source || '—';
+  const needle = normalizeSearchText(q);
+  if (!needle) return source;
+  const { normalized, indexMap } = buildNormalizedIndexMap(source);
+  const matchRanges: Array<{ start: number; end: number }> = [];
+  let from = 0;
+  while (from < normalized.length) {
+    const at = normalized.indexOf(needle, from);
+    if (at < 0) break;
+    const start = indexMap[at];
+    const lastNormPos = at + needle.length - 1;
+    const end = (indexMap[lastNormPos] ?? source.length - 1) + 1;
+    if (start != null && end > start) {
+      const prev = matchRanges[matchRanges.length - 1];
+      if (prev && start <= prev.end) prev.end = Math.max(prev.end, end);
+      else matchRanges.push({ start, end });
+    }
+    from = at + Math.max(needle.length, 1);
+  }
+  if (!matchRanges.length) return source;
+  const out: ReactNode[] = [];
+  let cursor = 0;
+  matchRanges.forEach((r, idx) => {
+    if (r.start > cursor) {
+      out.push(<span key={`t-${idx}`}>{source.slice(cursor, r.start)}</span>);
+    }
+    out.push(
+      <mark
+        key={`m-${idx}`}
+        style={{ background: '#fff3b0', color: 'inherit', padding: '0 1px', borderRadius: 2 }}
+      >
+        {source.slice(r.start, r.end)}
+      </mark>,
+    );
+    cursor = r.end;
+  });
+  if (cursor < source.length) {
+    out.push(<span key="t-end">{source.slice(cursor)}</span>);
+  }
+  return out;
+}
 
 function formatMoneyAmount(n: number, currency: string) {
   const c = (currency || 'COP').trim() || 'COP';
@@ -167,6 +247,36 @@ function numOrZero(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function relacionRowMatchesSearch(
+  o: OrderRow,
+  normalizedTerm: string,
+  estadoPago: MoticoRelacionPagoEstado,
+): boolean {
+  if (!normalizedTerm) return true;
+  const estadoLabel = PAGO_ESTADO_OPTIONS.find((x) => x.value === estadoPago)?.label || '';
+  const shipPhone = String(o.shippingAddress?.phone || '').trim();
+  const haystack = normalizeSearchText(
+    [
+      o.orderName,
+      o.client,
+      o.email,
+      o.shippingAddress?.name,
+      o.phoneLocal,
+      shipPhone,
+      String(o.financialStatus || ''),
+      estadoLabel,
+      String(relacionPrecioTotal(o)),
+      String(numOrZero(o.product_cost_motico)),
+      String(numOrZero(o.freight_cost_motico)),
+    ]
+      .filter(Boolean)
+      .join(' '),
+  );
+  if (haystack.includes(normalizedTerm)) return true;
+  const idLike = String(o.id ?? '');
+  return normalizeSearchText(idLike).includes(normalizedTerm) || idLike.includes(normalizedTerm);
+}
+
 /** Ganancia Motico = precio total − costo producto − costo flete. */
 function gananciaMotico(o: OrderRow): number {
   return relacionPrecioTotal(o) - numOrZero(o.product_cost_motico) - numOrZero(o.freight_cost_motico);
@@ -202,6 +312,8 @@ export default function RelacionPagosMoticoPage() {
   const [savingRef, setSavingRef] = useState<string | null>(null);
   const [savingNequiRef, setSavingNequiRef] = useState<string | null>(null);
   const [selectedRefs, setSelectedRefs] = useState<Set<string>>(() => new Set());
+  const [searchInput, setSearchInput] = useState('');
+  const [searchTerm, setSearchTerm] = useState('');
   const nequiTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({});
   const headerSelectAllRef = useRef<HTMLInputElement>(null);
 
@@ -210,7 +322,7 @@ export default function RelacionPagosMoticoPage() {
     [datePreset, customFrom, customTo],
   );
 
-  const rows = useMemo(() => {
+  const baseRows = useMemo(() => {
     const out: OrderRow[] = [];
     for (const o of orders) {
       if (isPruebaRow(o)) continue;
@@ -226,6 +338,25 @@ export default function RelacionPagosMoticoPage() {
     });
     return out;
   }, [orders]);
+
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      setSearchTerm(searchInput);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(id);
+  }, [searchInput]);
+
+  const normalizedSearchTerm = useMemo(() => normalizeSearchText(searchTerm), [searchTerm]);
+
+  const rows = useMemo(
+    () =>
+      baseRows.filter((o) => {
+        const ref = orderRef(o);
+        const est = estadoByRef[ref] || 'pendiente_pago';
+        return relacionRowMatchesSearch(o, normalizedSearchTerm, est);
+      }),
+    [baseRows, normalizedSearchTerm, estadoByRef],
+  );
 
   useEffect(() => {
     const allowed = new Set(rows.map((o) => orderRef(o)));
@@ -320,7 +451,10 @@ export default function RelacionPagosMoticoPage() {
     void loadEstados();
   }, [shopifyConnected, loadEstados, orders.length]);
 
-  const defaultCurrency = useMemo(() => rows[0]?.currency || 'COP', [rows]);
+  const defaultCurrency = useMemo(
+    () => rows[0]?.currency || baseRows[0]?.currency || 'COP',
+    [rows, baseRows],
+  );
 
   const relacionPagosKpis = useMemo(() => {
     let totalVentasDespachado = 0;
@@ -482,7 +616,9 @@ export default function RelacionPagosMoticoPage() {
         title="Relación de Pagos Motico"
         subtitle={
           shopifyConnected && shopDomain
-            ? `Pedidos con mensajero Motico y estado Despachado · ${shopDomain}. El estado de la última columna es el seguimiento de cobro a Motico.`
+            ? `Pedidos con mensajero Motico y estado Despachado · ${shopDomain}. El estado de la última columna es el seguimiento de cobro a Motico.${
+                normalizeSearchText(searchInput) ? ' · Búsqueda activa' : ''
+              }`
             : 'Pedidos con mensajero Motico y estado Despachado. Conecta Shopify para ver datos.'
         }
       />
@@ -527,10 +663,25 @@ export default function RelacionPagosMoticoPage() {
             />
           </div>
         ) : null}
-        <Link
-          to="/pedidos"
-          style={{ marginLeft: 'auto', fontSize: 12, color: ds.brand, fontWeight: 600 }}
-        >
+        <input
+          type="search"
+          value={searchInput}
+          onChange={(e) => setSearchInput(e.target.value)}
+          placeholder="Buscar pedido, cliente, correo, teléfono, estado cobro…"
+          style={{
+            marginLeft: 'auto',
+            minWidth: 220,
+            maxWidth: 340,
+            flex: '1 1 200px',
+            padding: '7px 10px',
+            borderRadius: 8,
+            border: `1px solid ${ds.borderCard}`,
+            background: ds.bgCard,
+            color: ds.textPrimary,
+            fontSize: 12,
+          }}
+        />
+        <Link to="/pedidos" style={{ fontSize: 12, color: ds.brand, fontWeight: 600, whiteSpace: 'nowrap' }}>
           Ir a Pedidos
         </Link>
       </div>
@@ -696,9 +847,13 @@ export default function RelacionPagosMoticoPage() {
 
       {loading ? (
         <div style={{ color: ds.textMuted, fontSize: 14 }}>Cargando…</div>
-      ) : shopifyConnected && rows.length === 0 ? (
+      ) : shopifyConnected && baseRows.length === 0 ? (
         <div style={{ color: ds.textSecondary, fontSize: 14 }}>
           No hay pedidos Despachado con mensajero Motico en el rango seleccionado.
+        </div>
+      ) : shopifyConnected && rows.length === 0 ? (
+        <div style={{ color: ds.textSecondary, fontSize: 14 }}>
+          Ningún pedido coincide con la búsqueda. Prueba con otro texto o borra el filtro.
         </div>
       ) : shopifyConnected ? (
         <div>
@@ -844,6 +999,8 @@ export default function RelacionPagosMoticoPage() {
                 const nequiInputVal = pagosNequiDraft[ref] ?? String(nequiCommitted);
                 const rowBg = idx % 2 === 0 ? ds.bgCard : ds.bgSubtle;
                 const isSelected = selectedRefs.has(ref);
+                const fechaDisplay = formatFechaUltimoDespachado(o.last_despachado_at);
+                const orderSub = `${o.orderName || `#${o.id}`}${o.is_motico_manual ? ' · Manual' : ''}`;
                 return (
                   <tr
                     key={ref}
@@ -874,7 +1031,7 @@ export default function RelacionPagosMoticoPage() {
                         fontVariantNumeric: 'tabular-nums',
                       }}
                     >
-                      {formatFechaUltimoDespachado(o.last_despachado_at)}
+                      {highlightText(fechaDisplay, searchTerm)}
                     </td>
                     <td
                       style={{
@@ -885,7 +1042,9 @@ export default function RelacionPagosMoticoPage() {
                         verticalAlign: 'top',
                       }}
                     >
-                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{nombre}</div>
+                      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {highlightText(nombre, searchTerm)}
+                      </div>
                       <div
                         style={{
                           fontSize: 11,
@@ -896,8 +1055,7 @@ export default function RelacionPagosMoticoPage() {
                           whiteSpace: 'nowrap',
                         }}
                       >
-                        {o.orderName || `#${o.id}`}
-                        {o.is_motico_manual ? ' · Manual' : ''}
+                        {highlightText(orderSub, searchTerm)}
                       </div>
                     </td>
                     <td style={{ padding: '12px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
