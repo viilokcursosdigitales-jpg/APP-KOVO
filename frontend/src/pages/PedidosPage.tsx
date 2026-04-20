@@ -162,6 +162,8 @@ type ShopifyOrderRow = {
   /** True si el anticipo se guardó explícitamente desde KOVO (incluye 0). */
   anticipo_kovo_explicit?: boolean;
   is_motico_manual?: boolean;
+  product_cost?: number | null;
+  freight_cost?: number | null;
   product_cost_motico?: number | null;
   freight_cost_motico?: number | null;
 };
@@ -628,6 +630,8 @@ export default function PedidosPage() {
       pago_al_recibir_override?: number;
       anticipo_kovo_explicit?: boolean;
       is_motico_manual?: boolean;
+      product_cost?: number | null;
+      freight_cost?: number | null;
       product_cost_motico?: number | null;
       freight_cost_motico?: number | null;
     };
@@ -675,6 +679,10 @@ export default function PedidosPage() {
           : 0,
       anticipo_kovo_explicit: Boolean(ext.anticipo_kovo_explicit),
       is_motico_manual: Boolean(ext.is_motico_manual),
+      product_cost:
+        ext.product_cost != null && Number.isFinite(Number(ext.product_cost)) ? Number(ext.product_cost) : null,
+      freight_cost:
+        ext.freight_cost != null && Number.isFinite(Number(ext.freight_cost)) ? Number(ext.freight_cost) : null,
       product_cost_motico:
         ext.product_cost_motico != null && Number.isFinite(Number(ext.product_cost_motico))
           ? Number(ext.product_cost_motico)
@@ -2638,8 +2646,22 @@ export default function PedidosPage() {
                   <Th style={{ ...orderListTheadStickyCell, textAlign: 'right', whiteSpace: 'normal', maxWidth: 140 }}>
                     Pendiente de pago al recibir
                   </Th>
-                  {useLive ? <Th style={{ ...orderListTheadStickyCell, textAlign: 'right' }}>COSTO PRODUCTO</Th> : null}
-                  {useLive ? <Th style={{ ...orderListTheadStickyCell, textAlign: 'right' }}>COSTO FLETE</Th> : null}
+                  {useLive ? (
+                    <Th
+                      style={{ ...orderListTheadStickyCell, textAlign: 'right' }}
+                      title="Si el mensajero es Motico: costo producto Motico del Inventario. Si no: suma del precio manual de producto del Inventario por cantidad en líneas."
+                    >
+                      COSTO PRODUCTO
+                    </Th>
+                  ) : null}
+                  {useLive ? (
+                    <Th
+                      style={{ ...orderListTheadStickyCell, textAlign: 'right' }}
+                      title="Si el mensajero es Motico: flete Motico del Inventario (promedio por productos del pedido). Si no: flete manual del Inventario (mismo promedio)."
+                    >
+                      COSTO FLETE
+                    </Th>
+                  ) : null}
                   <Th style={orderListTheadStickyCell}>Cant.</Th>
                   <Th style={orderListTheadStickyCell}>Productos</Th>
                   <Th style={orderListTheadStickyCell}>Pago (Shopify)</Th>
@@ -2655,6 +2677,12 @@ export default function PedidosPage() {
                       const precioTotal = pedidosPrecioTotalNum(o);
                       const pagoAnticipado = pedidosPagoAnticipadoNum(o);
                       const pendienteRecibir = pedidosPendienteAlRecibirNum(precioTotal, pagoAnticipado);
+                      const mensajeroNorm = String(o.mensajero || '').trim().toLowerCase();
+                      const useMoticoCosts = mensajeroNorm === 'motico';
+                      const costoProductoBase =
+                        o.product_cost != null && Number.isFinite(Number(o.product_cost)) ? Number(o.product_cost) : null;
+                      const costoFleteBase =
+                        o.freight_cost != null && Number.isFinite(Number(o.freight_cost)) ? Number(o.freight_cost) : null;
                       const costoProductoMotico =
                         o.product_cost_motico != null && Number.isFinite(Number(o.product_cost_motico))
                           ? Number(o.product_cost_motico)
@@ -2663,6 +2691,26 @@ export default function PedidosPage() {
                         o.freight_cost_motico != null && Number.isFinite(Number(o.freight_cost_motico))
                           ? Number(o.freight_cost_motico)
                           : null;
+                      const costoProducto = useMoticoCosts ? (costoProductoMotico ?? costoProductoBase) : costoProductoBase;
+                      const costoFlete = useMoticoCosts ? (costoFleteMotico ?? costoFleteBase) : costoFleteBase;
+                      const costoProductoTitle = useMoticoCosts
+                        ? costoProductoMotico != null
+                          ? 'Costo producto Motico (Inventario: precio Motico × cantidad por línea).'
+                          : costoProductoBase != null
+                            ? 'Mensajero Motico: no hay costo producto Motico en Inventario; se muestra el costo normal de Inventario.'
+                            : 'Mensajero Motico: sin costo producto Motico ni costo normal configurado en Inventario para este pedido.'
+                        : costoProductoBase != null
+                          ? 'Costo producto según Inventario (precio manual × cantidad por línea).'
+                          : 'Sin costo de producto en Inventario para las líneas de este pedido.';
+                      const costoFleteTitle = useMoticoCosts
+                        ? costoFleteMotico != null
+                          ? 'Flete Motico (Inventario: promedio de fletes Motico de los productos del pedido).'
+                          : costoFleteBase != null
+                            ? 'Mensajero Motico: no hay flete Motico en Inventario; se muestra el flete manual de Inventario.'
+                            : 'Mensajero Motico: sin flete Motico ni flete manual en Inventario para este pedido.'
+                        : costoFleteBase != null
+                          ? 'Flete según Inventario (promedio de fletes manuales de los productos del pedido).'
+                          : 'Sin flete en Inventario para los productos de este pedido.';
                       return (
                         <tr key={o.id}>
                           <Td
@@ -2901,8 +2949,9 @@ export default function PedidosPage() {
                               fontVariantNumeric: 'tabular-nums',
                               color: ds.textSecondary,
                             }}
+                            title={costoProductoTitle}
                           >
-                            {costoProductoMotico != null ? formatMoneyAmount(costoProductoMotico, o.currency) : '—'}
+                            {costoProducto != null ? formatMoneyAmount(costoProducto, o.currency) : '—'}
                           </Td>
                           <Td
                             isLast={i === arr.length - 1}
@@ -2912,8 +2961,9 @@ export default function PedidosPage() {
                               fontVariantNumeric: 'tabular-nums',
                               color: ds.textSecondary,
                             }}
+                            title={costoFleteTitle}
                           >
-                            {costoFleteMotico != null ? formatMoneyAmount(costoFleteMotico, o.currency) : '—'}
+                            {costoFlete != null ? formatMoneyAmount(costoFlete, o.currency) : '—'}
                           </Td>
                           <Td isLast={i === arr.length - 1}>
                             <input

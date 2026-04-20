@@ -5780,7 +5780,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         orders = orders.filter((o) => Array.isArray(o.productIds) && o.productIds.includes(want));
       }
     }
-    if (mensajeroFilter === 'motico' && orders.length > 0) {
+    if (orders.length > 0) {
       const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap(orders);
       const pidCollector = collectOrderLineProductIdsForPricing(orders, lineTitleToProductIdMap);
       const uniqPids = [...new Set(pidCollector)];
@@ -5792,11 +5792,16 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
           if (!(pe && pe.code === '42P01')) throw pe;
         }
       }
-      orders = orders.map((o) => ({
-        ...o,
-        product_cost_motico: calculateOrderMoticoProductCost(o, pricingMap, lineTitleToProductIdMap),
-        freight_cost_motico: calculateOrderMoticoFreightCost(o, pricingMap, lineTitleToProductIdMap),
-      }));
+      orders = orders.map((o) => {
+        const costs = calculateOrderManualCosts(o, pricingMap, lineTitleToProductIdMap);
+        return {
+          ...o,
+          product_cost: costs.productCost,
+          freight_cost: costs.avgFreightCost,
+          product_cost_motico: calculateOrderMoticoProductCost(o, pricingMap, lineTitleToProductIdMap),
+          freight_cost_motico: calculateOrderMoticoFreightCost(o, pricingMap, lineTitleToProductIdMap),
+        };
+      });
     }
     orders.sort((a, b) => {
       const ta = Date.parse(String(a.createdAt)) || 0;
