@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { coerceOrderInternalEstadoForSelect } from '../constants/orderInternalEstado';
 import { ds } from '../design-system/ds';
+import { IconCart, IconPackage, IconTruck, IconTrendingUp } from '../design-system/icons';
+import { KpiCard } from '../design-system/KpiCard';
 import { PageHeader } from '../design-system/PageHeader';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
 
@@ -252,6 +254,55 @@ export default function RelacionPagosMoticoPage() {
 
   const defaultCurrency = useMemo(() => rows[0]?.currency || 'COP', [rows]);
 
+  const relacionPagosKpis = useMemo(() => {
+    let totalVentasDespachado = 0;
+    let totalPendienteRecibir = 0;
+    let totalNequi = 0;
+    let totalSaldo = 0;
+    let pagado = 0;
+    let pendientePago = 0;
+    let devolucion = 0;
+    let cancelado = 0;
+    const n = rows.length;
+    for (const o of rows) {
+      const ref = orderRef(o);
+      totalVentasDespachado += relacionPrecioTotal(o);
+      const pendiente = pendientePagoAlRecibir(o);
+      totalPendienteRecibir += pendiente;
+      const cProd = numOrZero(o.product_cost_motico);
+      const cFlete = numOrZero(o.freight_cost_motico);
+      const debeProveedor = pendiente - cProd - cFlete;
+      const nequiCommitted = pagosNequiByRef[ref] ?? 0;
+      const nequiAgg =
+        Object.prototype.hasOwnProperty.call(pagosNequiDraft, ref) && pagosNequiDraft[ref] !== undefined
+          ? parseNequiDraftInput(String(pagosNequiDraft[ref]))
+          : nequiCommitted;
+      totalNequi += nequiAgg;
+      totalSaldo += debeProveedor - nequiAgg;
+      const cur = estadoByRef[ref] || 'pendiente_pago';
+      if (cur === 'pagado') pagado += 1;
+      else if (cur === 'pendiente_pago') pendientePago += 1;
+      else if (cur === 'devolucion') devolucion += 1;
+      else if (cur === 'cancelado') cancelado += 1;
+    }
+    const pct = (c: number) => (n > 0 ? (c / n) * 100 : 0);
+    return {
+      n,
+      totalVentasDespachado,
+      totalPendienteRecibir,
+      totalNequi,
+      totalSaldo,
+      pagado,
+      pendientePago,
+      devolucion,
+      cancelado,
+      pctPagado: pct(pagado),
+      pctPendiente: pct(pendientePago),
+      pctDevolucion: pct(devolucion),
+      pctCancelado: pct(cancelado),
+    };
+  }, [rows, estadoByRef, pagosNequiByRef, pagosNequiDraft]);
+
   const onEstadoChange = useCallback(
     async (ref: string, next: MoticoRelacionPagoEstado) => {
       const prev = estadoByRef[ref] || 'pendiente_pago';
@@ -323,8 +374,13 @@ export default function RelacionPagosMoticoPage() {
     [savePagosNequi],
   );
 
+  const fmtPct = (p0to100: number) =>
+    new Intl.NumberFormat('es-CO', { style: 'percent', maximumFractionDigits: 1, minimumFractionDigits: 0 }).format(
+      p0to100 / 100,
+    );
+
   return (
-    <div style={{ padding: '20px 22px 40px', maxWidth: 1280, margin: '0 auto' }}>
+    <div style={{ padding: '20px 22px 40px', maxWidth: 1320, margin: '0 auto' }}>
       <PageHeader
         title="Relación de Pagos Motico"
         subtitle={
@@ -381,6 +437,116 @@ export default function RelacionPagosMoticoPage() {
           Ir a Pedidos
         </Link>
       </div>
+
+      {shopifyConnected && !loading ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 12, marginBottom: 18 }}>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(210px, 1fr))',
+              gap: 12,
+            }}
+          >
+            <KpiCard
+              variant="sales"
+              label="Total ventas despachado"
+              value={formatMoneyAmount(relacionPagosKpis.totalVentasDespachado, defaultCurrency)}
+              icon={<IconCart />}
+            />
+            <KpiCard
+              variant="traffic"
+              label="Total pendiente pago al recibir"
+              value={formatMoneyAmount(relacionPagosKpis.totalPendienteRecibir, defaultCurrency)}
+              icon={<IconPackage />}
+            />
+            <KpiCard
+              variant="conversion"
+              label="Total pagos por Nequi"
+              value={formatMoneyAmount(relacionPagosKpis.totalNequi, defaultCurrency)}
+              icon={<IconTruck />}
+            />
+            <KpiCard
+              variant="spend"
+              label="Total saldo"
+              value={
+                <span
+                  style={{
+                    color:
+                      relacionPagosKpis.totalSaldo > 0
+                        ? ds.successText
+                        : relacionPagosKpis.totalSaldo < 0
+                          ? ds.dangerText
+                          : ds.textPrimary,
+                  }}
+                >
+                  {formatMoneyAmount(relacionPagosKpis.totalSaldo, defaultCurrency)}
+                </span>
+              }
+              icon={<IconTrendingUp />}
+            />
+          </div>
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
+              gap: 12,
+            }}
+          >
+            <KpiCard
+              variant="sales"
+              label="Pedidos pagados (cobro Motico)"
+              value={relacionPagosKpis.pagado}
+              icon={<IconCart />}
+              badge={
+                <span style={{ fontSize: 12, fontWeight: 600, color: ds.textMuted }}>
+                  {fmtPct(relacionPagosKpis.pctPagado)}
+                </span>
+              }
+            />
+            <KpiCard
+              variant="traffic"
+              label="Pendientes de pago"
+              value={relacionPagosKpis.pendientePago}
+              icon={<IconCart />}
+              badge={
+                <span style={{ fontSize: 12, fontWeight: 600, color: ds.textMuted }}>
+                  {fmtPct(relacionPagosKpis.pctPendiente)}
+                </span>
+              }
+            />
+            <KpiCard
+              variant="alert"
+              label="Devolución"
+              value={relacionPagosKpis.devolucion}
+              icon={<IconPackage />}
+              badge={
+                <span style={{ fontSize: 12, fontWeight: 600, color: ds.textMuted }}>
+                  {fmtPct(relacionPagosKpis.pctDevolucion)}
+                </span>
+              }
+            />
+            <KpiCard
+              variant="conversion"
+              label="Cancelado"
+              value={relacionPagosKpis.cancelado}
+              icon={<IconTruck />}
+              badge={
+                <span style={{ fontSize: 12, fontWeight: 600, color: ds.textMuted }}>
+                  {fmtPct(relacionPagosKpis.pctCancelado)}
+                </span>
+              }
+            />
+          </div>
+          {relacionPagosKpis.n > 0 ? (
+            <div style={{ fontSize: 12, color: ds.textMuted, fontWeight: 500 }}>
+              Total pedidos en relación:{' '}
+              <strong style={{ color: ds.textSecondary }}>{relacionPagosKpis.n}</strong>
+              {' · '}
+              Los porcentajes son sobre esta cantidad (columna Estado).
+            </div>
+          ) : null}
+        </div>
+      ) : null}
 
       {error ? (
         <div
