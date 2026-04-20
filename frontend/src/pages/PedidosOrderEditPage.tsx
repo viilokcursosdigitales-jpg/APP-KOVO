@@ -2,7 +2,6 @@ import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'r
 import { useNavigate, useParams } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
-import { PageHeader } from '../design-system/PageHeader';
 import { labelStyle } from './authStyles';
 
 type ShippingAddress = {
@@ -62,9 +61,11 @@ type EditDraft = {
   phone: string;
   price: string;
   anticipo: string;
-  quantity: string;
-  product_id: string;
-  variant_id: string;
+  line_items: Array<{
+    product_id: string;
+    variant_id: string;
+    quantity: string;
+  }>;
 };
 
 type OrderAuditLog = {
@@ -120,9 +121,7 @@ function emptyDraft(): EditDraft {
     phone: '',
     price: '',
     anticipo: '0',
-    quantity: '1',
-    product_id: '',
-    variant_id: '',
+    line_items: [{ product_id: '', variant_id: '', quantity: '1' }],
   };
 }
 
@@ -210,6 +209,9 @@ export default function PedidosOrderEditPage() {
   const navigate = useNavigate();
   const params = useParams();
   const orderId = Number(params.orderId);
+  const closeToPedidos = useCallback(() => {
+    navigate('/pedidos', { replace: true });
+  }, [navigate]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState('');
@@ -220,26 +222,75 @@ export default function PedidosOrderEditPage() {
   const [draft, setDraft] = useState<EditDraft>(() => emptyDraft());
   const [configuredCurrency, setConfiguredCurrency] = useState('COP');
 
-  const selectedProduct = useMemo(() => {
-    const pid = Number(draft.product_id);
-    if (!Number.isFinite(pid) || pid <= 0) return null;
-    return products.find((p) => p.id === pid) || null;
-  }, [draft.product_id, products]);
-
   const locked = useMemo(() => {
     const st = String(order?.internal_status || '').trim().toLowerCase();
     return LOCKED_STATUSES.has(st);
   }, [order?.internal_status]);
 
+  const buildFallbackLine = useCallback(() => {
+    const p = products[0] || null;
+    return {
+      product_id: p ? String(p.id) : '',
+      variant_id: p?.variants?.[0] ? String(p.variants[0].id) : '',
+      quantity: '1',
+    };
+  }, [products]);
+
   useEffect(() => {
-    if (!selectedProduct) return;
-    const currentVariant = Number(draft.variant_id);
-    const hasCurrent = selectedProduct.variants.some((v) => v.id === currentVariant);
-    if (!hasCurrent) {
-      const fallback = selectedProduct.variants[0];
-      setDraft((prev) => ({ ...prev, variant_id: fallback ? String(fallback.id) : '' }));
-    }
-  }, [selectedProduct, draft.variant_id]);
+    setDraft((prev) => {
+      const nextLines = prev.line_items.map((line) => {
+        const pid = Number(line.product_id);
+        if (!Number.isFinite(pid) || pid <= 0) return line;
+        const p = products.find((x) => x.id === pid);
+        if (!p) return line;
+        const hasVariant = p.variants.some((v) => String(v.id) === String(line.variant_id));
+        if (hasVariant) return line;
+        const first = p.variants[0];
+        return { ...line, variant_id: first ? String(first.id) : '' };
+      });
+      if (nextLines.length === 0) nextLines.push(buildFallbackLine());
+      const changed =
+        nextLines.length !== prev.line_items.length ||
+        nextLines.some((li, i) => li !== prev.line_items[i]);
+      return changed ? { ...prev, line_items: nextLines } : prev;
+    });
+  }, [products, buildFallbackLine]);
+
+  const updateLine = useCallback(
+    (idx: number, patch: Partial<EditDraft['line_items'][number]>) => {
+      setDraft((prev) => ({
+        ...prev,
+        line_items: prev.line_items.map((li, i) => (i === idx ? { ...li, ...patch } : li)),
+      }));
+    },
+    [],
+  );
+
+  const onLineProductChange = useCallback(
+    (idx: number, productId: string) => {
+      const pid = Number(productId);
+      const p = Number.isFinite(pid) && pid > 0 ? products.find((x) => x.id === pid) : null;
+      updateLine(idx, {
+        product_id: productId,
+        variant_id: p?.variants?.[0] ? String(p.variants[0].id) : '',
+      });
+    },
+    [products, updateLine],
+  );
+
+  const addLine = useCallback(() => {
+    setDraft((prev) => ({ ...prev, line_items: [...prev.line_items, buildFallbackLine()] }));
+  }, [buildFallbackLine]);
+
+  const removeLine = useCallback(
+    (idx: number) => {
+      setDraft((prev) => {
+        const next = prev.line_items.filter((_, i) => i !== idx);
+        return { ...prev, line_items: next.length ? next : [buildFallbackLine()] };
+      });
+    },
+    [buildFallbackLine],
+  );
 
   const loadData = useCallback(async () => {
     if (!Number.isFinite(orderId) || orderId <= 0) {
@@ -286,18 +337,39 @@ export default function PedidosOrderEditPage() {
       setOrder(loadedOrder);
       setProducts(list);
 
-      const firstLine = Array.isArray(loadedOrder.lineItemsDetail) && loadedOrder.lineItemsDetail.length
-        ? loadedOrder.lineItemsDetail[0]
-        : null;
-      const firstProductId =
-        firstLine?.product_id != null && Number.isFinite(Number(firstLine.product_id))
-          ? Number(firstLine.product_id)
-          : list[0]?.id || 0;
-      const product = list.find((p) => p.id === firstProductId) || list[0] || null;
-      const firstVariantId =
-        firstLine?.variant_id != null && Number.isFinite(Number(firstLine.variant_id))
-          ? Number(firstLine.variant_id)
-          : product?.variants[0]?.id || 0;
+      const linesFromOrder =
+        Array.isArray(loadedOrder.lineItemsDetail) && loadedOrder.lineItemsDetail.length
+          ? loadedOrder.lineItemsDetail
+              .map((li) => {
+                const pid = li?.product_id != null ? Number(li.product_id) : NaN;
+                if (!Number.isFinite(pid) || pid <= 0) return null;
+                const p = list.find((x) => x.id === pid);
+                if (!p) return null;
+                const rawVid = li?.variant_id != null ? Number(li.variant_id) : NaN;
+                const vid =
+                  Number.isFinite(rawVid) && p.variants.some((v) => v.id === rawVid)
+                    ? rawVid
+                    : p.variants?.[0]?.id;
+                const q = Number(li?.quantity);
+                return {
+                  product_id: String(pid),
+                  variant_id: vid ? String(vid) : '',
+                  quantity: Number.isFinite(q) && q > 0 ? String(q) : '1',
+                };
+              })
+              .filter(Boolean)
+          : [];
+      const fallbackProduct = list[0] || null;
+      const fallbackLine = {
+        product_id: fallbackProduct ? String(fallbackProduct.id) : '',
+        variant_id: fallbackProduct?.variants?.[0] ? String(fallbackProduct.variants[0].id) : '',
+        quantity: String(
+          loadedOrder.quantity_override ??
+            loadedOrder.shopifyQuantity ??
+            loadedOrder.defaultQuantity ??
+            1,
+        ),
+      };
       const sa = loadedOrder.shippingAddress || {};
       setDraft({
         province: String(sa.province || ''),
@@ -308,15 +380,7 @@ export default function PedidosOrderEditPage() {
         phone: String(sa.phone || ''),
         price: String(loadedOrder.price_override ?? loadedOrder.shopifyTotal ?? loadedOrder.total ?? ''),
         anticipo: String(initialAnticipoDraftAmount(loadedOrder)),
-        quantity: String(
-          loadedOrder.quantity_override ??
-            firstLine?.quantity ??
-            loadedOrder.shopifyQuantity ??
-            loadedOrder.defaultQuantity ??
-            1,
-        ),
-        product_id: firstProductId > 0 ? String(firstProductId) : '',
-        variant_id: firstVariantId > 0 ? String(firstVariantId) : '',
+        line_items: linesFromOrder.length ? linesFromOrder : [fallbackLine],
       });
     } catch {
       setError('Error de red al cargar el pedido');
@@ -329,17 +393,25 @@ export default function PedidosOrderEditPage() {
     void loadData();
   }, [loadData]);
 
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') closeToPedidos();
+    };
+    window.addEventListener('keydown', onKey);
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      document.body.style.overflow = prevOverflow;
+    };
+  }, [closeToPedidos]);
+
   const save = useCallback(async () => {
     if (!order || locked) return;
     setSaving(true);
     setError('');
     setSuccess('');
     try {
-      const qty = parseInt(draft.quantity, 10);
-      if (!Number.isFinite(qty) || qty < 1) {
-        setError('La cantidad debe ser al menos 1');
-        return;
-      }
       const price = Number.parseFloat(String(draft.price).replace(',', '.'));
       if (!Number.isFinite(price) || price < 0) {
         setError('Precio no válido');
@@ -354,20 +426,46 @@ export default function PedidosOrderEditPage() {
         setError('El pago anticipado no puede ser mayor al precio total');
         return;
       }
-      const variantId = Number(draft.variant_id);
-      if (!Number.isFinite(variantId) || variantId <= 0) {
-        setError('Selecciona una variante válida');
+      if (!Array.isArray(draft.line_items) || draft.line_items.length === 0) {
+        setError('Agrega al menos un producto');
         return;
       }
-      const productId = Number(draft.product_id);
-      if (!Number.isFinite(productId) || productId <= 0) {
-        setError('Selecciona un producto');
+      const parsedLines = draft.line_items
+        .map((line) => {
+          const productId = Number(line.product_id);
+          if (!Number.isFinite(productId) || productId <= 0) return null;
+          const product = products.find((p) => p.id === productId);
+          if (!product) return null;
+          const variant = product.variants.find((v) => String(v.id) === String(line.variant_id));
+          if (!variant) return null;
+          const qty = parseInt(String(line.quantity), 10);
+          if (!Number.isFinite(qty) || qty < 1) return null;
+          return {
+            product_id: productId,
+            variant_id: Number(variant.id),
+            title: product.title.trim() || 'Producto',
+            variant_title: String(variant.title || '').trim(),
+            sku: '',
+            barcode: '',
+            quantity: qty,
+          };
+        })
+        .filter(Boolean) as Array<{
+        product_id: number;
+        variant_id: number;
+        title: string;
+        variant_title: string;
+        sku: string;
+        barcode: string;
+        quantity: number;
+      }>;
+      if (parsedLines.length !== draft.line_items.length) {
+        setError('Revisa producto, variante y cantidad en todas las líneas');
         return;
       }
-      const selectedProduct = products.find((p) => p.id === productId);
-      const selectedVariant = selectedProduct?.variants.find((v) => String(v.id) === String(draft.variant_id));
-      if (!selectedProduct || !selectedVariant) {
-        setError('Producto o variante no válidos');
+      const qty = parsedLines.reduce((sum, li) => sum + li.quantity, 0);
+      if (!Number.isFinite(qty) || qty < 1) {
+        setError('La cantidad total debe ser al menos 1');
         return;
       }
       const resAddr = await apiFetch(`/api/shopify/orders/${order.id}/shipping-address`, {
@@ -396,17 +494,7 @@ export default function PedidosOrderEditPage() {
           pago_al_recibir_override: anticipo,
           total_a_pagar_override: Math.max(0, price - anticipo),
           sync_to_shopify: false,
-          line_items: [
-            {
-              product_id: productId,
-              variant_id: variantId,
-              title: selectedProduct.title.trim() || 'Producto',
-              variant_title: String(selectedVariant.title || '').trim(),
-              sku: '',
-              barcode: '',
-              quantity: qty,
-            },
-          ],
+          line_items: parsedLines,
         }),
       });
       const dataLocal = (await resLocal.json().catch(() => ({}))) as { error?: string };
@@ -414,7 +502,7 @@ export default function PedidosOrderEditPage() {
         setError(typeof dataLocal.error === 'string' ? dataLocal.error : 'No se pudo guardar el pedido');
         return;
       }
-      navigate('/pedidos');
+      navigate('/pedidos', { replace: true });
     } finally {
       setSaving(false);
     }
@@ -426,77 +514,156 @@ export default function PedidosOrderEditPage() {
   const anticipoExceedsPrice = livePrice != null && liveAnticipo != null && liveAnticipo > livePrice;
 
   return (
-    <>
-      <PageHeader
-        title="Editar pedido (origen Shopify)"
-        subtitle="Los cambios se guardan solo en KOVO (dirección, precio, anticipo, producto y cantidad); no se modifica el pedido en Shopify."
-        right={
+    <div
+      role="presentation"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 300,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 12,
+        boxSizing: 'border-box',
+      }}
+    >
+      <button
+        type="button"
+        aria-label="Cerrar edición y volver a Pedidos"
+        onClick={closeToPedidos}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          border: 'none',
+          margin: 0,
+          padding: 0,
+          background: 'rgba(0,0,0,0.42)',
+          cursor: 'pointer',
+        }}
+      />
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="pedidos-order-edit-title"
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          position: 'relative',
+          zIndex: 1,
+          width: '100%',
+          maxWidth: 440,
+          maxHeight: 'min(88vh, 680px)',
+          display: 'flex',
+          flexDirection: 'column',
+          background: ds.bgCard,
+          borderRadius: 12,
+          border: `1px solid ${ds.borderCard}`,
+          boxShadow: '0 16px 48px rgba(0,0,0,0.22)',
+          overflow: 'hidden',
+        }}
+      >
+        <div
+          style={{
+            flexShrink: 0,
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: 10,
+            padding: '12px 14px',
+            borderBottom: `1px solid ${ds.borderCard}`,
+            background: ds.bgSubtle,
+          }}
+        >
+          <div style={{ minWidth: 0 }}>
+            <h1
+              id="pedidos-order-edit-title"
+              style={{
+                margin: 0,
+                fontSize: 15,
+                fontWeight: 700,
+                color: ds.textPrimary,
+                lineHeight: 1.25,
+              }}
+            >
+              Editar pedido
+            </h1>
+            <p style={{ margin: '4px 0 0', fontSize: 11, color: ds.textSecondary, lineHeight: 1.35 }}>
+              Cambios solo en KOVO; no se modifica Shopify.
+            </p>
+          </div>
           <button
             type="button"
-            onClick={() => navigate('/pedidos')}
+            onClick={closeToPedidos}
             style={{
-              padding: '8px 12px',
+              flexShrink: 0,
+              width: 32,
+              height: 32,
               borderRadius: 8,
               border: `1px solid ${ds.borderCard}`,
               background: ds.bgCard,
               color: ds.textSecondary,
-              fontSize: 12,
-              fontWeight: 600,
+              fontSize: 18,
+              lineHeight: 1,
               cursor: 'pointer',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
+            aria-label="Cerrar"
           >
-            Cancelar
+            ×
           </button>
-        }
-      />
-      {loading ? (
-        <div style={{ color: ds.textMuted, fontSize: 13 }}>Cargando pedido…</div>
-      ) : null}
-      {error ? (
-        <div
-          style={{
-            marginBottom: 12,
-            padding: '10px 14px',
-            borderRadius: 10,
-            background: ds.dangerBg,
-            color: ds.dangerText,
-            fontSize: 13,
-          }}
-        >
-          {error}
         </div>
-      ) : null}
-      {success ? (
         <div
           style={{
-            marginBottom: 12,
-            padding: '10px 14px',
-            borderRadius: 10,
-            border: `1px solid ${ds.borderCard}`,
-            background: ds.successBg,
-            color: ds.successText,
-            fontSize: 13,
+            flex: 1,
+            minHeight: 0,
+            overflow: 'auto',
+            padding: '12px 14px 14px',
+            WebkitOverflowScrolling: 'touch',
           }}
         >
-          {success}
-        </div>
-      ) : null}
-      {order ? (
-        <div
-          style={{
-            background: ds.bgCard,
-            borderRadius: 14,
-            border: `1px solid ${ds.borderCard}`,
-            padding: 18,
-            maxWidth: 680,
-          }}
-        >
-          <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textSecondary }}>
-            Pedido: <strong>{order.orderName}</strong>{' '}
-            {locked ? <span style={{ color: ds.dangerText }}>· Bloqueado por estado {order.internal_status}</span> : null}
+          {loading ? (
+            <div style={{ color: ds.textMuted, fontSize: 12, padding: '8px 0' }}>Cargando pedido…</div>
+          ) : null}
+          {error ? (
+            <div
+              style={{
+                marginBottom: 10,
+                padding: '8px 10px',
+                borderRadius: 8,
+                background: ds.dangerBg,
+                color: ds.dangerText,
+                fontSize: 12,
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
+          {success ? (
+            <div
+              style={{
+                marginBottom: 10,
+                padding: '8px 10px',
+                borderRadius: 8,
+                border: `1px solid ${ds.borderCard}`,
+                background: ds.successBg,
+                color: ds.successText,
+                fontSize: 12,
+              }}
+            >
+              {success}
+            </div>
+          ) : null}
+          {order ? (
+            <div>
+          <p style={{ margin: '0 0 10px', fontSize: 11, color: ds.textSecondary }}>
+            <strong style={{ color: ds.textPrimary }}>{order.orderName}</strong>
+            {locked ? (
+              <span style={{ color: ds.dangerText }}> · Bloqueado ({order.internal_status})</span>
+            ) : null}
           </p>
 
-          <p style={{ margin: '0 0 10px', fontSize: 11, fontWeight: 700, color: ds.textSecondary, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
+          <p style={{ margin: '0 0 6px', fontSize: 10, fontWeight: 700, color: ds.textSecondary, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
             Dirección de envío
           </p>
           <label style={{ ...labelStyle, display: 'block' }}>
@@ -509,7 +676,7 @@ export default function PedidosOrderEditPage() {
               disabled={locked || saving}
             />
           </label>
-          <label style={{ ...labelStyle, display: 'block', marginTop: 12 }}>
+          <label style={{ ...labelStyle, display: 'block', marginTop: 8 }}>
             Ciudad
             <input
               type="text"
@@ -519,7 +686,7 @@ export default function PedidosOrderEditPage() {
               disabled={locked || saving}
             />
           </label>
-          <label style={{ ...labelStyle, display: 'block', marginTop: 12 }}>
+          <label style={{ ...labelStyle, display: 'block', marginTop: 8 }}>
             Dirección (línea 1)
             <input
               type="text"
@@ -529,7 +696,7 @@ export default function PedidosOrderEditPage() {
               disabled={locked || saving}
             />
           </label>
-          <label style={{ ...labelStyle, display: 'block', marginTop: 12 }}>
+          <label style={{ ...labelStyle, display: 'block', marginTop: 8 }}>
             Dirección (línea 2)
             <input
               type="text"
@@ -539,7 +706,7 @@ export default function PedidosOrderEditPage() {
               disabled={locked || saving}
             />
           </label>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginTop: 12 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
             <label style={{ ...labelStyle, display: 'block' }}>
               País
               <input
@@ -562,55 +729,117 @@ export default function PedidosOrderEditPage() {
             </label>
           </div>
 
-          <p style={{ margin: '18px 0 10px', fontSize: 11, fontWeight: 700, color: ds.textSecondary, textTransform: 'uppercase', letterSpacing: '0.4px' }}>
-            Producto y precio
+          <p
+            style={{
+              margin: '12px 0 6px',
+              fontSize: 10,
+              fontWeight: 700,
+              color: ds.textSecondary,
+              textTransform: 'uppercase',
+              letterSpacing: '0.4px',
+            }}
+          >
+            Productos y variantes
           </p>
-          <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12 }}>
-            <label style={{ ...labelStyle, display: 'block' }}>
-              Producto
-              <select
-                value={draft.product_id}
-                onChange={(e) => setDraft((d) => ({ ...d, product_id: e.target.value }))}
-                style={fieldStyle}
-                disabled={locked || saving}
-              >
-                <option value="">Selecciona producto</option>
-                {products.map((p) => (
-                  <option key={p.id} value={String(p.id)}>
-                    {p.title}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label style={{ ...labelStyle, display: 'block' }}>
-              Variante
-              <select
-                value={draft.variant_id}
-                onChange={(e) => setDraft((d) => ({ ...d, variant_id: e.target.value }))}
-                style={fieldStyle}
-                disabled={locked || saving || !selectedProduct}
-              >
-                <option value="">{selectedProduct ? 'Selecciona variante' : 'Sin variantes'}</option>
-                {(selectedProduct?.variants || []).map((v) => (
-                  <option key={v.id} value={String(v.id)}>
-                    {v.title}
-                  </option>
-                ))}
-              </select>
-            </label>
+          <div style={{ display: 'grid', gap: 8 }}>
+            {draft.line_items.map((line, idx) => {
+              const pid = Number(line.product_id);
+              const selected = Number.isFinite(pid) && pid > 0 ? products.find((p) => p.id === pid) || null : null;
+              return (
+                <div
+                  key={`line-${idx}`}
+                  style={{
+                    border: `1px solid ${ds.borderCard}`,
+                    borderRadius: 8,
+                    padding: 8,
+                    background: ds.bgSubtle,
+                  }}
+                >
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 8 }}>
+                    <label style={{ ...labelStyle, display: 'block' }}>
+                      Producto
+                      <select
+                        value={line.product_id}
+                        onChange={(e) => onLineProductChange(idx, e.target.value)}
+                        style={fieldStyle}
+                        disabled={locked || saving}
+                      >
+                        <option value="">Selecciona producto</option>
+                        {products.map((p) => (
+                          <option key={p.id} value={String(p.id)}>
+                            {p.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                    <label style={{ ...labelStyle, display: 'block' }}>
+                      Variante
+                      <select
+                        value={line.variant_id}
+                        onChange={(e) => updateLine(idx, { variant_id: e.target.value })}
+                        style={fieldStyle}
+                        disabled={locked || saving || !selected}
+                      >
+                        <option value="">{selected ? 'Selecciona variante' : 'Sin variantes'}</option>
+                        {(selected?.variants || []).map((v) => (
+                          <option key={v.id} value={String(v.id)}>
+                            {v.title}
+                          </option>
+                        ))}
+                      </select>
+                    </label>
+                  </div>
+                  <div style={{ display: 'flex', gap: 8, marginTop: 8, alignItems: 'end' }}>
+                    <label style={{ ...labelStyle, display: 'block', flex: '0 0 120px' }}>
+                      Cantidad
+                      <input
+                        type="text"
+                        inputMode="numeric"
+                        value={line.quantity}
+                        onChange={(e) => updateLine(idx, { quantity: e.target.value })}
+                        style={fieldStyle}
+                        disabled={locked || saving}
+                      />
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => removeLine(idx)}
+                      disabled={locked || saving || draft.line_items.length <= 1}
+                      style={{
+                        padding: '7px 10px',
+                        borderRadius: 8,
+                        border: `1px solid ${ds.borderCard}`,
+                        background: ds.bgCard,
+                        color: ds.textSecondary,
+                        fontSize: 12,
+                        cursor: locked || saving || draft.line_items.length <= 1 ? 'not-allowed' : 'pointer',
+                      }}
+                    >
+                      Quitar
+                    </button>
+                  </div>
+                </div>
+              );
+            })}
+            <button
+              type="button"
+              onClick={addLine}
+              disabled={locked || saving}
+              style={{
+                padding: '7px 10px',
+                borderRadius: 8,
+                border: `1px dashed ${ds.borderCard}`,
+                background: ds.bgCard,
+                color: ds.textSecondary,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: locked || saving ? 'not-allowed' : 'pointer',
+              }}
+            >
+              + Agregar producto
+            </button>
           </div>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 12, marginTop: 12 }}>
-            <label style={{ ...labelStyle, display: 'block' }}>
-              Cantidad
-              <input
-                type="text"
-                inputMode="numeric"
-                value={draft.quantity}
-                onChange={(e) => setDraft((d) => ({ ...d, quantity: e.target.value }))}
-                style={fieldStyle}
-                disabled={locked || saving}
-              />
-            </label>
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
             <label style={{ ...labelStyle, display: 'block' }}>
               Precio total
               <input
@@ -640,8 +869,8 @@ export default function PedidosOrderEditPage() {
               al recibir en el listado).
             </p>
           ) : null}
-          <div style={{ marginTop: 8 }}>
-            <p style={{ margin: 0, fontSize: 12, color: ds.textSecondary }}>
+          <div style={{ marginTop: 6 }}>
+            <p style={{ margin: 0, fontSize: 11, color: ds.textSecondary }}>
               Pendiente por cobrar:{' '}
               <strong style={{ color: ds.textPrimary }}>
                 {livePending != null ? formatMoneyAmount(livePending, configuredCurrency) : '—'}
@@ -654,48 +883,50 @@ export default function PedidosOrderEditPage() {
             ) : null}
           </div>
 
-          <div style={{ display: 'flex', gap: 10, marginTop: 20 }}>
+          <div style={{ display: 'flex', gap: 8, marginTop: 14, flexWrap: 'wrap' }}>
             <button
               type="button"
-              onClick={() => navigate('/pedidos')}
+              onClick={closeToPedidos}
               disabled={saving}
               style={{
-                padding: '8px 16px',
+                padding: '7px 12px',
                 borderRadius: 8,
                 border: `1px solid ${ds.borderCard}`,
                 background: ds.bgCard,
                 color: ds.textSecondary,
+                fontSize: 12,
                 fontWeight: 600,
                 cursor: saving ? 'not-allowed' : 'pointer',
                 opacity: saving ? 0.8 : 1,
               }}
             >
-              Cancelar
+              Cerrar
             </button>
             <button
               type="button"
               onClick={() => void save()}
               disabled={locked || saving}
               style={{
-                padding: '8px 16px',
+                padding: '7px 12px',
                 borderRadius: 8,
                 border: `1px solid ${ds.brand}`,
                 background: ds.brandBg,
                 color: ds.brand,
+                fontSize: 12,
                 fontWeight: 600,
                 cursor: locked || saving ? 'not-allowed' : 'pointer',
                 opacity: locked || saving ? 0.8 : 1,
               }}
             >
-              {saving ? 'Guardando…' : 'Guardar cambios'}
+              {saving ? 'Guardando…' : 'Guardar'}
             </button>
           </div>
 
-          <div style={{ marginTop: 24 }}>
+          <div style={{ marginTop: 14 }}>
             <p
               style={{
-                margin: '0 0 10px',
-                fontSize: 11,
+                margin: '0 0 6px',
+                fontSize: 10,
                 fontWeight: 700,
                 color: ds.textSecondary,
                 textTransform: 'uppercase',
@@ -707,28 +938,29 @@ export default function PedidosOrderEditPage() {
             <div
               style={{
                 border: `1px solid ${ds.borderCard}`,
-                borderRadius: 10,
+                borderRadius: 8,
                 background: ds.bgSubtle,
-                overflow: 'hidden',
+                maxHeight: 140,
+                overflow: 'auto',
               }}
             >
               {auditLogs.length === 0 ? (
-                <p style={{ margin: 0, padding: '10px 12px', fontSize: 12, color: ds.textMuted }}>
+                <p style={{ margin: 0, padding: '8px 10px', fontSize: 11, color: ds.textMuted }}>
                   Aún no hay registros para este pedido.
                 </p>
               ) : (
-                auditLogs.slice(0, 12).map((log) => (
+                auditLogs.slice(0, 12).map((log, idx) => (
                   <div
                     key={log.id}
                     style={{
-                      padding: '9px 12px',
-                      borderTop: `1px solid ${ds.borderCard}`,
+                      padding: '7px 10px',
+                      borderTop: idx === 0 ? undefined : `1px solid ${ds.borderCard}`,
                     }}
                   >
-                    <div style={{ fontSize: 12, color: ds.textPrimary, fontWeight: 600 }}>
+                    <div style={{ fontSize: 11, color: ds.textPrimary, fontWeight: 600 }}>
                       {formatAuditAction(log.action)}
                     </div>
-                    <div style={{ marginTop: 2, fontSize: 11, color: ds.textSecondary }}>
+                    <div style={{ marginTop: 2, fontSize: 10, color: ds.textSecondary }}>
                       {formatAuditDate(log.created_at)} · {log.user_name || log.user_email || 'Usuario'}
                       {log.user_role ? ` (${log.user_role})` : ''}
                     </div>
@@ -737,9 +969,11 @@ export default function PedidosOrderEditPage() {
               )}
             </div>
           </div>
+            </div>
+          ) : null}
         </div>
-      ) : null}
-    </>
+      </div>
+    </div>
   );
 }
 
@@ -747,11 +981,11 @@ const fieldStyle: CSSProperties = {
   width: '100%',
   maxWidth: '100%',
   boxSizing: 'border-box',
-  padding: '8px 10px',
-  borderRadius: 8,
+  padding: '6px 8px',
+  borderRadius: 7,
   border: `1px solid ${ds.borderCard}`,
   background: ds.bgCard,
   color: ds.textPrimary,
-  fontSize: 13,
-  marginTop: 8,
+  fontSize: 12,
+  marginTop: 6,
 };
