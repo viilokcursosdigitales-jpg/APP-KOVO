@@ -1,4 +1,4 @@
-import { Suspense, lazy } from 'react';
+import { Component, Suspense, lazy, type ErrorInfo, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AdminRoute } from './auth/AdminRoute';
 import { ModuleGuard } from './auth/ModuleGuard';
@@ -32,6 +32,36 @@ const Register = lazy(() => import('./pages/Register'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Settings = lazy(() => import('./pages/Settings'));
 
+class RouteErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: unknown, errorInfo: ErrorInfo) {
+    console.error('[route-error-boundary]', error, errorInfo);
+  }
+
+  render() {
+    if (!this.state.hasError) return this.props.children;
+    return (
+      <div style={{ maxWidth: 640, margin: '40px auto', padding: 16 }}>
+        <h2 style={{ margin: '0 0 8px' }}>No se pudo abrir el editor del pedido</h2>
+        <p style={{ margin: '0 0 12px', color: '#475569' }}>
+          Ocurrió un error inesperado en esta vista. Puedes volver a Pedidos e intentar de nuevo.
+        </p>
+        <a href="/pedidos" style={{ color: '#2563eb', fontWeight: 600 }}>
+          Volver a Pedidos
+        </a>
+      </div>
+    );
+  }
+}
+
 export default function App() {
   return (
     <Suspense fallback={<div style={{ padding: 20 }}>Cargando…</div>}>
@@ -51,7 +81,14 @@ export default function App() {
               <Route path="/analisis-producto" element={<AnalisisProductoPage />} />
               <Route path="/pedidos" element={<PedidosPage />} />
               <Route path="/relacion-pagos-motico" element={<RelacionPagosMoticoPage />} />
-              <Route path="/pedidos/editar/:orderId" element={<PedidosOrderEditPage />} />
+              <Route
+                path="/pedidos/editar/:orderId"
+                element={
+                  <RouteErrorBoundary>
+                    <PedidosOrderEditPage />
+                  </RouteErrorBoundary>
+                }
+              />
               <Route path="/pedidos/orden-manual" element={<MoticoPage />} />
               <Route path="/inventario" element={<InventarioPage />} />
               <Route path="/meta-ads" element={<MetaAdsPage />} />
