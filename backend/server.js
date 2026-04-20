@@ -8209,6 +8209,11 @@ app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, r
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
     const lim = Math.min(250, Math.max(1, parseInt(String(req.query.limit || '50'), 10) || 50));
+    const wantAllVariants = ['1', 'true', 'yes', 'on'].includes(
+      String(req.query.all_variants || '')
+        .trim()
+        .toLowerCase(),
+    );
     const r = await shopifyRequest(row.shop_domain, row.access_token, `products.json?limit=${lim}`);
     if (!r.ok) {
       return res.status(r.status >= 400 ? r.status : 502).json({ error: r.error, data: r.data });
@@ -8241,7 +8246,40 @@ app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, r
       }
     }
     const payload = r.data && typeof r.data === 'object' ? { ...r.data } : { products: [] };
-    const products = Array.isArray(payload.products) ? payload.products : [];
+    let products = Array.isArray(payload.products) ? payload.products : [];
+    if (wantAllVariants && products.length > 0) {
+      const fetchAllVariantsForProduct = async (productId) => {
+        const all = [];
+        let sinceId = null;
+        const MAX_PAGES = 60;
+        for (let page = 0; page < MAX_PAGES; page += 1) {
+          const qs = sinceId != null ? `?limit=250&since_id=${sinceId}` : '?limit=250';
+          const vr = await shopifyRequest(row.shop_domain, row.access_token, `products/${productId}/variants.json${qs}`);
+          if (!vr.ok) {
+            const st = Number(vr.status) >= 400 ? Number(vr.status) : 502;
+            throw new Error(`No se pudieron cargar variantes (${st}) para producto ${productId}`);
+          }
+          const chunk = Array.isArray(vr.data?.variants) ? vr.data.variants : [];
+          all.push(...chunk);
+          if (chunk.length < 250) break;
+          const lastId = Number(chunk[chunk.length - 1]?.id);
+          if (!Number.isFinite(lastId) || lastId <= 0) break;
+          sinceId = lastId;
+        }
+        return all;
+      };
+      products = await Promise.all(
+        products.map(async (product) => {
+          const pid = Number(product?.id);
+          if (!Number.isFinite(pid) || pid <= 0) return product;
+          const fullVariants = await fetchAllVariantsForProduct(pid);
+          return {
+            ...product,
+            variants: fullVariants,
+          };
+        }),
+      );
+    }
     payload.products = products.map((product) => {
       if (!product || typeof product !== 'object') return product;
       const productId = Number(product.id);

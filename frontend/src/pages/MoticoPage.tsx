@@ -1061,7 +1061,7 @@ export default function MoticoPage() {
 
         const ordRes = await apiFetch(`/api/shopify/orders?${qs.toString()}`);
         if (products.length === 0) {
-          const prodRes = await apiFetch('/api/shopify/products?limit=250');
+          const prodRes = await apiFetch('/api/shopify/products?limit=250&all_variants=1');
           if (prodRes.ok) {
             const pdata = (await prodRes.json().catch(() => ({}))) as { products?: unknown[] };
             setProducts(normalizeShopifyProducts(pdata));
@@ -4291,3 +4291,4 @@ export default function MoticoPage() {
     </>
   );
 }
+

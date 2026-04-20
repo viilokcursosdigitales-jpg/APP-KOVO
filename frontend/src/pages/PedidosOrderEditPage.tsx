@@ -304,7 +304,7 @@ export default function PedidosOrderEditPage() {
     try {
       const [orderRes, productsRes, settingsRes, auditRes] = await Promise.all([
         apiFetch(`/api/shopify/orders/${orderId}`),
-        apiFetch('/api/shopify/products?limit=250'),
+        apiFetch('/api/shopify/products?limit=250&all_variants=1'),
         apiFetch('/api/motico/settings'),
         apiFetch(`/api/shopify/orders/${orderId}/audit-log`),
       ]);
@@ -989,3 +989,4 @@ const fieldStyle: CSSProperties = {
   fontSize: 12,
   marginTop: 6,
 };
+
