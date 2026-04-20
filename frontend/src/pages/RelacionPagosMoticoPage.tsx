@@ -1038,10 +1038,10 @@ export default function RelacionPagosMoticoPage() {
                   Pendiente pago al recibir
                 </th>
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
-                  Costo producto Motico
+                  COSTO PRODUCTO
                 </th>
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
-                  Costo flete Motico
+                  COSTO FLETE
                 </th>
                 <th
                   title="Precio total − costo producto Motico − costo flete Motico"
