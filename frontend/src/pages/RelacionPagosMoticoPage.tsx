@@ -10,6 +10,11 @@ import {
 } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
+import {
+  ORDER_INTERNAL_ESTADO_OPTIONS,
+  ORDER_INTERNAL_ESTADO_ROW_META,
+  coerceOrderInternalEstadoForSelect,
+} from '../constants/orderInternalEstado';
 import { ds } from '../design-system/ds';
 import { IconCart, IconPackage, IconProduct, IconTruck, IconTrendingUp } from '../design-system/icons';
 import { KpiCard } from '../design-system/KpiCard';
@@ -319,6 +324,7 @@ export default function RelacionPagosMoticoPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [savingRef, setSavingRef] = useState<string | null>(null);
+  const [savingOrderEstadoRef, setSavingOrderEstadoRef] = useState<string | null>(null);
   const [savingNequiRef, setSavingNequiRef] = useState<string | null>(null);
   const [selectedRefs, setSelectedRefs] = useState<Set<string>>(() => new Set());
   const [searchInput, setSearchInput] = useState('');
@@ -568,6 +574,55 @@ export default function RelacionPagosMoticoPage() {
     },
     [estadoByRef],
   );
+
+  const onOrderEstadoChange = useCallback(async (o: OrderRow, next: string) => {
+    const ref = orderRef(o);
+    const nextEstado = coerceOrderInternalEstadoForSelect(next);
+    const prevInternal = String(o.internal_status || '');
+    const prevMotico = String(o.motico_status || '');
+    setSavingOrderEstadoRef(ref);
+    setError('');
+    setOrders((prev) =>
+      prev.map((row) =>
+        orderRef(row) === ref
+          ? { ...row, internal_status: nextEstado, motico_status: nextEstado }
+          : row,
+      ),
+    );
+    try {
+      const res = await apiFetch(`/api/shopify/orders/${o.id}/local-fields`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          internal_status: nextEstado,
+          motico_status: nextEstado,
+          sync_to_shopify: false,
+        }),
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => ({}))) as { error?: string };
+        setOrders((prev) =>
+          prev.map((row) =>
+            orderRef(row) === ref
+              ? { ...row, internal_status: prevInternal, motico_status: prevMotico }
+              : row,
+          ),
+        );
+        setError(typeof data.error === 'string' ? data.error : 'No se pudo guardar el estado del pedido');
+      }
+    } catch {
+      setOrders((prev) =>
+        prev.map((row) =>
+          orderRef(row) === ref
+            ? { ...row, internal_status: prevInternal, motico_status: prevMotico }
+            : row,
+        ),
+      );
+      setError('Error de red al guardar el estado del pedido');
+    } finally {
+      setSavingOrderEstadoRef(null);
+    }
+  }, []);
 
   const savePagosNequi = useCallback(async (ref: string, amount: number) => {
     setSavingNequiRef(ref);
@@ -908,7 +963,7 @@ export default function RelacionPagosMoticoPage() {
             </div>
           ) : null}
           <div style={{ overflowX: 'auto', borderRadius: 12, border: `1px solid ${ds.borderCard}` }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1448 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1600 }}>
             <thead>
               <tr style={{ background: ds.bgSubtle }}>
                 <th style={{ ...relacionStickyCheckbox(ds.bgSubtle, 12), padding: '10px 4px' }}>
@@ -921,6 +976,9 @@ export default function RelacionPagosMoticoPage() {
                     aria-label="Seleccionar o anular todos los pedidos visibles"
                     style={{ width: 16, height: 16, cursor: rows.length === 0 ? 'default' : 'pointer' }}
                   />
+                </th>
+                <th style={{ textAlign: 'left', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary, minWidth: 180 }}>
+                  Estado
                 </th>
                 <th
                   title="Momento en que el pedido pasó por última vez a estado operativo Despachado"
@@ -1002,12 +1060,15 @@ export default function RelacionPagosMoticoPage() {
                   saldo > 0 ? ds.successText : saldo < 0 ? ds.dangerText : ds.textPrimary;
                 const curcy = o.currency || defaultCurrency;
                 const busy = savingRef === ref;
+                const busyOrderEstado = savingOrderEstadoRef === ref;
                 const nequiBusy = savingNequiRef === ref;
                 const nequiInputVal = pagosNequiDraft[ref] ?? String(nequiCommitted);
                 const rowBg = idx % 2 === 0 ? ds.bgCard : ds.bgSubtle;
                 const isSelected = selectedRefs.has(ref);
                 const fechaDisplay = formatFechaUltimoDespachado(o.last_despachado_at);
                 const orderSub = `${o.orderName || `#${o.id}`}${o.is_motico_manual ? ' · Manual' : ''}`;
+                const orderEstado = coerceOrderInternalEstadoForSelect(o.motico_status || o.internal_status);
+                const estadoMeta = ORDER_INTERNAL_ESTADO_ROW_META[orderEstado] ?? ORDER_INTERNAL_ESTADO_ROW_META.sin_revisar;
                 return (
                   <tr
                     key={ref}
@@ -1026,6 +1087,31 @@ export default function RelacionPagosMoticoPage() {
                         aria-label={`Seleccionar pedido ${o.orderName || ref}`}
                         style={{ width: 16, height: 16, cursor: 'pointer' }}
                       />
+                    </td>
+                    <td style={{ padding: '10px 10px' }}>
+                      <select
+                        value={orderEstado}
+                        disabled={busyOrderEstado}
+                        onChange={(e) => void onOrderEstadoChange(o, e.target.value)}
+                        style={{
+                          width: '100%',
+                          minWidth: 140,
+                          padding: '8px 10px',
+                          borderRadius: 8,
+                          border: `1px solid ${estadoMeta.chipBorder}`,
+                          background: estadoMeta.chipBg,
+                          color: estadoMeta.chipFg,
+                          fontSize: 12,
+                          fontWeight: 700,
+                          cursor: busyOrderEstado ? 'wait' : 'pointer',
+                        }}
+                      >
+                        {ORDER_INTERNAL_ESTADO_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
                     </td>
                     <td
                       title="Último estado Despachado"
