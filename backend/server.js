@@ -4449,14 +4449,7 @@ function mapMoticoManualOrderRowFromDb(r) {
   const manualMensajeroRaw = String(ship.mensajero || ship.mensajero_tag || ship.courier || '')
     .trim()
     .toLowerCase();
-  const removedFromMotico =
-    String(ship.removed_from_motico || '')
-      .trim()
-      .toLowerCase() === 'true';
-  let manualMensajero = SHOPIFY_MENSAJEROS.has(manualMensajeroRaw) ? manualMensajeroRaw : null;
-  if (!manualMensajero && !removedFromMotico) {
-    manualMensajero = 'motico';
-  }
+  const manualMensajero = SHOPIFY_MENSAJEROS.has(manualMensajeroRaw) ? manualMensajeroRaw : null;
   const last_despachado_at =
     r.last_despachado_at != null ? new Date(r.last_despachado_at).toISOString() : null;
   return {
@@ -7910,10 +7903,11 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
           .join(' + ')
       : (product_summary_in || 'Producto');
     const product_summary = `${baseSummary}${note ? ` · Observación: ${note}` : ''}`.slice(0, 600);
+    const anticipoClamped = Math.min(Math.max(0, anticipo), total);
     const total_outstanding =
       financial_status === 'paid' || financial_status === 'refunded' || financial_status === 'cancelado'
         ? 0
-        : Math.max(0, total - anticipo);
+        : Math.max(0, total - anticipoClamped);
 
     let createdAtParam = null;
     if (rawCreated) {
@@ -7947,8 +7941,10 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
         product_summary,
         line_items_json,
         created_by,
+        motico_status,
+        pago_al_recibir_override,
         created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12, COALESCE($13::timestamptz, now()))
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12, $13, $14, COALESCE($15::timestamptz, now()))
       RETURNING *`,
       [
         req.organizationId,
@@ -7963,6 +7959,8 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
         product_summary.slice(0, 600),
         JSON.stringify(line_items_json),
         req.user.userId,
+        MOTICO_STATUS_DEFAULT,
+        anticipoClamped,
         createdAtParam,
       ],
     );
