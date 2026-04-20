@@ -118,6 +118,11 @@ function numOrZero(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+/** Ganancia Motico = precio total − costo producto − costo flete. */
+function gananciaMotico(o: OrderRow): number {
+  return relacionPrecioTotal(o) - numOrZero(o.product_cost_motico) - numOrZero(o.freight_cost_motico);
+}
+
 /** Fecha/hora del último pase a Despachado; vacío si no hay registro (p. ej. pedidos anteriores a la columna). */
 function formatFechaUltimoDespachado(iso: string | null | undefined): string {
   if (!iso) return '—';
@@ -586,7 +591,7 @@ export default function RelacionPagosMoticoPage() {
         </div>
       ) : shopifyConnected ? (
         <div style={{ overflowX: 'auto', borderRadius: 12, border: `1px solid ${ds.borderCard}` }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1240 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1400 }}>
             <thead>
               <tr style={{ background: ds.bgSubtle }}>
                 <th
@@ -599,6 +604,9 @@ export default function RelacionPagosMoticoPage() {
                   Nombre del cliente
                 </th>
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
+                  Precio total
+                </th>
+                <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
                   Pendiente pago al recibir
                 </th>
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
@@ -606,6 +614,12 @@ export default function RelacionPagosMoticoPage() {
                 </th>
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
                   Costo flete Motico
+                </th>
+                <th
+                  title="Precio total − costo producto Motico − costo flete Motico"
+                  style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}
+                >
+                  Ganancia Motico
                 </th>
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
                   Debe proveedor
@@ -629,9 +643,11 @@ export default function RelacionPagosMoticoPage() {
                   String(o.client || '').trim() ||
                   '—';
                 const cur = estadoByRef[ref] || 'pendiente_pago';
+                const precioTotal = relacionPrecioTotal(o);
                 const pendiente = pendientePagoAlRecibir(o);
                 const cProd = numOrZero(o.product_cost_motico);
                 const cFlete = numOrZero(o.freight_cost_motico);
+                const gMotico = gananciaMotico(o);
                 const debeProveedor = pendiente - cProd - cFlete;
                 const nequiCommitted = pagosNequiByRef[ref] ?? 0;
                 const nequiForSaldo =
@@ -673,6 +689,9 @@ export default function RelacionPagosMoticoPage() {
                       </div>
                     </td>
                     <td style={{ padding: '12px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {formatMoneyAmount(precioTotal, curcy)}
+                    </td>
+                    <td style={{ padding: '12px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                       {formatMoneyAmount(pendiente, curcy)}
                     </td>
                     <td style={{ padding: '12px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
@@ -680,6 +699,9 @@ export default function RelacionPagosMoticoPage() {
                     </td>
                     <td style={{ padding: '12px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                       {formatMoneyAmount(cFlete, curcy)}
+                    </td>
+                    <td style={{ padding: '12px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                      {formatMoneyAmount(gMotico, curcy)}
                     </td>
                     <td style={{ padding: '12px 10px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                       {formatMoneyAmount(debeProveedor, curcy)}
