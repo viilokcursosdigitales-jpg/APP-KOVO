@@ -26,12 +26,14 @@ type EditableOrder = {
   id: number;
   orderName: string;
   internal_status: string;
+  financialStatus?: string;
   total: string;
   shopifyTotal: string;
   defaultQuantity: number;
   shopifyQuantity: number;
   price_override: number | null;
   quantity_override: number | null;
+  pago_al_recibir_override?: number;
   total_a_pagar_default?: number | null;
   total_a_pagar_override?: number | null;
   total_a_pagar?: number | null;
@@ -129,6 +131,20 @@ function effectiveOrderTotalAmount(o: Pick<EditableOrder, 'price_override' | 'sh
       ? Number(o.price_override)
       : Number.parseFloat(String(o.shopifyTotal ?? o.total ?? '0'));
   return Number.isFinite(n) && n >= 0 ? n : 0;
+}
+
+/** Anticipo inicial en el editor alineado con el listado de Pedidos (incl. Shopify «paid» + override KOVO). */
+function initialAnticipoDraftAmount(o: EditableOrder): number {
+  const T = effectiveOrderTotalAmount(o);
+  const fin = String(o.financialStatus || '').toLowerCase();
+  const editorAnticipo = Number(o.pago_al_recibir_override);
+  const editorOk = Number.isFinite(editorAnticipo) && editorAnticipo > 0;
+  if (fin === 'paid') {
+    if (editorOk) return Math.min(T, editorAnticipo);
+    return T;
+  }
+  if (editorOk) return Math.min(T, editorAnticipo);
+  return computeAnticipoAmountFromOrder(o);
 }
 
 function computeAnticipoAmountFromOrder(
@@ -285,7 +301,7 @@ export default function PedidosOrderEditPage() {
         country: String(sa.country || ''),
         phone: String(sa.phone || ''),
         price: String(loadedOrder.price_override ?? loadedOrder.shopifyTotal ?? loadedOrder.total ?? ''),
-        anticipo: String(computeAnticipoAmountFromOrder(loadedOrder)),
+        anticipo: String(initialAnticipoDraftAmount(loadedOrder)),
         quantity: String(
           loadedOrder.quantity_override ??
             firstLine?.quantity ??
@@ -612,6 +628,12 @@ export default function PedidosOrderEditPage() {
               />
             </label>
           </div>
+          {order && String(order.financialStatus || '').toLowerCase() === 'paid' ? (
+            <p style={{ margin: '6px 0 0', fontSize: 11, color: ds.textMuted, lineHeight: 1.4 }}>
+              Shopify indica pagado. Puedes ajustar el anticipo en KOVO si el cobro registrado difiere (afecta pendiente
+              al recibir en el listado).
+            </p>
+          ) : null}
           <div style={{ marginTop: 8 }}>
             <p style={{ margin: 0, fontSize: 12, color: ds.textSecondary }}>
               Pendiente por cobrar:{' '}

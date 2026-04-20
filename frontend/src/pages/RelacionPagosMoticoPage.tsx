@@ -218,13 +218,17 @@ function relacionPrecioTotal(o: OrderRow): number {
   return Number.isFinite(raw) && raw >= 0 ? raw : 0;
 }
 
-/** Misma lógica que Pedidos: pago anticipado si Shopify «paid» o valor del editor (`pago_al_recibir_override`). */
+/** Misma lógica que Pedidos: pagado → total o override KOVO; si no, override o 0. */
 function relacionPagoAnticipado(o: OrderRow): number {
   const T = relacionPrecioTotal(o);
   const fin = String(o.financialStatus || '').toLowerCase();
-  if (fin === 'paid') return T;
   const editor = Number(o.pago_al_recibir_override);
-  if (Number.isFinite(editor) && editor > 0) return Math.min(T, editor);
+  const editorOk = Number.isFinite(editor) && editor > 0;
+  if (fin === 'paid') {
+    if (editorOk) return Math.min(T, editor);
+    return T;
+  }
+  if (editorOk) return Math.min(T, editor);
   return 0;
 }
 

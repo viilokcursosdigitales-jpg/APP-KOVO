@@ -195,15 +195,20 @@ function pedidosPrecioTotalNum(o: Pick<ShopifyOrderRow, 'price_override' | 'shop
 }
 
 /**
- * Pago anticipado en listado: total pagado por adelantado solo si el pedido en Shopify está «paid»
- * o si en el editor se guardó un importe en «pago anticipado» (`pago_al_recibir_override` > 0).
+ * Pago anticipado en listado:
+ * - Si Shopify está «paid»: por defecto el precio total; si en KOVO hay `pago_al_recibir_override` > 0, se usa ese tope (mín. con el total).
+ * - Si no está pagado: anticipo del editor si > 0; si no, 0.
  */
 function pedidosPagoAnticipadoNum(o: ShopifyOrderRow): number {
   const T = pedidosPrecioTotalNum(o);
   const fin = String(o.financialStatus || '').toLowerCase();
-  if (fin === 'paid') return T;
   const editorAnticipo = Number(o.pago_al_recibir_override);
-  if (Number.isFinite(editorAnticipo) && editorAnticipo > 0) return Math.min(T, editorAnticipo);
+  const editorOk = Number.isFinite(editorAnticipo) && editorAnticipo > 0;
+  if (fin === 'paid') {
+    if (editorOk) return Math.min(T, editorAnticipo);
+    return T;
+  }
+  if (editorOk) return Math.min(T, editorAnticipo);
   return 0;
 }
 
@@ -2733,7 +2738,7 @@ export default function PedidosPage() {
                               fontVariantNumeric: 'tabular-nums',
                               color: ds.textPrimary,
                             }}
-                            title="Precio total − pago anticipado (Shopify pagado o valor del editor)."
+                            title="Precio total − pago anticipado (si Shopify está pagado: total o valor ajustado en KOVO; si no: valor del editor)."
                           >
                             {formatMoneyAmount(pendienteRecibir, o.currency)}
                           </Td>
