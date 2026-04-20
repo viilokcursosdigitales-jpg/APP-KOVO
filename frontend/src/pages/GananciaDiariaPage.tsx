@@ -1045,9 +1045,9 @@ export default function GananciaDiariaPage() {
                         utilidadRow == null
                           ? 'transparent'
                           : utilidadRow < 0
-                            ? '#fef2f2'
+                            ? '#fecaca'
                             : utilidadRow > 0
-                              ? '#f0fdf4'
+                              ? '#bbf7d0'
                               : 'transparent';
                       return (
                         <tr key={row.date} style={rowBg !== 'transparent' ? { background: rowBg } : undefined}>
