@@ -474,6 +474,12 @@ function estadoSelectStyle(internalStatus: string): CSSProperties {
         color: '#9a3412',
         borderColor: '#fdba74',
       };
+    case 'no_llego_mensaje':
+      return {
+        background: '#fef3c7',
+        color: '#92400e',
+        borderColor: '#fcd34d',
+      };
     case 'motico':
       return {
         background: '#ede9fe',

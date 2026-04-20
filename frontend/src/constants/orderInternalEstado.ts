@@ -5,6 +5,7 @@
 export const ORDER_INTERNAL_ESTADO_OPTIONS = [
   { value: 'sin_revisar', label: 'Sin revisar' },
   { value: 'sin_confirmar', label: 'No confirmó' },
+  { value: 'no_llego_mensaje', label: 'No le llegó el mensaje' },
   { value: 'confirmado', label: 'Confirmado' },
   { value: 'despachado', label: 'Despachado' },
   { value: 'devolucion', label: 'Devolución' },
@@ -40,6 +41,12 @@ export const ORDER_INTERNAL_ESTADO_ROW_META: Record<
     chipBg: '#ffedd5',
     chipFg: '#9a3412',
     chipBorder: '#fdba74',
+  },
+  no_llego_mensaje: {
+    rowColor: '#f59e0b',
+    chipBg: '#fef3c7',
+    chipFg: '#92400e',
+    chipBorder: '#fcd34d',
   },
   confirmado: {
     rowColor: '#16a34a',

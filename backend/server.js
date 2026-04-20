@@ -4100,6 +4100,7 @@ async function getActiveShopifyConnection(organizationId) {
 const UNIFIED_ORDER_ESTADO_LIST = [
   'sin_revisar',
   'sin_confirmar',
+  'no_llego_mensaje',
   'confirmado',
   'despachado',
   'devolucion',
@@ -4118,6 +4119,7 @@ const LOCKED_INTERNAL_STATUSES = new Set(['despachado', 'cancelado']);
 const UNIFIED_ESTADO_RANK = {
   sin_revisar: 10,
   sin_confirmar: 20,
+  no_llego_mensaje: 25,
   confirmado: 30,
   prueba: 35,
   despachado: 50,
