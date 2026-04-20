@@ -4961,6 +4961,28 @@ function calculateOrderManualCosts(order, pricingMap, titleToProductIdMap) {
 }
 
 /**
+ * Cantidad para costo Motico × línea: con **una sola** línea de detalle, si `quantity_override` (KOVO) supera
+ * la suma de cantidades en líneas, se usa el override (misma idea que «cantidad final» en Motico).
+ */
+function quantityForMoticoProductCostLine(li, order, detail) {
+  const lineQtyRaw = Number.parseInt(String(li?.quantity ?? 0), 10);
+  const lineQty = Number.isFinite(lineQtyRaw) && lineQtyRaw > 0 ? lineQtyRaw : 0;
+  if (!Array.isArray(detail) || detail.length !== 1) return lineQty;
+  let sumLines = 0;
+  for (const x of detail) {
+    const q = Number.parseInt(String(x?.quantity ?? 0), 10);
+    if (Number.isFinite(q) && q > 0) sumLines += q;
+  }
+  const headRaw = order?.quantity_override;
+  const headOv =
+    headRaw != null && headRaw !== '' && Number.isFinite(Number(headRaw)) && Number(headRaw) > 0
+      ? Number(headRaw)
+      : null;
+  if (headOv != null && headOv > sumLines) return headOv;
+  return lineQty;
+}
+
+/**
  * Suma (costo producto Motico en inventario) × cantidad por línea (`manual_product_price_motico`).
  * @returns {number|null} total o null si no hay ninguna línea con costo Motico configurado.
  */
@@ -4979,7 +5001,7 @@ function calculateOrderMoticoProductCost(order, pricingMap, titleToProductIdMap)
       }
     }
     if (!Number.isFinite(pid) || pid <= 0) continue;
-    const qty = Number.parseInt(String(li.quantity ?? 0), 10);
+    const qty = quantityForMoticoProductCostLine(li, order, detail);
     if (!Number.isFinite(qty) || qty <= 0) continue;
     const pricing = pricingMap.get(pid);
     const unitMotico =
@@ -5000,8 +5022,14 @@ function calculateOrderMoticoProductCost(order, pricingMap, titleToProductIdMap)
           ? Number(pricing.manual_product_price_motico)
           : null;
       if (unitMotico != null) {
-        const qtyRaw = Number.parseInt(String(order.defaultQuantity ?? order.shopifyQuantity ?? 1), 10);
-        const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? qtyRaw : 1;
+        const qEff = effectiveOrderProductQuantityForGanancia(order, null);
+        const qty =
+          Number.isFinite(qEff) && qEff > 0
+            ? qEff
+            : (() => {
+                const qtyRaw = Number.parseInt(String(order.defaultQuantity ?? order.shopifyQuantity ?? 1), 10);
+                return Number.isFinite(qtyRaw) && qtyRaw > 0 ? qtyRaw : 1;
+              })();
         total += unitMotico * qty;
         matched = true;
       }
