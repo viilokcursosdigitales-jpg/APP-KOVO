@@ -1009,8 +1009,8 @@ export default function PedidosPage() {
 
   const handleOpenOrderEdit = useCallback((row: ShopifyOrderRow) => {
     const st = String(row.internal_status || '').toLowerCase() as InternalStatusValue;
-    if (row.id < 0) {
-      setShopifyError('Edita desde el módulo Motico.');
+    if (row.id < 0 && !row.is_motico_manual) {
+      setShopifyError('Este pedido no se puede editar desde Pedidos.');
       return;
     }
     if (st === 'despachado' || st === 'cancelado') {
@@ -2673,7 +2673,7 @@ export default function PedidosPage() {
                   ? filteredShopify.map((o, i, arr) => {
                       const isLocked = isOrderLockedInPedidos(o);
                       const stLower = String(o.internal_status || '').toLowerCase();
-                      const editDisabledFromPedidos = o.id < 0;
+                      const editDisabledFromPedidos = o.id < 0 && !o.is_motico_manual;
                       const precioTotal = pedidosPrecioTotalNum(o);
                       const pagoAnticipado = pedidosPagoAnticipadoNum(o);
                       const pendienteRecibir = pedidosPendienteAlRecibirNum(precioTotal, pagoAnticipado);
@@ -2799,8 +2799,8 @@ export default function PedidosPage() {
                               disabled={editDisabledFromPedidos}
                               aria-label={`Editar pedido ${o.orderName}`}
                               title={
-                                o.id < 0
-                                  ? 'Edita desde el módulo Motico.'
+                                o.id < 0 && !o.is_motico_manual
+                                  ? 'Este pedido no se puede editar desde Pedidos.'
                                   : stLower === 'despachado' || stLower === 'cancelado'
                                     ? 'Responde motivo y desbloquea para editar'
                                     : 'Abrir editor'

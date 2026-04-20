@@ -338,7 +338,7 @@ export default function PedidosOrderEditPage() {
   );
 
   const loadData = useCallback(async () => {
-    if (!Number.isFinite(orderId) || orderId <= 0) {
+    if (!Number.isFinite(orderId) || orderId === 0) {
       setError('ID de pedido inválido');
       setLoading(false);
       return;

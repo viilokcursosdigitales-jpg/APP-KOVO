@@ -4135,7 +4135,8 @@ function normalizeLegacyMoticoEstadoToUnified(raw) {
   if (SHOPIFY_INTERNAL_STATUSES.has(s)) return s;
   const legacy = {
     imprimir_guia: 'confirmado',
-    pagado: 'despachado',
+    /** Antes Motico usaba «pagado» como estado operativo; ya no debe bloquear edición como «despachado». */
+    pagado: 'confirmado',
     pendiente_pago: 'sin_confirmar',
     devolucion: 'cancelado',
     motico: 'confirmado',
@@ -5824,8 +5825,34 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
 app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const orderId = parseInt(String(req.params.orderId), 10);
-    if (!Number.isFinite(orderId) || orderId <= 0) {
+    if (!Number.isFinite(orderId) || orderId === 0) {
       return res.status(400).json({ error: 'ID de pedido inválido' });
+    }
+    /** Pedidos manuales KOVO (antes «Motico»): id negativo, fila en motico_manual_orders. */
+    if (orderId < 0) {
+      const manualId = -orderId;
+      const { rows } = await pool.query(
+        `SELECT * FROM motico_manual_orders WHERE id = $1 AND organization_id = $2`,
+        [manualId, req.organizationId],
+      );
+      if (!rows.length) {
+        return res.status(404).json({ error: 'Pedido manual no encontrado' });
+      }
+      const mapped = mapMoticoManualOrderRowFromDb(rows[0]);
+      const order = {
+        ...mapped,
+        internal_status: normalizeLegacyMoticoEstadoToUnified(
+          rows[0].motico_status != null && String(rows[0].motico_status) !== ''
+            ? String(rows[0].motico_status)
+            : MOTICO_STATUS_DEFAULT,
+        ),
+      };
+      return res.json({
+        source: 'motico_manual',
+        shop_domain: null,
+        fetchedAt: new Date().toISOString(),
+        order,
+      });
     }
     const row = await getActiveShopifyConnection(req.organizationId);
     if (!row) {
