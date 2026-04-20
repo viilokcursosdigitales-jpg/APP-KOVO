@@ -277,6 +277,32 @@ export default function PedidosOrderEditPage() {
     [],
   );
 
+  const ensureProductVariantsLoaded = useCallback(
+    async (productId: number) => {
+      if (!Number.isFinite(productId) || productId <= 0) return;
+      if (variantsLoadedRef.current.has(productId)) return;
+      const res = await apiFetch(`/api/shopify/products/${productId}/variants?limit=250`);
+      if (!res.ok) return;
+      const data = (await res.json().catch(() => ({}))) as { variants?: unknown[] };
+      const variantsRaw = Array.isArray(data.variants) ? data.variants : [];
+      const variants = variantsRaw
+        .map((v) => {
+          if (!v || typeof v !== 'object') return null;
+          const vv = v as { id?: unknown; title?: unknown };
+          const id = Number(vv.id);
+          if (!Number.isFinite(id) || id <= 0) return null;
+          return { id, title: String(vv.title || '').trim() || 'Variante' };
+        })
+        .filter((v): v is ProductVariant => Boolean(v));
+      if (!variants.length) return;
+      variantsLoadedRef.current.add(productId);
+      setProducts((prev) =>
+        prev.map((p) => (p.id === productId ? { ...p, variants } : p)),
+      );
+    },
+    [],
+  );
+
   const onLineProductChange = useCallback(
     (idx: number, productId: string) => {
       const pid = Number(productId);
@@ -304,32 +330,6 @@ export default function PedidosOrderEditPage() {
       });
     },
     [buildFallbackLine],
-  );
-
-  const ensureProductVariantsLoaded = useCallback(
-    async (productId: number) => {
-      if (!Number.isFinite(productId) || productId <= 0) return;
-      if (variantsLoadedRef.current.has(productId)) return;
-      const res = await apiFetch(`/api/shopify/products/${productId}/variants?limit=250`);
-      if (!res.ok) return;
-      const data = (await res.json().catch(() => ({}))) as { variants?: unknown[] };
-      const variantsRaw = Array.isArray(data.variants) ? data.variants : [];
-      const variants = variantsRaw
-        .map((v) => {
-          if (!v || typeof v !== 'object') return null;
-          const vv = v as { id?: unknown; title?: unknown };
-          const id = Number(vv.id);
-          if (!Number.isFinite(id) || id <= 0) return null;
-          return { id, title: String(vv.title || '').trim() || 'Variante' };
-        })
-        .filter((v): v is ProductVariant => Boolean(v));
-      if (!variants.length) return;
-      variantsLoadedRef.current.add(productId);
-      setProducts((prev) =>
-        prev.map((p) => (p.id === productId ? { ...p, variants } : p)),
-      );
-    },
-    [],
   );
 
   const loadData = useCallback(async () => {
