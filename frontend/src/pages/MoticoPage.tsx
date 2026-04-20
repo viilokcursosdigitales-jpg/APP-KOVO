@@ -167,6 +167,8 @@ type MoticoOrderRow = {
   /** Valor mostrado: override ?? default. */
   total_a_pagar: number;
   pago_al_recibir_override?: number | null;
+  /** True si el anticipo se guardó explícitamente desde KOVO (incluye 0). */
+  anticipo_kovo_explicit?: boolean;
   /** Suma (inventario: costo producto Motico × cantidad) por líneas del pedido; null si no hay costo configurado. */
   product_cost_motico?: number | null;
   /** Flete Motico (inventario: costo flete Motico); promedio por productos distintos en el pedido; null si no hay dato. */
@@ -551,7 +553,7 @@ function draftFromOrder(o: MoticoOrderRow): MoticoEditorDraft {
     phone: sa?.phone || '',
     price: String(o.price_override ?? o.shopifyTotal ?? ''),
     quantity: String(o.quantity_override ?? o.defaultQuantity ?? o.shopifyQuantity ?? 0),
-    anticipo: String(computeAnticipoAmountFromRow(o)),
+    anticipo: String(moticoPagoAnticipoDisplayed(o)),
     line_items: line_items.length ? line_items : [emptyManualLine()],
   };
 }
@@ -621,6 +623,15 @@ function computeAnticipoAmountFromRow(o: MoticoOrderRow): number {
   const pending = pendingEdited != null ? pendingEdited : pendingShopify;
   // Prioridad: valor editado en KOVO; si no existe, pago/pendiente de Shopify.
   return Math.max(0, total - pending);
+}
+
+/** Columna «Pago anticipado»: si KOVO guardó anticipo explícito (incl. 0), se respeta; si no, cálculo por pendiente. */
+function moticoPagoAnticipoDisplayed(o: MoticoOrderRow): number {
+  if (!Boolean(o.anticipo_kovo_explicit)) return computeAnticipoAmountFromRow(o);
+  const T = effectiveOrderTotalAmount(o);
+  const ov = Number(o.pago_al_recibir_override);
+  const v = Number.isFinite(ov) ? ov : 0;
+  return Math.min(T, Math.max(0, v));
 }
 
 /** Pendiente pago proveedor:
@@ -778,6 +789,7 @@ function normalizeRow(o: MoticoOrderRow): MoticoOrderRow {
       o.pago_al_recibir_override != null && Number.isFinite(Number(o.pago_al_recibir_override))
         ? Number(o.pago_al_recibir_override)
         : 0,
+    anticipo_kovo_explicit: Boolean((o as { anticipo_kovo_explicit?: boolean }).anticipo_kovo_explicit),
     product_cost_motico: (() => {
       const raw = (o as MoticoOrderRow & { product_cost_motico?: unknown }).product_cost_motico;
       if (raw === undefined) return undefined;
@@ -1109,6 +1121,7 @@ export default function MoticoPage() {
       price_override?: number | null;
       quantity_override?: number | null;
       pago_al_recibir_override?: number | null;
+      anticipo_kovo_explicit?: boolean;
       total_a_pagar_override?: number | null;
     };
     if (!res.ok) {
@@ -1147,6 +1160,8 @@ export default function MoticoPage() {
           quantity_override: data.quantity_override !== undefined ? data.quantity_override : o.quantity_override,
           pago_al_recibir_override:
             data.pago_al_recibir_override !== undefined ? data.pago_al_recibir_override : o.pago_al_recibir_override,
+          anticipo_kovo_explicit:
+            data.anticipo_kovo_explicit !== undefined ? Boolean(data.anticipo_kovo_explicit) : o.anticipo_kovo_explicit,
           total_a_pagar_override: nextOverride === undefined ? o.total_a_pagar_override : nextOverride,
           total_a_pagar: Number.isFinite(nextTotalAPagar) ? nextTotalAPagar : o.total_a_pagar,
         };
@@ -1646,6 +1661,7 @@ export default function MoticoPage() {
         return;
       }
       patchBody.total_a_pagar_override = Math.max(0, effectiveTotalForAnticipo - anticipoNum);
+      patchBody.pago_al_recibir_override = anticipoNum;
       if (editorOrder.id < 0 || editorOrder.is_motico_manual) {
         patchBody.sync_to_shopify = false;
         const normalizedItems = editorDraft.line_items
@@ -3075,7 +3091,7 @@ export default function MoticoPage() {
                       </Td>
                       <Td isLast={i === arr.length - 1} style={moticoTdPad}>
                         <div style={{ fontSize: 12, fontWeight: 600, color: ds.textPrimary }}>
-                          {formatMoneyAmount(computeAnticipoAmountFromRow(o), o.currency)}
+                          {formatMoneyAmount(moticoPagoAnticipoDisplayed(o), o.currency)}
                         </div>
                       </Td>
                       <Td

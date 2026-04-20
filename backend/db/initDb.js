@@ -166,6 +166,9 @@ async function initDb(pool) {
   await pool.query(
     `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS last_despachado_at TIMESTAMPTZ`,
   );
+  await pool.query(
+    `ALTER TABLE shopify_order_local_fields ADD COLUMN IF NOT EXISTS anticipo_kovo_explicit BOOLEAN NOT NULL DEFAULT FALSE`,
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS meta_campaign_product_links (

@@ -159,6 +159,8 @@ type ShopifyOrderRow = {
   /** Saldo pendiente según Shopify (`total_outstanding`). */
   totalOutstanding?: string | null;
   pago_al_recibir_override?: number;
+  /** True si el anticipo se guardó explícitamente desde KOVO (incluye 0). */
+  anticipo_kovo_explicit?: boolean;
   is_motico_manual?: boolean;
 };
 
@@ -196,14 +198,20 @@ function pedidosPrecioTotalNum(o: Pick<ShopifyOrderRow, 'price_override' | 'shop
 
 /**
  * Pago anticipado en listado:
- * - Si Shopify está «paid»: por defecto el precio total; si en KOVO hay `pago_al_recibir_override` > 0, se usa ese tope (mín. con el total).
- * - Si no está pagado: anticipo del editor si > 0; si no, 0.
+ * - Si `anticipo_kovo_explicit`: se usa el valor guardado en KOVO (0…total).
+ * - Si no y Shopify está «paid»: por defecto el precio total; si hay override > 0 sin flag explícito, se usa ese tope.
+ * - Si no está pagado y no hay flag: anticipo del editor solo si override > 0; si no, 0.
  */
 function pedidosPagoAnticipadoNum(o: ShopifyOrderRow): number {
   const T = pedidosPrecioTotalNum(o);
   const fin = String(o.financialStatus || '').toLowerCase();
   const editorAnticipo = Number(o.pago_al_recibir_override);
   const editorOk = Number.isFinite(editorAnticipo) && editorAnticipo > 0;
+  const explicit = Boolean(o.anticipo_kovo_explicit);
+  if (explicit) {
+    const v = Number.isFinite(editorAnticipo) ? editorAnticipo : 0;
+    return Math.min(T, Math.max(0, v));
+  }
   if (fin === 'paid') {
     if (editorOk) return Math.min(T, editorAnticipo);
     return T;
@@ -565,6 +573,7 @@ export default function PedidosPage() {
       total_a_pagar_override?: number | null;
       totalOutstanding?: string | null;
       pago_al_recibir_override?: number;
+      anticipo_kovo_explicit?: boolean;
       is_motico_manual?: boolean;
     };
     const totalDef = Number(ext.total_a_pagar_default);
@@ -609,6 +618,7 @@ export default function PedidosPage() {
         ext.pago_al_recibir_override != null && Number.isFinite(Number(ext.pago_al_recibir_override))
           ? Number(ext.pago_al_recibir_override)
           : 0,
+      anticipo_kovo_explicit: Boolean(ext.anticipo_kovo_explicit),
       is_motico_manual: Boolean(ext.is_motico_manual),
     };
   }, []);
@@ -735,6 +745,7 @@ export default function PedidosPage() {
       label?: string | null;
       badgeVariant?: StatusBadgeVariant | null;
       pago_al_recibir_override?: number | null;
+      anticipo_kovo_explicit?: boolean;
       total_a_pagar_override?: number | null;
     };
     setShopifyError('');
@@ -779,6 +790,9 @@ export default function PedidosPage() {
         if (data.pago_al_recibir_override !== undefined) {
           const v = Number(data.pago_al_recibir_override);
           patch.pago_al_recibir_override = Number.isFinite(v) ? v : 0;
+        }
+        if (data.anticipo_kovo_explicit !== undefined) {
+          patch.anticipo_kovo_explicit = Boolean(data.anticipo_kovo_explicit);
         }
         if (data.total_a_pagar_override !== undefined) {
           const v = data.total_a_pagar_override;

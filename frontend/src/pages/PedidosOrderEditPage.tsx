@@ -34,6 +34,7 @@ type EditableOrder = {
   price_override: number | null;
   quantity_override: number | null;
   pago_al_recibir_override?: number;
+  anticipo_kovo_explicit?: boolean;
   total_a_pagar_default?: number | null;
   total_a_pagar_override?: number | null;
   total_a_pagar?: number | null;
@@ -139,6 +140,11 @@ function initialAnticipoDraftAmount(o: EditableOrder): number {
   const fin = String(o.financialStatus || '').toLowerCase();
   const editorAnticipo = Number(o.pago_al_recibir_override);
   const editorOk = Number.isFinite(editorAnticipo) && editorAnticipo > 0;
+  const explicit = Boolean(o.anticipo_kovo_explicit);
+  if (explicit) {
+    const v = Number.isFinite(editorAnticipo) ? editorAnticipo : 0;
+    return Math.min(T, Math.max(0, v));
+  }
   if (fin === 'paid') {
     if (editorOk) return Math.min(T, editorAnticipo);
     return T;

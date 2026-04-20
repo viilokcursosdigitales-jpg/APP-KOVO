@@ -96,6 +96,7 @@ type OrderRow = {
   price_override?: number | null;
   totalOutstanding?: string | null;
   pago_al_recibir_override?: number;
+  anticipo_kovo_explicit?: boolean;
   total_a_pagar?: number | null;
   product_cost_motico?: number | null;
   freight_cost_motico?: number | null;
@@ -218,12 +219,17 @@ function relacionPrecioTotal(o: OrderRow): number {
   return Number.isFinite(raw) && raw >= 0 ? raw : 0;
 }
 
-/** Misma lógica que Pedidos: pagado → total o override KOVO; si no, override o 0. */
+/** Misma lógica que Pedidos: explícito KOVO, o pagado → total / override, o pendiente. */
 function relacionPagoAnticipado(o: OrderRow): number {
   const T = relacionPrecioTotal(o);
   const fin = String(o.financialStatus || '').toLowerCase();
   const editor = Number(o.pago_al_recibir_override);
   const editorOk = Number.isFinite(editor) && editor > 0;
+  const explicit = Boolean(o.anticipo_kovo_explicit);
+  if (explicit) {
+    const v = Number.isFinite(editor) ? editor : 0;
+    return Math.min(T, Math.max(0, v));
+  }
   if (fin === 'paid') {
     if (editorOk) return Math.min(T, editor);
     return T;
