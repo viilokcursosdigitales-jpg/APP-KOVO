@@ -283,6 +283,14 @@ function orderMatchesTextFilter(row: ShopifyOrderRow, normalizedTerm: string) {
   return idLike.includes(normalizedTerm);
 }
 
+function orderMatchesInternalStatusFilter(
+  row: ShopifyOrderRow,
+  statusFilter: 'all' | InternalStatusValue,
+) {
+  if (statusFilter === 'all') return true;
+  return coerceOrderInternalEstadoForSelect(row.internal_status) === statusFilter;
+}
+
 function escapeRegExp(v: string) {
   return v.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
@@ -501,6 +509,7 @@ const inputStyle: CSSProperties = {
 export default function PedidosPage() {
   const navigate = useNavigate();
   const [filter, setFilter] = useState<'all' | 'active' | 'done'>('all');
+  const [internalStatusFilter, setInternalStatusFilter] = useState<'all' | InternalStatusValue>('all');
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [datePreset, setDatePreset] = useState<DatePreset>('hoy');
@@ -1040,10 +1049,11 @@ export default function PedidosPage() {
       shopifyOrders.filter(
         (r) =>
           orderMatchesFilter(r, filter) &&
+          orderMatchesInternalStatusFilter(r, internalStatusFilter) &&
           orderMatchesCityFilter(r, selectedCityKeySet) &&
           orderMatchesTextFilter(r, normalizedSearchTerm),
       ),
-    [shopifyOrders, filter, selectedCityKeySet, normalizedSearchTerm],
+    [shopifyOrders, filter, internalStatusFilter, selectedCityKeySet, normalizedSearchTerm],
   );
 
   const pedidosKpis = useMemo(() => {
@@ -1619,6 +1629,19 @@ export default function PedidosPage() {
               />
             </>
           ) : null}
+          <select
+            value={internalStatusFilter}
+            onChange={(e) => setInternalStatusFilter(e.target.value as 'all' | InternalStatusValue)}
+            style={{ ...inputStyle, maxWidth: 190 }}
+            title="Filtrar por estado interno"
+          >
+            <option value="all">Estado: Todos</option>
+            {INTERNAL_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                Estado: {opt.label}
+              </option>
+            ))}
+          </select>
           {cityOptions.length > 0 ? (
             <div
               style={{
