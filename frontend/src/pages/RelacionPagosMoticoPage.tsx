@@ -578,8 +578,11 @@ export default function RelacionPagosMoticoPage() {
   const onOrderEstadoChange = useCallback(async (o: OrderRow, next: string) => {
     const ref = orderRef(o);
     const nextEstado = coerceOrderInternalEstadoForSelect(next);
-    const prevInternal = String(o.internal_status || '');
-    const prevMotico = String(o.motico_status || '');
+    const prevInternal = coerceOrderInternalEstadoForSelect(o.internal_status || '');
+    const prevMotico = coerceOrderInternalEstadoForSelect(o.motico_status || o.internal_status || '');
+    const prevUnified = coerceOrderInternalEstadoForSelect(o.motico_status || o.internal_status || '');
+    const isLocked = prevUnified === 'despachado' || prevUnified === 'cancelado';
+    const unlockReason = 'Desbloqueado desde Relación de Pagos Motico';
     setSavingOrderEstadoRef(ref);
     setError('');
     setOrders((prev) =>
@@ -590,15 +593,39 @@ export default function RelacionPagosMoticoPage() {
       ),
     );
     try {
-      const res = await apiFetch(`/api/shopify/orders/${o.id}/local-fields`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          internal_status: nextEstado,
-          motico_status: nextEstado,
+      const saveEstado = async (estado: string, withUnlock = false) => {
+        const body: Record<string, unknown> = {
+          internal_status: estado,
+          motico_status: estado,
           sync_to_shopify: false,
-        }),
-      });
+        };
+        if (withUnlock) body.unlock_reason = unlockReason;
+        return apiFetch(`/api/shopify/orders/${o.id}/local-fields`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+      };
+
+      // Backend exige desbloqueo explícito a `sin_revisar` para salir de estado bloqueado.
+      // Si seleccionan otro estado, hacemos unlock + cambio final en una sola interacción.
+      if (isLocked && nextEstado !== 'sin_revisar') {
+        const unlockRes = await saveEstado('sin_revisar', true);
+        if (!unlockRes.ok) {
+          const data = (await unlockRes.json().catch(() => ({}))) as { error?: string };
+          setOrders((prev) =>
+            prev.map((row) =>
+              orderRef(row) === ref
+                ? { ...row, internal_status: prevInternal, motico_status: prevMotico }
+                : row,
+            ),
+          );
+          setError(typeof data.error === 'string' ? data.error : 'No se pudo desbloquear el pedido');
+          return;
+        }
+      }
+
+      const res = await saveEstado(nextEstado, isLocked && nextEstado === 'sin_revisar');
       if (!res.ok) {
         const data = (await res.json().catch(() => ({}))) as { error?: string };
         setOrders((prev) =>
