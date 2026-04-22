@@ -5,7 +5,15 @@ type Tone = 'neutral' | 'info' | 'success' | 'warning';
 type NodeKind = 'producto' | 'angulo' | 'hook';
 type Position = { x: number; y: number };
 type Viewport = { x: number; y: number; scale: number };
-type Connection = { from: string; to: string };
+type ConnectionStyle = 'curva' | 'recta' | 'ortogonal';
+type Connection = {
+  id: string;
+  from: string;
+  to: string;
+  fromAnchor: Position;
+  toAnchor: Position;
+  style: ConnectionStyle;
+};
 type BoardNode = {
   id: string;
   kind: NodeKind;
@@ -33,6 +41,13 @@ type PanDragState = {
   originX: number;
   originY: number;
 } | null;
+type ConnectionHandleDragState = {
+  connectionId: string;
+  end: 'from' | 'to';
+  startX: number;
+  startY: number;
+  originAnchor: Position;
+} | null;
 
 const PRODUCT_NODE_ID = 'producto-1';
 const BOARD_SIZE = 8000;
@@ -56,6 +71,149 @@ function getNodeData(nodeData: NodeDataMap, nodeId: string): NodeData {
   return nodeData[nodeId] || EMPTY_NODE_DATA;
 }
 
+function getNodeCenter(node: BoardNode): Position {
+  const { width, height } = getNodeSize(node);
+  return {
+    x: node.position.x + width / 2,
+    y: node.position.y + height / 2,
+  };
+}
+
+function getNodeSizeByKind(kind: NodeKind): { width: number; height: number } {
+  return {
+    width: kind === 'producto' ? 240 : 210,
+    height: kind === 'producto' ? 136 : 124,
+  };
+}
+
+function getNodeSize(node: BoardNode): { width: number; height: number } {
+  return getNodeSizeByKind(node.kind);
+}
+
+function clamp(n: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, n));
+}
+
+function snapAnchorToNearestSide(node: BoardNode, anchor: Position): Position {
+  const { width, height } = getNodeSize(node);
+  const halfW = width / 2;
+  const halfH = height / 2;
+  const x = clamp(anchor.x, -halfW, halfW);
+  const y = clamp(anchor.y, -halfH, halfH);
+
+  const distLeft = Math.abs(x + halfW);
+  const distRight = Math.abs(halfW - x);
+  const distTop = Math.abs(y + halfH);
+  const distBottom = Math.abs(halfH - y);
+  const minDist = Math.min(distLeft, distRight, distTop, distBottom);
+
+  if (minDist === distLeft) return { x: -halfW, y };
+  if (minDist === distRight) return { x: halfW, y };
+  if (minDist === distTop) return { x, y: -halfH };
+  return { x, y: halfH };
+}
+
+function getSmartSideAnchor(node: BoardNode, target: BoardNode, spreadOffset: number): Position {
+  const { width, height } = getNodeSize(node);
+  const halfW = width / 2;
+  const halfH = height / 2;
+  const fromCenter = getNodeCenter(node);
+  const toCenter = getNodeCenter(target);
+  const dx = toCenter.x - fromCenter.x;
+  const dy = toCenter.y - fromCenter.y;
+
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    if (dx >= 0) return { x: halfW, y: clamp(spreadOffset, -halfH + 10, halfH - 10) };
+    return { x: -halfW, y: clamp(spreadOffset, -halfH + 10, halfH - 10) };
+  }
+  if (dy >= 0) return { x: clamp(spreadOffset, -halfW + 10, halfW - 10), y: halfH };
+  return { x: clamp(spreadOffset, -halfW + 10, halfW - 10), y: -halfH };
+}
+
+function overlapsExistingNodes(
+  candidate: Position,
+  kind: NodeKind,
+  existingNodes: BoardNode[],
+  gap = 20,
+): boolean {
+  const size = getNodeSizeByKind(kind);
+  const left = candidate.x;
+  const top = candidate.y;
+  const right = candidate.x + size.width;
+  const bottom = candidate.y + size.height;
+
+  return existingNodes.some((node) => {
+    const nsize = getNodeSize(node);
+    const nleft = node.position.x;
+    const ntop = node.position.y;
+    const nright = node.position.x + nsize.width;
+    const nbottom = node.position.y + nsize.height;
+    return (
+      left < nright + gap &&
+      right + gap > nleft &&
+      top < nbottom + gap &&
+      bottom + gap > ntop
+    );
+  });
+}
+
+function findAvailablePosition(
+  desired: Position,
+  kind: NodeKind,
+  existingNodes: BoardNode[],
+): Position {
+  const size = getNodeSizeByKind(kind);
+  const clampCandidate = (p: Position): Position => ({
+    x: clamp(p.x, 0, BOARD_SIZE - size.width),
+    y: clamp(p.y, 0, BOARD_SIZE - size.height),
+  });
+
+  const base = clampCandidate(desired);
+  if (!overlapsExistingNodes(base, kind, existingNodes)) return base;
+
+  const step = 26;
+  for (let layer = 1; layer <= 60; layer += 1) {
+    const points: Position[] = [];
+    const l = layer * step;
+
+    for (let i = -layer; i <= layer; i += 1) {
+      points.push({ x: base.x + i * step, y: base.y - l });
+      points.push({ x: base.x + i * step, y: base.y + l });
+    }
+    for (let j = -layer + 1; j <= layer - 1; j += 1) {
+      points.push({ x: base.x - l, y: base.y + j * step });
+      points.push({ x: base.x + l, y: base.y + j * step });
+    }
+
+    for (const point of points) {
+      const candidate = clampCandidate(point);
+      if (!overlapsExistingNodes(candidate, kind, existingNodes)) return candidate;
+    }
+  }
+  return base;
+}
+
+function buildCurvePath(start: Position, end: Position): string {
+  const dx = end.x - start.x;
+  const dy = end.y - start.y;
+  const dir = dx === 0 ? 1 : Math.sign(dx);
+  const curve = Math.min(280, Math.max(70, Math.abs(dx) * 0.42));
+  const c1x = start.x + dir * curve;
+  const c1y = start.y + dy * 0.12;
+  const c2x = end.x - dir * curve;
+  const c2y = end.y - dy * 0.12;
+  return `M ${start.x} ${start.y} C ${c1x} ${c1y}, ${c2x} ${c2y}, ${end.x} ${end.y}`;
+}
+
+function buildStraightPath(start: Position, end: Position): string {
+  return `M ${start.x} ${start.y} L ${end.x} ${end.y}`;
+}
+
+function buildOrthogonalPath(start: Position, end: Position): string {
+  const midX = start.x + (end.x - start.x) * 0.5;
+  return `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`;
+}
+
 export default function EstrategiaCreativaPage() {
   const [nodes, setNodes] = useState<BoardNode[]>([
     {
@@ -69,17 +227,23 @@ export default function EstrategiaCreativaPage() {
   const [connections, setConnections] = useState<Connection[]>([]);
   const [nodeData, setNodeData] = useState<NodeDataMap>({});
   const [selectedNodeId, setSelectedNodeId] = useState<string>(PRODUCT_NODE_ID);
+  const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
   const [editorNodeId, setEditorNodeId] = useState<string | null>(null);
   const [newPrompt, setNewPrompt] = useState('');
   const [nodeDrag, setNodeDrag] = useState<NodeDragState>(null);
   const [panDrag, setPanDrag] = useState<PanDragState>(null);
+  const [connectionHandleDrag, setConnectionHandleDrag] = useState<ConnectionHandleDragState>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: -3600, y: -3750, scale: 1 });
 
   const boardRef = useRef<HTMLDivElement | null>(null);
   const angleSequenceRef = useRef(1);
   const hookSequenceRef = useRef(1);
+  const connectionSequenceRef = useRef(1);
 
   const selectedNode = nodes.find((n) => n.id === (editorNodeId || selectedNodeId)) || null;
+  const selectedConnection = selectedConnectionId
+    ? connections.find((line) => line.id === selectedConnectionId) || null
+    : null;
   const selectedData = selectedNode ? getNodeData(nodeData, selectedNode.id) : EMPTY_NODE_DATA;
 
   const angleNodes = useMemo(() => nodes.filter((node) => node.kind === 'angulo'), [nodes]);
@@ -110,14 +274,37 @@ export default function EstrategiaCreativaPage() {
     }));
   };
 
+  const createConnection = (
+    from: string,
+    to: string,
+    fromNodeOverride?: BoardNode,
+    toNodeOverride?: BoardNode,
+  ): Connection => {
+    const id = `conn-${connectionSequenceRef.current}`;
+    connectionSequenceRef.current += 1;
+    const fromNode = fromNodeOverride || nodes.find((node) => node.id === from);
+    const toNode = toNodeOverride || nodes.find((node) => node.id === to);
+    const fromAnchor = fromNode && toNode ? getSmartSideAnchor(fromNode, toNode, 0) : { x: 0, y: 0 };
+    const toAnchor = fromNode && toNode ? getSmartSideAnchor(toNode, fromNode, 0) : { x: 0, y: 0 };
+    return {
+      id,
+      from,
+      to,
+      fromAnchor,
+      toAnchor,
+      style: 'curva',
+    };
+  };
+
   const addAngleFromProduct = () => {
     const angleIndex = angleSequenceRef.current;
     angleSequenceRef.current += 1;
     const nodeId = `angulo-${angleIndex}`;
-    const position: Position = {
+    const desiredPosition: Position = {
       x: PRODUCT_DEFAULT_POS.x + 320,
       y: PRODUCT_DEFAULT_POS.y - 80 + angleIndex * 86,
     };
+    const position = findAvailablePosition(desiredPosition, 'angulo', nodes);
     const newNode: BoardNode = {
       id: nodeId,
       kind: 'angulo',
@@ -127,7 +314,8 @@ export default function EstrategiaCreativaPage() {
     };
 
     setNodes((prev) => [...prev, newNode]);
-    setConnections((prev) => [...prev, { from: PRODUCT_NODE_ID, to: nodeId }]);
+    const productNode = nodes.find((node) => node.id === PRODUCT_NODE_ID);
+    setConnections((prev) => [...prev, createConnection(PRODUCT_NODE_ID, nodeId, productNode, newNode)]);
     setSelectedNodeId(nodeId);
     setEditorNodeId(nodeId);
   };
@@ -157,6 +345,13 @@ export default function EstrategiaCreativaPage() {
       setEditorNodeId(null);
       setNewPrompt('');
     }
+    setSelectedConnectionId((prev) => {
+      if (!prev) return null;
+      const stillExists = connections.some(
+        (line) => line.id === prev && !toRemove.has(line.from) && !toRemove.has(line.to),
+      );
+      return stillExists ? prev : null;
+    });
   };
 
   const removeAngleFromProduct = (angleId: string) => {
@@ -170,19 +365,20 @@ export default function EstrategiaCreativaPage() {
     const hookIndex = hookSequenceRef.current;
     hookSequenceRef.current += 1;
     const nodeId = `hook-${hookIndex}`;
+    const desiredPosition: Position = {
+      x: angleNode.position.x + 300,
+      y: angleNode.position.y + 14,
+    };
     const newNode: BoardNode = {
       id: nodeId,
       kind: 'hook',
       title: `Hook ${hookIndex}`,
       tone: 'neutral',
-      position: {
-        x: angleNode.position.x + 300,
-        y: angleNode.position.y + 14,
-      },
+      position: findAvailablePosition(desiredPosition, 'hook', nodes),
     };
 
     setNodes((prev) => [...prev, newNode]);
-    setConnections((prev) => [...prev, { from: angleId, to: nodeId }]);
+    setConnections((prev) => [...prev, createConnection(angleId, nodeId, angleNode, newNode)]);
     setSelectedNodeId(nodeId);
     setEditorNodeId(nodeId);
     setNewPrompt('');
@@ -191,6 +387,7 @@ export default function EstrategiaCreativaPage() {
   const clearBoard = () => {
     angleSequenceRef.current = 1;
     hookSequenceRef.current = 1;
+    connectionSequenceRef.current = 1;
     setNodes([
       {
         id: PRODUCT_NODE_ID,
@@ -203,10 +400,85 @@ export default function EstrategiaCreativaPage() {
     setConnections([]);
     setNodeData({});
     setSelectedNodeId(PRODUCT_NODE_ID);
+    setSelectedConnectionId(null);
     setEditorNodeId(null);
     setNodeDrag(null);
     setPanDrag(null);
+    setConnectionHandleDrag(null);
     setNewPrompt('');
+  };
+
+  const autoArrangeConnections = () => {
+    const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+    const outgoingByParent = new Map<string, Connection[]>();
+    const incomingByChild = new Map<string, Connection[]>();
+
+    for (const line of connections) {
+      const outgoing = outgoingByParent.get(line.from) || [];
+      outgoing.push(line);
+      outgoingByParent.set(line.from, outgoing);
+
+      const incoming = incomingByChild.get(line.to) || [];
+      incoming.push(line);
+      incomingByChild.set(line.to, incoming);
+    }
+
+    const fromAnchorById = new Map<string, Position>();
+    const toAnchorById = new Map<string, Position>();
+
+    for (const [parentId, lines] of outgoingByParent.entries()) {
+      const parent = nodeMap.get(parentId);
+      if (!parent) continue;
+      const sorted = [...lines].sort((a, b) => {
+        const aTarget = nodeMap.get(a.to);
+        const bTarget = nodeMap.get(b.to);
+        return (aTarget?.position.y || 0) - (bTarget?.position.y || 0);
+      });
+      const spread = 26;
+      sorted.forEach((line, idx) => {
+        const offset = (idx - (sorted.length - 1) / 2) * spread;
+        fromAnchorById.set(line.id, { x: 0, y: offset });
+      });
+    }
+
+    for (const [childId, lines] of incomingByChild.entries()) {
+      const child = nodeMap.get(childId);
+      if (!child) continue;
+      const sorted = [...lines].sort((a, b) => {
+        const aSource = nodeMap.get(a.from);
+        const bSource = nodeMap.get(b.from);
+        return (aSource?.position.y || 0) - (bSource?.position.y || 0);
+      });
+      const spread = 26;
+      sorted.forEach((line, idx) => {
+        const offset = (idx - (sorted.length - 1) / 2) * spread;
+        toAnchorById.set(line.id, { x: 0, y: offset });
+      });
+    }
+
+    setConnections((prev) =>
+      prev.map((line) => {
+        const fromNode = nodeMap.get(line.from);
+        const toNode = nodeMap.get(line.to);
+        const fromSpread = fromAnchorById.get(line.id)?.y || 0;
+        const toSpread = toAnchorById.get(line.id)?.y || 0;
+        const fromAnchor =
+          fromNode && toNode
+            ? getSmartSideAnchor(fromNode, toNode, fromSpread)
+            : fromAnchorById.get(line.id) || { x: 0, y: 0 };
+        const toAnchor =
+          fromNode && toNode
+            ? getSmartSideAnchor(toNode, fromNode, toSpread)
+            : toAnchorById.get(line.id) || { x: 0, y: 0 };
+
+        return {
+          ...line,
+          style: line.style || 'curva',
+          fromAnchor,
+          toAnchor,
+        };
+      }),
+    );
   };
 
   const onBoardWheel = (event: React.WheelEvent<HTMLDivElement>) => {
@@ -226,6 +498,8 @@ export default function EstrategiaCreativaPage() {
 
   const onBoardMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
     const target = event.target as HTMLElement;
+    if (target.closest('[data-connection-handle]')) return;
+    if (target.closest('[data-connection-path]')) return;
     if (target.closest('[data-node-id]')) return;
     setPanDrag({
       startX: event.clientX,
@@ -236,6 +510,25 @@ export default function EstrategiaCreativaPage() {
   };
 
   const onBoardMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (connectionHandleDrag) {
+      const dx = (event.clientX - connectionHandleDrag.startX) / viewport.scale;
+      const dy = (event.clientY - connectionHandleDrag.startY) / viewport.scale;
+      const nextAnchor = {
+        x: connectionHandleDrag.originAnchor.x + dx,
+        y: connectionHandleDrag.originAnchor.y + dy,
+      };
+      setConnections((prev) =>
+        prev.map((line) =>
+          line.id === connectionHandleDrag.connectionId
+            ? connectionHandleDrag.end === 'from'
+              ? { ...line, fromAnchor: nextAnchor }
+              : { ...line, toAnchor: nextAnchor }
+            : line,
+        ),
+      );
+      return;
+    }
+
     if (nodeDrag) {
       const dx = (event.clientX - nodeDrag.startX) / viewport.scale;
       const dy = (event.clientY - nodeDrag.startY) / viewport.scale;
@@ -261,12 +554,28 @@ export default function EstrategiaCreativaPage() {
   };
 
   const onBoardMouseUp = () => {
+    if (connectionHandleDrag) {
+      setConnections((prev) =>
+        prev.map((line) => {
+          if (line.id !== connectionHandleDrag.connectionId) return line;
+          const targetNodeId = connectionHandleDrag.end === 'from' ? line.from : line.to;
+          const targetNode = nodes.find((node) => node.id === targetNodeId);
+          if (!targetNode) return line;
+          if (connectionHandleDrag.end === 'from') {
+            return { ...line, fromAnchor: snapAnchorToNearestSide(targetNode, line.fromAnchor) };
+          }
+          return { ...line, toAnchor: snapAnchorToNearestSide(targetNode, line.toAnchor) };
+        }),
+      );
+    }
     setNodeDrag(null);
     setPanDrag(null);
+    setConnectionHandleDrag(null);
   };
 
   const focusNode = (nodeId: string) => {
     setSelectedNodeId(nodeId);
+    setSelectedConnectionId(null);
   };
 
   const openPromptEditor = (nodeId: string) => {
@@ -320,7 +629,7 @@ export default function EstrategiaCreativaPage() {
           <div>
             <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 24 }}>Estrategia Creativa KOVO</h1>
             <p style={{ margin: '4px 0 0', color: ds.textMuted, fontSize: 12 }}>
-              Tablero infinito: rueda para zoom, arrastra fondo para mover el canvas.
+              Tablero infinito: rueda para zoom, arrastra fondo para mover el canvas y ajusta conectores desde ambos puntos.
             </p>
           </div>
         </div>
@@ -401,17 +710,85 @@ export default function EstrategiaCreativaPage() {
                 const from = nodes.find((n) => n.id === line.from);
                 const to = nodes.find((n) => n.id === line.to);
                 if (!from || !to) return null;
+                const fromCenter = getNodeCenter(from);
+                const toCenter = getNodeCenter(to);
+                const start = {
+                  x: fromCenter.x + line.fromAnchor.x,
+                  y: fromCenter.y + line.fromAnchor.y,
+                };
+                const end = {
+                  x: toCenter.x + line.toAnchor.x,
+                  y: toCenter.y + line.toAnchor.y,
+                };
+                const style = line.style || 'curva';
+                const path =
+                  style === 'recta'
+                    ? buildStraightPath(start, end)
+                    : style === 'ortogonal'
+                      ? buildOrthogonalPath(start, end)
+                      : buildCurvePath(start, end);
+                const isSelected = selectedConnectionId === line.id;
                 return (
-                  <line
-                    key={`${line.from}-${line.to}-${idx}`}
-                    x1={from.position.x + 100}
-                    y1={from.position.y + 30}
-                    x2={to.position.x + 100}
-                    y2={to.position.y + 30}
-                    stroke={ds.brand}
-                    strokeWidth={1.5}
-                    opacity={0.85}
-                  />
+                  <g key={line.id || `${line.from}-${line.to}-${idx}`}>
+                    <path
+                      data-connection-path={line.id}
+                      d={path}
+                      stroke={ds.brand}
+                      strokeWidth={isSelected ? 2.4 : 1.8}
+                      fill="none"
+                      opacity={isSelected ? 1 : 0.88}
+                      style={{ pointerEvents: 'all', cursor: 'pointer' }}
+                      onMouseDown={(event) => {
+                        event.stopPropagation();
+                        setSelectedConnectionId(line.id);
+                        setEditorNodeId(null);
+                      }}
+                    />
+                    <circle
+                      data-connection-handle="from"
+                      cx={start.x}
+                      cy={start.y}
+                      r={isSelected ? 6.5 : 5.5}
+                      fill={isSelected ? ds.brandBg : ds.bgCard}
+                      stroke={ds.brand}
+                      strokeWidth={1.5}
+                      style={{ pointerEvents: 'all', cursor: 'pointer' }}
+                      onMouseDown={(event) => {
+                        event.stopPropagation();
+                        setSelectedConnectionId(line.id);
+                        setEditorNodeId(null);
+                        setConnectionHandleDrag({
+                          connectionId: line.id,
+                          end: 'from',
+                          startX: event.clientX,
+                          startY: event.clientY,
+                          originAnchor: line.fromAnchor,
+                        });
+                      }}
+                    />
+                    <circle
+                      data-connection-handle="to"
+                      cx={end.x}
+                      cy={end.y}
+                      r={isSelected ? 6.5 : 5.5}
+                      fill={isSelected ? ds.brandBg : ds.bgCard}
+                      stroke={ds.brand}
+                      strokeWidth={1.5}
+                      style={{ pointerEvents: 'all', cursor: 'pointer' }}
+                      onMouseDown={(event) => {
+                        event.stopPropagation();
+                        setSelectedConnectionId(line.id);
+                        setEditorNodeId(null);
+                        setConnectionHandleDrag({
+                          connectionId: line.id,
+                          end: 'to',
+                          startX: event.clientX,
+                          startY: event.clientY,
+                          originAnchor: line.toAnchor,
+                        });
+                      }}
+                    />
+                  </g>
                 );
               })}
             </svg>
@@ -624,7 +1001,50 @@ export default function EstrategiaCreativaPage() {
               <span style={counterBadgeStyle}>{hookNodes.length} hooks</span>
               <span style={counterBadgeStyle}>{totalPrompts} prompts</span>
             </div>
+            <div style={{ marginTop: 8 }}>
+              <button type="button" onClick={autoArrangeConnections} style={{ ...actionBtnStyle('secondary'), width: '100%' }}>
+                Autoordenar conectores
+              </button>
+            </div>
           </div>
+
+          {selectedConnection ? (
+            <div
+              style={{
+                border: `1px solid ${ds.borderCard}`,
+                borderRadius: 10,
+                padding: 10,
+                marginBottom: 10,
+                background: ds.bgSubtle,
+              }}
+            >
+              <div style={{ fontSize: 12, fontWeight: 700, color: ds.textPrimary, marginBottom: 8 }}>
+                Conexion seleccionada
+              </div>
+              <div style={{ fontSize: 11, color: ds.textMuted, marginBottom: 8 }}>
+                {selectedConnection.from} {'->'} {selectedConnection.to}
+              </div>
+              <label style={{ display: 'grid', gap: 6 }}>
+                <span style={{ fontSize: 11, color: ds.textSecondary }}>Estilo de linea</span>
+                <select
+                  value={selectedConnection.style}
+                  onChange={(event) => {
+                    const nextStyle = event.target.value as ConnectionStyle;
+                    setConnections((prev) =>
+                      prev.map((line) =>
+                        line.id === selectedConnection.id ? { ...line, style: nextStyle } : line,
+                      ),
+                    );
+                  }}
+                  style={inputStyle}
+                >
+                  <option value="curva">Curva</option>
+                  <option value="recta">Recta</option>
+                  <option value="ortogonal">Ortogonal</option>
+                </select>
+              </label>
+            </div>
+          ) : null}
 
           {!editorNodeId || !selectedNode ? (
             <div
