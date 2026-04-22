@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ds } from '../design-system/ds';
 
 type Tone = 'neutral' | 'info' | 'success' | 'warning';
-type NodeKind = 'producto' | 'angulo' | 'hook';
+type NodeKind = 'producto' | 'angulo' | 'hook' | 'formato' | 'estructura' | 'creativo';
 type Position = { x: number; y: number };
 type Viewport = { x: number; y: number; scale: number };
 type ConnectionStyle = 'curva' | 'recta' | 'ortogonal';
@@ -88,10 +88,11 @@ function getNodeCenter(node: BoardNode, size: { width: number; height: number })
 function getNodeSizeByKind(kind: NodeKind): { width: number; height: number } {
   if (kind === 'producto') return { width: 240, height: 330 };
   if (kind === 'angulo') return { width: 210, height: 272 };
-  return {
-    width: 210,
-    height: 124,
-  };
+  if (kind === 'hook') return { width: 210, height: 220 };
+  if (kind === 'formato') return { width: 210, height: 248 };
+  if (kind === 'estructura') return { width: 210, height: 248 };
+  if (kind === 'creativo') return { width: 240, height: 280 };
+  return { width: 210, height: 124 };
 }
 
 function clamp(n: number, min: number, max: number): number {
@@ -255,6 +256,9 @@ export default function EstrategiaCreativaPage() {
   const saveTimersRef = useRef<Record<string, number | undefined>>({});
   const angleSequenceRef = useRef(1);
   const hookSequenceRef = useRef(1);
+  const formatoSequenceRef = useRef(1);
+  const estructuraSequenceRef = useRef(1);
+  const creativoSequenceRef = useRef(1);
   const connectionSequenceRef = useRef(1);
   const productImageObjectUrlsRef = useRef<Record<string, string>>({});
 
@@ -277,6 +281,9 @@ export default function EstrategiaCreativaPage() {
 
   const angleNodes = useMemo(() => nodes.filter((node) => node.kind === 'angulo'), [nodes]);
   const hookNodes = useMemo(() => nodes.filter((node) => node.kind === 'hook'), [nodes]);
+  const formatoNodes = useMemo(() => nodes.filter((node) => node.kind === 'formato'), [nodes]);
+  const estructuraNodes = useMemo(() => nodes.filter((node) => node.kind === 'estructura'), [nodes]);
+  const creativoNodes = useMemo(() => nodes.filter((node) => node.kind === 'creativo'), [nodes]);
   const connectedAngles = useMemo(() => {
     const connectedIds = new Set(
       connections
@@ -448,6 +455,90 @@ export default function EstrategiaCreativaPage() {
     setNewPrompt('');
   };
 
+  const addFormatoFromHook = (hookId: string) => {
+    const hookNode = nodes.find((node) => node.id === hookId);
+    if (!hookNode) return;
+    if (getChildrenByParent(hookId, 'formato').length > 0) return;
+
+    const formatoIndex = formatoSequenceRef.current;
+    formatoSequenceRef.current += 1;
+    const nodeId = `formato-${formatoIndex}`;
+    const desiredPosition: Position = {
+      x: hookNode.position.x + 300,
+      y: hookNode.position.y + 18,
+    };
+    const newNode: BoardNode = {
+      id: nodeId,
+      kind: 'formato',
+      title: `Formato ${formatoIndex}`,
+      tone: 'success',
+      position: findAvailablePosition(desiredPosition, 'formato', nodes),
+    };
+
+    setNodes((prev) => [...prev, newNode]);
+    setNodeStatus((prev) => ({ ...prev, [nodeId]: 'guardado' }));
+    setConnections((prev) => [...prev, createConnection(hookId, nodeId, hookNode, newNode)]);
+    setSelectedNodeId(nodeId);
+    setEditorNodeId(nodeId);
+    setNewPrompt('');
+  };
+
+  const addEstructuraFromFormato = (formatoId: string) => {
+    const formatoNode = nodes.find((node) => node.id === formatoId);
+    if (!formatoNode) return;
+    if (getChildrenByParent(formatoId, 'estructura').length > 0) return;
+
+    const estructuraIndex = estructuraSequenceRef.current;
+    estructuraSequenceRef.current += 1;
+    const nodeId = `estructura-${estructuraIndex}`;
+    const desiredPosition: Position = {
+      x: formatoNode.position.x + 300,
+      y: formatoNode.position.y + 18,
+    };
+    const newNode: BoardNode = {
+      id: nodeId,
+      kind: 'estructura',
+      title: `Estructura ${estructuraIndex}`,
+      tone: 'warning',
+      position: findAvailablePosition(desiredPosition, 'estructura', nodes),
+    };
+
+    setNodes((prev) => [...prev, newNode]);
+    setNodeStatus((prev) => ({ ...prev, [nodeId]: 'guardado' }));
+    setConnections((prev) => [...prev, createConnection(formatoId, nodeId, formatoNode, newNode)]);
+    setSelectedNodeId(nodeId);
+    setEditorNodeId(nodeId);
+    setNewPrompt('');
+  };
+
+  const addCreativoFromEstructura = (estructuraId: string) => {
+    const estructuraNode = nodes.find((node) => node.id === estructuraId);
+    if (!estructuraNode) return;
+    if (getChildrenByParent(estructuraId, 'creativo').length > 0) return;
+
+    const creativoIndex = creativoSequenceRef.current;
+    creativoSequenceRef.current += 1;
+    const nodeId = `creativo-${creativoIndex}`;
+    const desiredPosition: Position = {
+      x: estructuraNode.position.x + 320,
+      y: estructuraNode.position.y + 18,
+    };
+    const newNode: BoardNode = {
+      id: nodeId,
+      kind: 'creativo',
+      title: `Creativo ${creativoIndex}`,
+      tone: 'info',
+      position: findAvailablePosition(desiredPosition, 'creativo', nodes),
+    };
+
+    setNodes((prev) => [...prev, newNode]);
+    setNodeStatus((prev) => ({ ...prev, [nodeId]: 'guardado' }));
+    setConnections((prev) => [...prev, createConnection(estructuraId, nodeId, estructuraNode, newNode)]);
+    setSelectedNodeId(nodeId);
+    setEditorNodeId(nodeId);
+    setNewPrompt('');
+  };
+
   const clearBoard = () => {
     for (const url of Object.values(productImageObjectUrlsRef.current)) {
       if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
@@ -459,6 +550,9 @@ export default function EstrategiaCreativaPage() {
     productImageObjectUrlsRef.current = {};
     angleSequenceRef.current = 1;
     hookSequenceRef.current = 1;
+    formatoSequenceRef.current = 1;
+    estructuraSequenceRef.current = 1;
+    creativoSequenceRef.current = 1;
     connectionSequenceRef.current = 1;
     setNodes([
       {
@@ -826,10 +920,37 @@ export default function EstrategiaCreativaPage() {
               const nodeSize = getNodeRenderSize(node);
               const productIsNode = node.kind === 'producto';
               const angleIsNode = node.kind === 'angulo';
+              const hookIsNode = node.kind === 'hook';
+              const formatoIsNode = node.kind === 'formato';
+              const estructuraIsNode = node.kind === 'estructura';
+              const creativoIsNode = node.kind === 'creativo';
               const productName = data.productName.trim();
               const displayTitle = productIsNode && productName ? productName : node.title;
               const showAnglesInsideProduct = productIsNode && connectedAngles.length > 0;
               const connectedHooks = angleIsNode ? getChildrenByParent(node.id, 'hook') : [];
+              const connectedFormatos = hookIsNode ? getChildrenByParent(node.id, 'formato') : [];
+              const connectedEstructuras = formatoIsNode ? getChildrenByParent(node.id, 'estructura') : [];
+              const connectedCreativos = estructuraIsNode ? getChildrenByParent(node.id, 'creativo') : [];
+              const cardOverflowVisible =
+                productIsNode ||
+                angleIsNode ||
+                hookIsNode ||
+                formatoIsNode ||
+                estructuraIsNode ||
+                creativoIsNode;
+              const nodeKindLabel = productIsNode
+                ? 'Producto base'
+                : angleIsNode
+                  ? 'Angulo de venta'
+                  : hookIsNode
+                    ? 'Hook'
+                    : formatoIsNode
+                      ? 'Formato'
+                      : estructuraIsNode
+                        ? 'Estructura'
+                        : creativoIsNode
+                          ? 'Creativo'
+                          : 'Cuadro';
               return (
                 <div
                   key={node.id}
@@ -870,7 +991,7 @@ export default function EstrategiaCreativaPage() {
                     borderRadius: 10,
                     background: palette.fill,
                     padding: '8px 10px',
-                    overflowY: productIsNode ? 'visible' : 'auto',
+                    overflowY: cardOverflowVisible ? 'visible' : 'auto',
                     cursor: 'grab',
                   }}
                 >
@@ -880,7 +1001,7 @@ export default function EstrategiaCreativaPage() {
                   </div>
 
                   <p style={{ margin: '6px 0', fontSize: 11, color: ds.textMuted }}>
-                    {data.objective || (productIsNode ? 'Producto base' : angleIsNode ? 'Angulo de venta' : 'Hook')}
+                    {data.objective || nodeKindLabel}
                   </p>
 
                   {productIsNode ? (
@@ -1109,6 +1230,233 @@ export default function EstrategiaCreativaPage() {
                     </div>
                   ) : null}
 
+                  {hookIsNode ? (
+                    <div style={{ display: 'grid', gap: 6, marginBottom: 6 }}>
+                      {connectedFormatos.length === 0 ? (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            addFormatoFromHook(node.id);
+                          }}
+                          style={{ ...actionBtnStyle('secondary'), fontSize: 11, padding: '5px 8px' }}
+                        >
+                          + Agregar formato
+                        </button>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 4 }}>
+                          {connectedFormatos.map((formato) => (
+                            <div
+                              key={`hook-formato-${formato.id}`}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 6,
+                                border: `1px solid ${ds.borderCard}`,
+                                borderRadius: 8,
+                                padding: '4px 6px',
+                                background: ds.bgCard,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  focusNode(formato.id);
+                                }}
+                                style={{
+                                  border: 'none',
+                                  background: 'transparent',
+                                  color: ds.textSecondary,
+                                  fontSize: 11,
+                                  textAlign: 'left',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {formato.title}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  removeNodeCascade(formato.id, node.id);
+                                }}
+                                style={{ ...actionBtnStyle('ghost'), fontSize: 10, padding: '3px 6px' }}
+                              >
+                                Quitar
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {formatoIsNode ? (
+                    <div style={{ display: 'grid', gap: 6, marginBottom: 6 }}>
+                      <input
+                        value={node.title}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          markNodeChanged(node.id);
+                          setNodes((prev) =>
+                            prev.map((item) => (item.id === node.id ? { ...item, title: value } : item)),
+                          );
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        placeholder="Nombre del formato"
+                        style={inputStyle}
+                      />
+                      {connectedEstructuras.length === 0 ? (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            addEstructuraFromFormato(node.id);
+                          }}
+                          style={{ ...actionBtnStyle('secondary'), fontSize: 11, padding: '5px 8px' }}
+                        >
+                          + Agregar estructura
+                        </button>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 4 }}>
+                          {connectedEstructuras.map((estructura) => (
+                            <div
+                              key={`formato-estructura-${estructura.id}`}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 6,
+                                border: `1px solid ${ds.borderCard}`,
+                                borderRadius: 8,
+                                padding: '4px 6px',
+                                background: ds.bgCard,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  focusNode(estructura.id);
+                                }}
+                                style={{
+                                  border: 'none',
+                                  background: 'transparent',
+                                  color: ds.textSecondary,
+                                  fontSize: 11,
+                                  textAlign: 'left',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {estructura.title}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  removeNodeCascade(estructura.id, node.id);
+                                }}
+                                style={{ ...actionBtnStyle('ghost'), fontSize: 10, padding: '3px 6px' }}
+                              >
+                                Quitar
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {estructuraIsNode ? (
+                    <div style={{ display: 'grid', gap: 6, marginBottom: 6 }}>
+                      <input
+                        value={node.title}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          markNodeChanged(node.id);
+                          setNodes((prev) =>
+                            prev.map((item) => (item.id === node.id ? { ...item, title: value } : item)),
+                          );
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        placeholder="Nombre de la estructura"
+                        style={inputStyle}
+                      />
+                      {connectedCreativos.length === 0 ? (
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            addCreativoFromEstructura(node.id);
+                          }}
+                          style={{ ...actionBtnStyle('secondary'), fontSize: 11, padding: '5px 8px' }}
+                        >
+                          + Agregar creativo
+                        </button>
+                      ) : (
+                        <div style={{ display: 'grid', gap: 4 }}>
+                          {connectedCreativos.map((creativo) => (
+                            <div
+                              key={`estructura-creativo-${creativo.id}`}
+                              style={{
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'space-between',
+                                gap: 6,
+                                border: `1px solid ${ds.borderCard}`,
+                                borderRadius: 8,
+                                padding: '4px 6px',
+                                background: ds.bgCard,
+                              }}
+                            >
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  focusNode(creativo.id);
+                                }}
+                                style={{
+                                  border: 'none',
+                                  background: 'transparent',
+                                  color: ds.textSecondary,
+                                  fontSize: 11,
+                                  textAlign: 'left',
+                                  cursor: 'pointer',
+                                  padding: 0,
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {creativo.title}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  removeNodeCascade(creativo.id, node.id);
+                                }}
+                                style={{ ...actionBtnStyle('ghost'), fontSize: 10, padding: '3px 6px' }}
+                              >
+                                Quitar
+                              </button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  ) : null}
+
+                  {creativoIsNode ? (
+                    <p style={{ margin: '0 0 6px', fontSize: 11, color: ds.textMuted }}>
+                      Pieza final: usa <strong>Archivos</strong> para referencias y prompts.
+                    </p>
+                  ) : null}
+
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
                     <button
                       type="button"
@@ -1143,6 +1491,9 @@ export default function EstrategiaCreativaPage() {
               <span style={counterBadgeStyle}>{nodes.length} cuadros</span>
               <span style={counterBadgeStyle}>{angleNodes.length} angulos</span>
               <span style={counterBadgeStyle}>{hookNodes.length} hooks</span>
+              <span style={counterBadgeStyle}>{formatoNodes.length} formatos</span>
+              <span style={counterBadgeStyle}>{estructuraNodes.length} estructuras</span>
+              <span style={counterBadgeStyle}>{creativoNodes.length} creativos</span>
               <span style={counterBadgeStyle}>{totalPrompts} archivos</span>
             </div>
             <div style={{ marginTop: 8 }}>
