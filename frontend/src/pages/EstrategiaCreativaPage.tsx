@@ -1,4 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+  type MutableRefObject,
+} from 'react';
 import { ds } from '../design-system/ds';
 
 type Tone = 'neutral' | 'info' | 'success' | 'warning';
@@ -21,9 +29,13 @@ type BoardNode = {
   tone: Tone;
   position: Position;
 };
+type CreativeMediaKind = '' | 'image' | 'video';
+
 type NodeData = {
   productName: string;
   productImageSrc: string;
+  creativeMediaSrc: string;
+  creativeMediaKind: CreativeMediaKind;
   objective: string;
   structure: string;
   description: string;
@@ -60,6 +72,8 @@ const PRODUCT_DEFAULT_POS: Position = { x: BOARD_CENTER, y: BOARD_CENTER };
 const EMPTY_NODE_DATA: NodeData = {
   productName: '',
   productImageSrc: '',
+  creativeMediaSrc: '',
+  creativeMediaKind: '',
   objective: '',
   structure: '',
   description: '',
@@ -91,7 +105,7 @@ function getNodeSizeByKind(kind: NodeKind): { width: number; height: number } {
   if (kind === 'hook') return { width: 210, height: 220 };
   if (kind === 'formato') return { width: 210, height: 248 };
   if (kind === 'estructura') return { width: 210, height: 248 };
-  if (kind === 'creativo') return { width: 240, height: 280 };
+  if (kind === 'creativo') return { width: 260, height: 380 };
   return { width: 210, height: 124 };
 }
 
@@ -228,18 +242,227 @@ function buildOrthogonalPath(start: Position, end: Position): string {
   return `M ${start.x} ${start.y} L ${midX} ${start.y} L ${midX} ${end.y} L ${end.x} ${end.y}`;
 }
 
+const FLOW_STORAGE_KEY = 'kovo_estrategia_creativa_flows_v1';
+const DEFAULT_VIEWPORT: Viewport = { x: -3600, y: -3750, scale: 1 };
+const DEFAULT_PRODUCT_NODES: BoardNode[] = [
+  {
+    id: PRODUCT_NODE_ID,
+    kind: 'producto',
+    title: 'Producto',
+    tone: 'warning',
+    position: PRODUCT_DEFAULT_POS,
+  },
+];
+
+type FlowSnapshotV1 = {
+  version: 1;
+  nodes: BoardNode[];
+  connections: Connection[];
+  nodeData: NodeDataMap;
+  viewport: Viewport;
+};
+
+type SavedFlow = {
+  id: string;
+  name: string;
+  updatedAt: string;
+  snapshot: FlowSnapshotV1;
+};
+
+type FlowCatalogV1 = {
+  version: 1;
+  flows: SavedFlow[];
+  activeFlowId: string | null;
+};
+
+type SequenceRefsBundle = {
+  angleSequenceRef: MutableRefObject<number>;
+  hookSequenceRef: MutableRefObject<number>;
+  formatoSequenceRef: MutableRefObject<number>;
+  estructuraSequenceRef: MutableRefObject<number>;
+  creativoSequenceRef: MutableRefObject<number>;
+  connectionSequenceRef: MutableRefObject<number>;
+};
+
+function readFlowCatalog(): FlowCatalogV1 {
+  if (typeof window === 'undefined') {
+    return { version: 1, flows: [], activeFlowId: null };
+  }
+  try {
+    const raw = localStorage.getItem(FLOW_STORAGE_KEY);
+    if (!raw) return { version: 1, flows: [], activeFlowId: null };
+    const parsed = JSON.parse(raw) as Partial<FlowCatalogV1>;
+    if (!parsed || parsed.version !== 1 || !Array.isArray(parsed.flows)) {
+      return { version: 1, flows: [], activeFlowId: null };
+    }
+    const flows = parseSavedFlows(parsed.flows);
+    const activeFlowId =
+      typeof parsed.activeFlowId === 'string' && flows.some((f) => f.id === parsed.activeFlowId)
+        ? parsed.activeFlowId
+        : flows.length > 0
+          ? flows[0].id
+          : null;
+    return { version: 1, flows, activeFlowId };
+  } catch {
+    return { version: 1, flows: [], activeFlowId: null };
+  }
+}
+
+function parseSavedFlows(raw: unknown[]): SavedFlow[] {
+  const out: SavedFlow[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== 'object') continue;
+    const rec = item as Record<string, unknown>;
+    if (typeof rec.id !== 'string' || typeof rec.name !== 'string' || typeof rec.updatedAt !== 'string') continue;
+    const snap = rec.snapshot as Record<string, unknown> | undefined;
+    if (!snap || snap.version !== 1 || !Array.isArray(snap.nodes) || !Array.isArray(snap.connections)) continue;
+    if (!snap.nodeData || typeof snap.nodeData !== 'object') continue;
+    const vp = snap.viewport as Partial<Viewport> | undefined;
+    const viewport: Viewport =
+      vp &&
+      typeof vp.x === 'number' &&
+      typeof vp.y === 'number' &&
+      typeof vp.scale === 'number' &&
+      Number.isFinite(vp.x) &&
+      Number.isFinite(vp.y) &&
+      Number.isFinite(vp.scale)
+        ? { x: vp.x, y: vp.y, scale: vp.scale }
+        : DEFAULT_VIEWPORT;
+    out.push({
+      id: rec.id,
+      name: rec.name,
+      updatedAt: rec.updatedAt,
+      snapshot: {
+        version: 1,
+        nodes: snap.nodes as BoardNode[],
+        connections: snap.connections as Connection[],
+        nodeData: snap.nodeData as NodeDataMap,
+        viewport,
+      },
+    });
+  }
+  return out;
+}
+
+function writeFlowCatalog(catalog: FlowCatalogV1) {
+  if (typeof window === 'undefined') return;
+  try {
+    localStorage.setItem(FLOW_STORAGE_KEY, JSON.stringify(catalog));
+  } catch {
+    /* quota o modo privado */
+  }
+}
+
+function newFlowId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `flow-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+}
+
+async function srcToPersistable(src: string): Promise<string> {
+  if (!src || !src.startsWith('blob:')) return src;
+  try {
+    const res = await fetch(src);
+    const blob = await res.blob();
+    return await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(typeof reader.result === 'string' ? reader.result : '');
+      reader.onerror = () => reject(new Error('read'));
+      reader.readAsDataURL(blob);
+    });
+  } catch {
+    return '';
+  }
+}
+
+async function nodeDataToPersistable(map: NodeDataMap): Promise<NodeDataMap> {
+  const out: NodeDataMap = {};
+  for (const [id, data] of Object.entries(map)) {
+    const productImageSrc = await srcToPersistable(data.productImageSrc);
+    const creativeMediaSrc = await srcToPersistable(data.creativeMediaSrc);
+    out[id] = {
+      ...data,
+      productImageSrc,
+      creativeMediaSrc,
+      creativeMediaKind: creativeMediaSrc ? data.creativeMediaKind : ('' as CreativeMediaKind),
+    };
+  }
+  return out;
+}
+
+function syncSequenceRefsFromGraph(nodes: BoardNode[], connections: Connection[], refs: SequenceRefsBundle) {
+  const maxMatch = (pattern: RegExp) => {
+    let m = 0;
+    for (const node of nodes) {
+      const hit = pattern.exec(node.id);
+      if (hit) m = Math.max(m, parseInt(hit[1], 10));
+    }
+    return m;
+  };
+  refs.angleSequenceRef.current = Math.max(1, maxMatch(/^angulo-(\d+)$/) + 1);
+  refs.hookSequenceRef.current = Math.max(1, maxMatch(/^hook-(\d+)$/) + 1);
+  refs.formatoSequenceRef.current = Math.max(1, maxMatch(/^formato-(\d+)$/) + 1);
+  refs.estructuraSequenceRef.current = Math.max(1, maxMatch(/^estructura-(\d+)$/) + 1);
+  refs.creativoSequenceRef.current = Math.max(1, maxMatch(/^creativo-(\d+)$/) + 1);
+  let maxConn = 0;
+  for (const line of connections) {
+    const hit = /^conn-(\d+)$/.exec(line.id);
+    if (hit) maxConn = Math.max(maxConn, parseInt(hit[1], 10));
+  }
+  refs.connectionSequenceRef.current = Math.max(1, maxConn + 1);
+}
+
+function cloneSnapshotForEditor(snap: FlowSnapshotV1): FlowSnapshotV1 {
+  return {
+    version: 1,
+    nodes: JSON.parse(JSON.stringify(snap.nodes)) as BoardNode[],
+    connections: JSON.parse(JSON.stringify(snap.connections)) as Connection[],
+    nodeData: JSON.parse(JSON.stringify(snap.nodeData)) as NodeDataMap,
+    viewport: { ...snap.viewport },
+  };
+}
+
+function readBootState() {
+  const catalog = readFlowCatalog();
+  const active =
+    catalog.activeFlowId && catalog.flows.find((flow) => flow.id === catalog.activeFlowId);
+  if (active) {
+    const cloned = cloneSnapshotForEditor(active.snapshot);
+    return {
+      catalog,
+      initialNodes: cloned.nodes,
+      initialConnections: cloned.connections,
+      initialNodeData: cloned.nodeData,
+      initialViewport: cloned.viewport,
+      initialFlowName: active.name,
+      initialActiveFlowId: active.id,
+    };
+  }
+  return {
+    catalog,
+    initialNodes: DEFAULT_PRODUCT_NODES,
+    initialConnections: [] as Connection[],
+    initialNodeData: {} as NodeDataMap,
+    initialViewport: DEFAULT_VIEWPORT,
+    initialFlowName: '',
+    initialActiveFlowId: null as string | null,
+  };
+}
+
+const BOOT = readBootState();
+
 export default function EstrategiaCreativaPage() {
-  const [nodes, setNodes] = useState<BoardNode[]>([
-    {
-      id: PRODUCT_NODE_ID,
-      kind: 'producto',
-      title: 'Producto',
-      tone: 'warning',
-      position: PRODUCT_DEFAULT_POS,
-    },
-  ]);
-  const [connections, setConnections] = useState<Connection[]>([]);
-  const [nodeData, setNodeData] = useState<NodeDataMap>({});
+  const [savedFlows, setSavedFlows] = useState<SavedFlow[]>(() => [...BOOT.catalog.flows]);
+  const [activeFlowId, setActiveFlowId] = useState<string | null>(() => BOOT.initialActiveFlowId);
+  const [flowNameInput, setFlowNameInput] = useState(() => BOOT.initialFlowName);
+  const [flowDirty, setFlowDirty] = useState(false);
+  const [flowMessage, setFlowMessage] = useState<string | null>(null);
+  const [isSavingFlow, setIsSavingFlow] = useState(false);
+
+  const [nodes, setNodes] = useState<BoardNode[]>(() => BOOT.initialNodes);
+  const [connections, setConnections] = useState<Connection[]>(() => BOOT.initialConnections);
+  const [nodeData, setNodeData] = useState<NodeDataMap>(() => BOOT.initialNodeData);
   const [nodeStatus, setNodeStatus] = useState<NodeStatusMap>({});
   const [selectedNodeId, setSelectedNodeId] = useState<string>(PRODUCT_NODE_ID);
   const [selectedConnectionId, setSelectedConnectionId] = useState<string | null>(null);
@@ -248,11 +471,12 @@ export default function EstrategiaCreativaPage() {
   const [nodeDrag, setNodeDrag] = useState<NodeDragState>(null);
   const [panDrag, setPanDrag] = useState<PanDragState>(null);
   const [connectionHandleDrag, setConnectionHandleDrag] = useState<ConnectionHandleDragState>(null);
-  const [viewport, setViewport] = useState<Viewport>({ x: -3600, y: -3750, scale: 1 });
+  const [viewport, setViewport] = useState<Viewport>(() => BOOT.initialViewport);
   const [nodeSizeMap, setNodeSizeMap] = useState<Record<string, { width: number; height: number }>>({});
 
   const boardRef = useRef<HTMLDivElement | null>(null);
   const productImageInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
+  const creativoMediaInputRefs = useRef<Record<string, HTMLInputElement | null>>({});
   const saveTimersRef = useRef<Record<string, number | undefined>>({});
   const angleSequenceRef = useRef(1);
   const hookSequenceRef = useRef(1);
@@ -261,6 +485,36 @@ export default function EstrategiaCreativaPage() {
   const creativoSequenceRef = useRef(1);
   const connectionSequenceRef = useRef(1);
   const productImageObjectUrlsRef = useRef<Record<string, string>>({});
+
+  const sequenceRefsBundle: SequenceRefsBundle = {
+    angleSequenceRef,
+    hookSequenceRef,
+    formatoSequenceRef,
+    estructuraSequenceRef,
+    creativoSequenceRef,
+    connectionSequenceRef,
+  };
+
+  const releaseBoardMediaAndTimers = () => {
+    for (const url of Object.values(productImageObjectUrlsRef.current)) {
+      if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+    }
+    for (const timerId of Object.values(saveTimersRef.current)) {
+      if (timerId) window.clearTimeout(timerId);
+    }
+    saveTimersRef.current = {};
+    productImageObjectUrlsRef.current = {};
+  };
+
+  useLayoutEffect(() => {
+    syncSequenceRefsFromGraph(nodes, connections, sequenceRefsBundle);
+    // Solo hidrata contadores de ids a partir del tablero inicial.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    writeFlowCatalog({ version: 1, flows: savedFlows, activeFlowId });
+  }, [savedFlows, activeFlowId]);
 
   useEffect(() => {
     return () => {
@@ -306,6 +560,10 @@ export default function EstrategiaCreativaPage() {
   const getNodeRenderSize = (node: BoardNode): { width: number; height: number } =>
     nodeSizeMap[node.id] || getNodeSizeByKind(node.kind);
 
+  const markFlowDirty = useCallback(() => {
+    setFlowDirty(true);
+  }, []);
+
   const markNodeChanged = (nodeId: string) => {
     setNodeStatus((prev) => ({ ...prev, [nodeId]: 'sin_guardar' }));
     const prevTimer = saveTimersRef.current[nodeId];
@@ -317,6 +575,7 @@ export default function EstrategiaCreativaPage() {
   };
 
   const updateNodeData = (nodeId: string, patch: Partial<NodeData>) => {
+    markFlowDirty();
     markNodeChanged(nodeId);
     setNodeData((prev) => ({
       ...prev,
@@ -375,6 +634,7 @@ export default function EstrategiaCreativaPage() {
     setConnections((prev) => [...prev, createConnection(PRODUCT_NODE_ID, nodeId, productNode, newNode)]);
     setSelectedNodeId(nodeId);
     setEditorNodeId(nodeId);
+    markFlowDirty();
   };
 
   const removeNodeCascade = (rootNodeId: string, fallbackSelectedNodeId: string = PRODUCT_NODE_ID) => {
@@ -422,6 +682,7 @@ export default function EstrategiaCreativaPage() {
       );
       return stillExists ? prev : null;
     });
+    markFlowDirty();
   };
 
   const removeAngleFromProduct = (angleId: string) => {
@@ -453,6 +714,7 @@ export default function EstrategiaCreativaPage() {
     setSelectedNodeId(nodeId);
     setEditorNodeId(nodeId);
     setNewPrompt('');
+    markFlowDirty();
   };
 
   const addFormatoFromHook = (hookId: string) => {
@@ -481,6 +743,7 @@ export default function EstrategiaCreativaPage() {
     setSelectedNodeId(nodeId);
     setEditorNodeId(nodeId);
     setNewPrompt('');
+    markFlowDirty();
   };
 
   const addEstructuraFromFormato = (formatoId: string) => {
@@ -509,6 +772,7 @@ export default function EstrategiaCreativaPage() {
     setSelectedNodeId(nodeId);
     setEditorNodeId(nodeId);
     setNewPrompt('');
+    markFlowDirty();
   };
 
   const addCreativoFromEstructura = (estructuraId: string) => {
@@ -537,17 +801,11 @@ export default function EstrategiaCreativaPage() {
     setSelectedNodeId(nodeId);
     setEditorNodeId(nodeId);
     setNewPrompt('');
+    markFlowDirty();
   };
 
   const clearBoard = () => {
-    for (const url of Object.values(productImageObjectUrlsRef.current)) {
-      if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
-    }
-    for (const timerId of Object.values(saveTimersRef.current)) {
-      if (timerId) window.clearTimeout(timerId);
-    }
-    saveTimersRef.current = {};
-    productImageObjectUrlsRef.current = {};
+    releaseBoardMediaAndTimers();
     angleSequenceRef.current = 1;
     hookSequenceRef.current = 1;
     formatoSequenceRef.current = 1;
@@ -573,6 +831,204 @@ export default function EstrategiaCreativaPage() {
     setPanDrag(null);
     setConnectionHandleDrag(null);
     setNewPrompt('');
+    markFlowDirty();
+  };
+
+  const applySnapshotFromFlow = (snap: FlowSnapshotV1) => {
+    releaseBoardMediaAndTimers();
+    const cloned = cloneSnapshotForEditor(snap);
+    syncSequenceRefsFromGraph(cloned.nodes, cloned.connections, sequenceRefsBundle);
+    setNodes(cloned.nodes);
+    setConnections(cloned.connections);
+    setNodeData(cloned.nodeData);
+    setViewport(cloned.viewport);
+    setNodeSizeMap({});
+    setNodeStatus({});
+    setSelectedNodeId(PRODUCT_NODE_ID);
+    setSelectedConnectionId(null);
+    setEditorNodeId(null);
+    setNodeDrag(null);
+    setPanDrag(null);
+    setConnectionHandleDrag(null);
+    setNewPrompt('');
+  };
+
+  const loadFlowById = (flowId: string) => {
+    const flow = savedFlows.find((item) => item.id === flowId);
+    if (!flow) return;
+    if (flowId === activeFlowId && !flowDirty) return;
+    if (flowDirty) {
+      if (!window.confirm('Hay cambios sin guardar. ¿Descartarlos y cargar el flujo seleccionado?')) return;
+    }
+    applySnapshotFromFlow(flow.snapshot);
+    setActiveFlowId(flow.id);
+    setFlowNameInput(flow.name);
+    setFlowDirty(false);
+    setFlowMessage(null);
+  };
+
+  const createNewFlow = () => {
+    if (flowDirty && !window.confirm('Hay cambios sin guardar. ¿Crear un flujo nuevo y descartarlos?')) return;
+    releaseBoardMediaAndTimers();
+    angleSequenceRef.current = 1;
+    hookSequenceRef.current = 1;
+    formatoSequenceRef.current = 1;
+    estructuraSequenceRef.current = 1;
+    creativoSequenceRef.current = 1;
+    connectionSequenceRef.current = 1;
+    setNodes([...DEFAULT_PRODUCT_NODES]);
+    setConnections([]);
+    setNodeData({});
+    setNodeStatus({});
+    setViewport({ ...DEFAULT_VIEWPORT });
+    setNodeSizeMap({});
+    setSelectedNodeId(PRODUCT_NODE_ID);
+    setSelectedConnectionId(null);
+    setEditorNodeId(null);
+    setNodeDrag(null);
+    setPanDrag(null);
+    setConnectionHandleDrag(null);
+    setNewPrompt('');
+    setActiveFlowId(null);
+    setFlowNameInput('');
+    setFlowDirty(false);
+    setFlowMessage('Nuevo flujo vacío. Ponle nombre y pulsa Guardar flujo.');
+  };
+
+  const saveCurrentFlow = async () => {
+    const name = flowNameInput.trim();
+    if (!name) {
+      setFlowMessage('Escribe un nombre para el flujo');
+      return;
+    }
+    setIsSavingFlow(true);
+    setFlowMessage(null);
+    try {
+      const persistableNodeData = await nodeDataToPersistable(nodeData);
+      const snapshot: FlowSnapshotV1 = {
+        version: 1,
+        nodes,
+        connections,
+        nodeData: persistableNodeData,
+        viewport,
+      };
+      const id = activeFlowId ?? newFlowId();
+      const flow: SavedFlow = {
+        id,
+        name,
+        updatedAt: new Date().toISOString(),
+        snapshot,
+      };
+      setSavedFlows((prev) => {
+        const rest = prev.filter((item) => item.id !== id);
+        return [...rest, flow].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      });
+      setActiveFlowId(id);
+      setFlowDirty(false);
+      setFlowMessage('Flujo guardado en este navegador (localStorage).');
+    } catch {
+      setFlowMessage('No se pudo guardar. Prueba con archivos más ligeros o libera espacio.');
+    } finally {
+      setIsSavingFlow(false);
+    }
+  };
+
+  const duplicateCurrentFlowAsNew = async () => {
+    setIsSavingFlow(true);
+    setFlowMessage(null);
+    try {
+      const baseName = flowNameInput.trim() || 'Sin nombre';
+      const persistableNodeData = await nodeDataToPersistable(nodeData);
+      const snapshot: FlowSnapshotV1 = {
+        version: 1,
+        nodes: JSON.parse(JSON.stringify(nodes)) as BoardNode[],
+        connections: JSON.parse(JSON.stringify(connections)) as Connection[],
+        nodeData: persistableNodeData,
+        viewport: { ...viewport },
+      };
+      const id = newFlowId();
+      const name = `Copia de ${baseName}`;
+      const flow: SavedFlow = {
+        id,
+        name,
+        updatedAt: new Date().toISOString(),
+        snapshot,
+      };
+      setSavedFlows((prev) => [...prev, flow].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)));
+      applySnapshotFromFlow(flow.snapshot);
+      setActiveFlowId(id);
+      setFlowNameInput(name);
+      setFlowDirty(false);
+      setFlowMessage('Copia guardada y abierta. Puedes renombrarla o seguir editando.');
+    } catch {
+      setFlowMessage('No se pudo duplicar el flujo.');
+    } finally {
+      setIsSavingFlow(false);
+    }
+  };
+
+  const deleteActiveSavedFlow = () => {
+    if (!activeFlowId) {
+      setFlowMessage('Este tablero no tiene un guardado asociado. Carga un flujo o guarda uno antes de eliminar.');
+      return;
+    }
+    const flow = savedFlows.find((item) => item.id === activeFlowId);
+    if (!flow) return;
+    const msg = flowDirty
+      ? `Hay cambios sin guardar. ¿Eliminar igual el flujo "${flow.name}" del almacenamiento?`
+      : `¿Eliminar permanentemente el flujo "${flow.name}"? No se puede deshacer.`;
+    if (!window.confirm(msg)) return;
+
+    const remaining = savedFlows.filter((item) => item.id !== activeFlowId);
+    setSavedFlows(remaining);
+
+    releaseBoardMediaAndTimers();
+    if (remaining.length > 0) {
+      const next = remaining[0];
+      const cloned = cloneSnapshotForEditor(next.snapshot);
+      syncSequenceRefsFromGraph(cloned.nodes, cloned.connections, sequenceRefsBundle);
+      setNodes(cloned.nodes);
+      setConnections(cloned.connections);
+      setNodeData(cloned.nodeData);
+      setViewport(cloned.viewport);
+      setNodeSizeMap({});
+      setNodeStatus({});
+      setSelectedNodeId(PRODUCT_NODE_ID);
+      setSelectedConnectionId(null);
+      setEditorNodeId(null);
+      setNodeDrag(null);
+      setPanDrag(null);
+      setConnectionHandleDrag(null);
+      setNewPrompt('');
+      setActiveFlowId(next.id);
+      setFlowNameInput(next.name);
+      setFlowDirty(false);
+      setFlowMessage(`Eliminado "${flow.name}". Abierto: ${next.name}.`);
+    } else {
+      angleSequenceRef.current = 1;
+      hookSequenceRef.current = 1;
+      formatoSequenceRef.current = 1;
+      estructuraSequenceRef.current = 1;
+      creativoSequenceRef.current = 1;
+      connectionSequenceRef.current = 1;
+      setNodes([...DEFAULT_PRODUCT_NODES]);
+      setConnections([]);
+      setNodeData({});
+      setNodeStatus({});
+      setViewport({ ...DEFAULT_VIEWPORT });
+      setNodeSizeMap({});
+      setSelectedNodeId(PRODUCT_NODE_ID);
+      setSelectedConnectionId(null);
+      setEditorNodeId(null);
+      setNodeDrag(null);
+      setPanDrag(null);
+      setConnectionHandleDrag(null);
+      setNewPrompt('');
+      setActiveFlowId(null);
+      setFlowNameInput('');
+      setFlowDirty(false);
+      setFlowMessage(`Eliminado "${flow.name}". No quedan flujos guardados.`);
+    }
   };
 
   const autoArrangeConnections = () => {
@@ -598,6 +1054,7 @@ export default function EstrategiaCreativaPage() {
         };
       }),
     );
+    markFlowDirty();
   };
 
   const onBoardWheel = (event: React.WheelEvent<HTMLDivElement>) => {
@@ -613,6 +1070,7 @@ export default function EstrategiaCreativaPage() {
     const nextX = sx - worldX * nextScale;
     const nextY = sy - worldY * nextScale;
     setViewport({ x: nextX, y: nextY, scale: nextScale });
+    markFlowDirty();
   };
 
   const onBoardMouseDown = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -687,7 +1145,10 @@ export default function EstrategiaCreativaPage() {
           return { ...line, toAnchor: snapAnchorToNearestSide(targetNode, line.toAnchor, targetSize) };
         }),
       );
+      markFlowDirty();
     }
+    if (nodeDrag) markFlowDirty();
+    if (panDrag) markFlowDirty();
     setNodeDrag(null);
     setPanDrag(null);
     setConnectionHandleDrag(null);
@@ -756,21 +1217,30 @@ export default function EstrategiaCreativaPage() {
         <div style={{ display: 'flex', gap: 8 }}>
           <button
             type="button"
-            onClick={() => setViewport((prev) => ({ ...prev, scale: Math.min(2.5, prev.scale + 0.15) }))}
+            onClick={() => {
+              setViewport((prev) => ({ ...prev, scale: Math.min(2.5, prev.scale + 0.15) }));
+              markFlowDirty();
+            }}
             style={actionBtnStyle('secondary')}
           >
             Zoom +
           </button>
           <button
             type="button"
-            onClick={() => setViewport((prev) => ({ ...prev, scale: Math.max(0.35, prev.scale - 0.15) }))}
+            onClick={() => {
+              setViewport((prev) => ({ ...prev, scale: Math.max(0.35, prev.scale - 0.15) }));
+              markFlowDirty();
+            }}
             style={actionBtnStyle('secondary')}
           >
             Zoom -
           </button>
           <button
             type="button"
-            onClick={() => setViewport({ x: -3600, y: -3750, scale: 1 })}
+            onClick={() => {
+              setViewport({ ...DEFAULT_VIEWPORT });
+              markFlowDirty();
+            }}
             style={actionBtnStyle('ghost')}
           >
             Centrar
@@ -780,6 +1250,95 @@ export default function EstrategiaCreativaPage() {
           </button>
         </div>
       </header>
+
+      <div
+        style={{
+          marginBottom: 12,
+          padding: '10px 12px',
+          border: `1px solid ${ds.borderCard}`,
+          borderRadius: 10,
+          background: ds.bgSubtle,
+          display: 'flex',
+          flexWrap: 'wrap',
+          alignItems: 'center',
+          gap: 10,
+        }}
+      >
+        <label style={{ fontSize: 12, color: ds.textSecondary, display: 'flex', alignItems: 'center', gap: 6 }}>
+          Nombre del flujo
+          <input
+            value={flowNameInput}
+            onChange={(event) => setFlowNameInput(event.target.value)}
+            placeholder="Ej. Lanzamiento abril"
+            style={{ ...inputStyle, minWidth: 200, maxWidth: 280 }}
+          />
+        </label>
+        <button
+          type="button"
+          disabled={isSavingFlow}
+          onClick={() => void saveCurrentFlow()}
+          style={actionBtnStyle('primary')}
+        >
+          {isSavingFlow ? 'Guardando…' : 'Guardar flujo'}
+        </button>
+        <button type="button" onClick={createNewFlow} style={actionBtnStyle('secondary')}>
+          Nuevo flujo
+        </button>
+        <button
+          type="button"
+          disabled={isSavingFlow}
+          onClick={() => void duplicateCurrentFlowAsNew()}
+          style={actionBtnStyle('secondary')}
+        >
+          {isSavingFlow ? 'Copiando…' : 'Duplicar'}
+        </button>
+        <button
+          type="button"
+          disabled={!activeFlowId}
+          onClick={deleteActiveSavedFlow}
+          style={{
+            ...actionBtnStyle('ghost'),
+            borderColor: activeFlowId ? ds.warningText : undefined,
+            color: activeFlowId ? ds.warningText : undefined,
+          }}
+        >
+          Eliminar guardado
+        </button>
+        <label style={{ fontSize: 12, color: ds.textSecondary, display: 'flex', alignItems: 'center', gap: 6 }}>
+          Cargar
+          <select
+            key={`${savedFlows.map((f) => f.id).join(',')}-${activeFlowId ?? ''}`}
+            value={activeFlowId ?? ''}
+            onChange={(event) => {
+              const next = event.target.value;
+              if (next) loadFlowById(next);
+            }}
+            style={{ ...inputStyle, minWidth: 200, cursor: 'pointer' }}
+          >
+            <option value="" disabled={savedFlows.length === 0}>
+              {savedFlows.length === 0 ? 'Sin flujos guardados' : 'Elegir flujo…'}
+            </option>
+            {savedFlows.map((flow) => (
+              <option key={flow.id} value={flow.id}>
+                {flow.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        {flowDirty ? (
+          <span style={{ ...counterBadgeStyle, color: ds.warningText, borderColor: ds.warningText }}>
+            Cambios sin guardar
+          </span>
+        ) : (
+          <span style={{ ...counterBadgeStyle, color: ds.successText, borderColor: ds.successText }}>Al día</span>
+        )}
+        {flowMessage ? (
+          <span style={{ fontSize: 12, color: ds.textSecondary, maxWidth: 360 }}>{flowMessage}</span>
+        ) : null}
+        <span style={{ fontSize: 11, color: ds.textHint }}>
+          Los flujos se guardan solo en este navegador (localStorage).
+        </span>
+      </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '2.2fr 1fr', gap: 12 }}>
         <section
@@ -1159,6 +1718,7 @@ export default function EstrategiaCreativaPage() {
                         value={node.title}
                         onChange={(event) => {
                           const value = event.target.value;
+                          markFlowDirty();
                           markNodeChanged(node.id);
                           setNodes((prev) =>
                             prev.map((item) => (item.id === node.id ? { ...item, title: value } : item)),
@@ -1301,6 +1861,7 @@ export default function EstrategiaCreativaPage() {
                         value={node.title}
                         onChange={(event) => {
                           const value = event.target.value;
+                          markFlowDirty();
                           markNodeChanged(node.id);
                           setNodes((prev) =>
                             prev.map((item) => (item.id === node.id ? { ...item, title: value } : item)),
@@ -1379,6 +1940,7 @@ export default function EstrategiaCreativaPage() {
                         value={node.title}
                         onChange={(event) => {
                           const value = event.target.value;
+                          markFlowDirty();
                           markNodeChanged(node.id);
                           setNodes((prev) =>
                             prev.map((item) => (item.id === node.id ? { ...item, title: value } : item)),
@@ -1452,9 +2014,131 @@ export default function EstrategiaCreativaPage() {
                   ) : null}
 
                   {creativoIsNode ? (
-                    <p style={{ margin: '0 0 6px', fontSize: 11, color: ds.textMuted }}>
-                      Pieza final: usa <strong>Archivos</strong> para referencias y prompts.
-                    </p>
+                    <div style={{ display: 'grid', gap: 6, marginBottom: 6 }}>
+                      <input
+                        value={node.title}
+                        onChange={(event) => {
+                          const value = event.target.value;
+                          markFlowDirty();
+                          markNodeChanged(node.id);
+                          setNodes((prev) =>
+                            prev.map((item) => (item.id === node.id ? { ...item, title: value } : item)),
+                          );
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                        placeholder="Nombre del creativo"
+                        style={inputStyle}
+                      />
+                      <div
+                        style={{
+                          border: `1px solid ${ds.borderCard}`,
+                          borderRadius: 8,
+                          background: ds.bgCard,
+                          padding: 6,
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                      >
+                        {!data.creativeMediaSrc ? (
+                          <label
+                            htmlFor={`creativo-media-input-${node.id}`}
+                            style={{
+                              width: '100%',
+                              height: 132,
+                              borderRadius: 6,
+                              border: `1px dashed ${ds.borderCard}`,
+                              display: 'block',
+                              marginBottom: 6,
+                              cursor: 'pointer',
+                              overflow: 'hidden',
+                              position: 'relative',
+                              background: ds.bgSubtle,
+                            }}
+                          >
+                            <div
+                              style={{
+                                width: '100%',
+                                height: '100%',
+                                display: 'grid',
+                                placeItems: 'center',
+                              }}
+                            >
+                              <span style={{ ...actionBtnStyle('secondary'), fontSize: 11 }}>
+                                Cargar imagen o video
+                              </span>
+                            </div>
+                          </label>
+                        ) : (
+                          <div
+                            style={{
+                              width: '100%',
+                              height: 132,
+                              borderRadius: 6,
+                              border: `1px solid ${ds.borderCard}`,
+                              marginBottom: 6,
+                              overflow: 'hidden',
+                              background: ds.bgSubtle,
+                            }}
+                          >
+                            {data.creativeMediaKind === 'video' ? (
+                              <video
+                                src={data.creativeMediaSrc}
+                                controls
+                                muted
+                                playsInline
+                                style={{ width: '100%', height: '100%', objectFit: 'contain', background: '#000' }}
+                              />
+                            ) : (
+                              <img
+                                src={data.creativeMediaSrc}
+                                alt={node.title || 'Creativo'}
+                                style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                              />
+                            )}
+                          </div>
+                        )}
+                        <input
+                          id={`creativo-media-input-${node.id}`}
+                          ref={(el) => {
+                            creativoMediaInputRefs.current[node.id] = el;
+                          }}
+                          type="file"
+                          accept="image/*,video/*"
+                          onChange={(event) => {
+                            event.stopPropagation();
+                            const file = event.target.files?.[0];
+                            if (!file) return;
+                            const kind: CreativeMediaKind = file.type.startsWith('video/')
+                              ? 'video'
+                              : file.type.startsWith('image/')
+                                ? 'image'
+                                : '';
+                            if (!kind) return;
+                            const previous = productImageObjectUrlsRef.current[node.id];
+                            if (previous && previous.startsWith('blob:')) URL.revokeObjectURL(previous);
+                            const blobUrl = URL.createObjectURL(file);
+                            productImageObjectUrlsRef.current[node.id] = blobUrl;
+                            updateNodeData(node.id, { creativeMediaSrc: blobUrl, creativeMediaKind: kind });
+                            event.target.value = '';
+                          }}
+                          style={{ display: 'none' }}
+                        />
+                        {data.creativeMediaSrc ? (
+                          <button
+                            type="button"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              creativoMediaInputRefs.current[node.id]?.click();
+                            }}
+                            style={{ ...actionBtnStyle('secondary'), fontSize: 11 }}
+                          >
+                            Cambiar creativo
+                          </button>
+                        ) : null}
+                      </div>
+                      <p style={{ margin: 0, fontSize: 11, color: ds.textMuted }}>
+                        Prompts y notas en <strong>Archivos</strong>.
+                      </p>
+                    </div>
                   ) : null}
 
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 6 }}>
@@ -1525,6 +2209,7 @@ export default function EstrategiaCreativaPage() {
                   value={selectedConnection.style}
                   onChange={(event) => {
                     const nextStyle = event.target.value as ConnectionStyle;
+                    markFlowDirty();
                     setConnections((prev) =>
                       prev.map((line) =>
                         line.id === selectedConnection.id ? { ...line, style: nextStyle } : line,
