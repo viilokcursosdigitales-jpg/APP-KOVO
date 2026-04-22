@@ -60,6 +60,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
     { to: '/meta-ads', label: 'Anuncios Meta', icon: <IconMegaphone />, moduleId: 'meta_ads' },
     { to: '/calculadora-cod', label: 'Calculadora COD', icon: <IconCalculadora />, moduleId: 'calculadora_cod' },
     { to: '/ads-funnel', label: 'Embudo de anuncios', icon: <IconFunnel />, moduleId: 'ads_funnel' },
+    { to: '/estrategia-creativa', label: 'Estrategia Creativa', icon: <IconTarget />, moduleId: null },
     { to: '/finanza', label: 'Finanzas', icon: <IconTrendingUp />, moduleId: 'finanza' },
     {
       to: '/indicadores-marketing',
