@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ds } from '../design-system/ds';
 
 type Tone = 'neutral' | 'info' | 'success' | 'warning';
@@ -22,6 +22,8 @@ type BoardNode = {
   position: Position;
 };
 type NodeData = {
+  productName: string;
+  productImageSrc: string;
   objective: string;
   structure: string;
   description: string;
@@ -54,6 +56,8 @@ const BOARD_SIZE = 8000;
 const BOARD_CENTER = BOARD_SIZE / 2;
 const PRODUCT_DEFAULT_POS: Position = { x: BOARD_CENTER, y: BOARD_CENTER };
 const EMPTY_NODE_DATA: NodeData = {
+  productName: '',
+  productImageSrc: '',
   objective: '',
   structure: '',
   description: '',
@@ -80,9 +84,11 @@ function getNodeCenter(node: BoardNode): Position {
 }
 
 function getNodeSizeByKind(kind: NodeKind): { width: number; height: number } {
+  if (kind === 'producto') return { width: 240, height: 330 };
+  if (kind === 'angulo') return { width: 210, height: 250 };
   return {
-    width: kind === 'producto' ? 240 : 210,
-    height: kind === 'producto' ? 136 : 124,
+    width: 210,
+    height: 124,
   };
 }
 
@@ -107,13 +113,13 @@ function snapAnchorToNearestSide(node: BoardNode, anchor: Position): Position {
   const distBottom = Math.abs(halfH - y);
   const minDist = Math.min(distLeft, distRight, distTop, distBottom);
 
-  if (minDist === distLeft) return { x: -halfW, y };
-  if (minDist === distRight) return { x: halfW, y };
-  if (minDist === distTop) return { x, y: -halfH };
-  return { x, y: halfH };
+  if (minDist === distLeft) return { x: -halfW, y: 0 };
+  if (minDist === distRight) return { x: halfW, y: 0 };
+  if (minDist === distTop) return { x: 0, y: -halfH };
+  return { x: 0, y: halfH };
 }
 
-function getSmartSideAnchor(node: BoardNode, target: BoardNode, spreadOffset: number): Position {
+function getSmartSideAnchor(node: BoardNode, target: BoardNode): Position {
   const { width, height } = getNodeSize(node);
   const halfW = width / 2;
   const halfH = height / 2;
@@ -123,11 +129,11 @@ function getSmartSideAnchor(node: BoardNode, target: BoardNode, spreadOffset: nu
   const dy = toCenter.y - fromCenter.y;
 
   if (Math.abs(dx) >= Math.abs(dy)) {
-    if (dx >= 0) return { x: halfW, y: clamp(spreadOffset, -halfH + 10, halfH - 10) };
-    return { x: -halfW, y: clamp(spreadOffset, -halfH + 10, halfH - 10) };
+    if (dx >= 0) return { x: halfW, y: 0 };
+    return { x: -halfW, y: 0 };
   }
-  if (dy >= 0) return { x: clamp(spreadOffset, -halfW + 10, halfW - 10), y: halfH };
-  return { x: clamp(spreadOffset, -halfW + 10, halfW - 10), y: -halfH };
+  if (dy >= 0) return { x: 0, y: halfH };
+  return { x: 0, y: -halfH };
 }
 
 function overlapsExistingNodes(
@@ -239,6 +245,15 @@ export default function EstrategiaCreativaPage() {
   const angleSequenceRef = useRef(1);
   const hookSequenceRef = useRef(1);
   const connectionSequenceRef = useRef(1);
+  const productImageObjectUrlsRef = useRef<Record<string, string>>({});
+
+  useEffect(() => {
+    return () => {
+      for (const url of Object.values(productImageObjectUrlsRef.current)) {
+        if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+      }
+    };
+  }, []);
 
   const selectedNode = nodes.find((n) => n.id === (editorNodeId || selectedNodeId)) || null;
   const selectedConnection = selectedConnectionId
@@ -284,8 +299,8 @@ export default function EstrategiaCreativaPage() {
     connectionSequenceRef.current += 1;
     const fromNode = fromNodeOverride || nodes.find((node) => node.id === from);
     const toNode = toNodeOverride || nodes.find((node) => node.id === to);
-    const fromAnchor = fromNode && toNode ? getSmartSideAnchor(fromNode, toNode, 0) : { x: 0, y: 0 };
-    const toAnchor = fromNode && toNode ? getSmartSideAnchor(toNode, fromNode, 0) : { x: 0, y: 0 };
+    const fromAnchor = fromNode && toNode ? getSmartSideAnchor(fromNode, toNode) : { x: 0, y: 0 };
+    const toAnchor = fromNode && toNode ? getSmartSideAnchor(toNode, fromNode) : { x: 0, y: 0 };
     return {
       id,
       from,
@@ -337,7 +352,12 @@ export default function EstrategiaCreativaPage() {
     setConnections((prev) => prev.filter((line) => !toRemove.has(line.from) && !toRemove.has(line.to)));
     setNodeData((prev) => {
       const next = { ...prev };
-      for (const nodeId of toRemove) delete next[nodeId];
+      for (const nodeId of toRemove) {
+        const blobUrl = productImageObjectUrlsRef.current[nodeId];
+        if (blobUrl && blobUrl.startsWith('blob:')) URL.revokeObjectURL(blobUrl);
+        delete productImageObjectUrlsRef.current[nodeId];
+        delete next[nodeId];
+      }
       return next;
     });
     if (selectedNodeId && toRemove.has(selectedNodeId)) setSelectedNodeId(fallbackSelectedNodeId);
@@ -385,6 +405,10 @@ export default function EstrategiaCreativaPage() {
   };
 
   const clearBoard = () => {
+    for (const url of Object.values(productImageObjectUrlsRef.current)) {
+      if (url && url.startsWith('blob:')) URL.revokeObjectURL(url);
+    }
+    productImageObjectUrlsRef.current = {};
     angleSequenceRef.current = 1;
     hookSequenceRef.current = 1;
     connectionSequenceRef.current = 1;
@@ -410,66 +434,18 @@ export default function EstrategiaCreativaPage() {
 
   const autoArrangeConnections = () => {
     const nodeMap = new Map(nodes.map((node) => [node.id, node]));
-    const outgoingByParent = new Map<string, Connection[]>();
-    const incomingByChild = new Map<string, Connection[]>();
-
-    for (const line of connections) {
-      const outgoing = outgoingByParent.get(line.from) || [];
-      outgoing.push(line);
-      outgoingByParent.set(line.from, outgoing);
-
-      const incoming = incomingByChild.get(line.to) || [];
-      incoming.push(line);
-      incomingByChild.set(line.to, incoming);
-    }
-
-    const fromAnchorById = new Map<string, Position>();
-    const toAnchorById = new Map<string, Position>();
-
-    for (const [parentId, lines] of outgoingByParent.entries()) {
-      const parent = nodeMap.get(parentId);
-      if (!parent) continue;
-      const sorted = [...lines].sort((a, b) => {
-        const aTarget = nodeMap.get(a.to);
-        const bTarget = nodeMap.get(b.to);
-        return (aTarget?.position.y || 0) - (bTarget?.position.y || 0);
-      });
-      const spread = 26;
-      sorted.forEach((line, idx) => {
-        const offset = (idx - (sorted.length - 1) / 2) * spread;
-        fromAnchorById.set(line.id, { x: 0, y: offset });
-      });
-    }
-
-    for (const [childId, lines] of incomingByChild.entries()) {
-      const child = nodeMap.get(childId);
-      if (!child) continue;
-      const sorted = [...lines].sort((a, b) => {
-        const aSource = nodeMap.get(a.from);
-        const bSource = nodeMap.get(b.from);
-        return (aSource?.position.y || 0) - (bSource?.position.y || 0);
-      });
-      const spread = 26;
-      sorted.forEach((line, idx) => {
-        const offset = (idx - (sorted.length - 1) / 2) * spread;
-        toAnchorById.set(line.id, { x: 0, y: offset });
-      });
-    }
-
     setConnections((prev) =>
       prev.map((line) => {
         const fromNode = nodeMap.get(line.from);
         const toNode = nodeMap.get(line.to);
-        const fromSpread = fromAnchorById.get(line.id)?.y || 0;
-        const toSpread = toAnchorById.get(line.id)?.y || 0;
         const fromAnchor =
           fromNode && toNode
-            ? getSmartSideAnchor(fromNode, toNode, fromSpread)
-            : fromAnchorById.get(line.id) || { x: 0, y: 0 };
+            ? getSmartSideAnchor(fromNode, toNode)
+            : { x: 0, y: 0 };
         const toAnchor =
           fromNode && toNode
-            ? getSmartSideAnchor(toNode, fromNode, toSpread)
-            : toAnchorById.get(line.id) || { x: 0, y: 0 };
+            ? getSmartSideAnchor(toNode, fromNode)
+            : { x: 0, y: 0 };
 
         return {
           ...line,
@@ -797,8 +773,11 @@ export default function EstrategiaCreativaPage() {
               const palette = toneColorMap(node.tone);
               const active = selectedNodeId === node.id;
               const data = getNodeData(nodeData, node.id);
+              const nodeSize = getNodeSize(node);
               const productIsNode = node.kind === 'producto';
               const angleIsNode = node.kind === 'angulo';
+              const productName = data.productName.trim();
+              const displayTitle = productIsNode && productName ? productName : node.title;
               const showAnglesInsideProduct = productIsNode && connectedAngles.length > 0;
               const connectedHooks = angleIsNode ? getChildrenByParent(node.id, 'hook') : [];
               return (
@@ -820,16 +799,19 @@ export default function EstrategiaCreativaPage() {
                     position: 'absolute',
                     left: node.position.x,
                     top: node.position.y,
-                    width: productIsNode ? 240 : 210,
+                    width: nodeSize.width,
+                    minHeight: nodeSize.height,
+                    maxHeight: nodeSize.height,
                     border: `1px solid ${palette.border}`,
                     borderRadius: 10,
                     background: palette.fill,
                     padding: '8px 10px',
+                    overflowY: 'auto',
                     cursor: 'grab',
                   }}
                 >
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 8 }}>
-                    <strong style={{ fontSize: 12, color: ds.textPrimary }}>{node.title}</strong>
+                    <strong style={{ fontSize: 12, color: ds.textPrimary, fontWeight: 800 }}>{displayTitle}</strong>
                     {active ? <span style={{ ...counterBadgeStyle, color: ds.brand }}>Activo</span> : null}
                   </div>
 
@@ -839,6 +821,62 @@ export default function EstrategiaCreativaPage() {
 
                   {productIsNode ? (
                     <div style={{ display: 'grid', gap: 6, marginBottom: 6 }}>
+                      <div
+                        style={{
+                          border: `1px solid ${ds.borderCard}`,
+                          borderRadius: 8,
+                          background: ds.bgCard,
+                          padding: 6,
+                        }}
+                        onMouseDown={(event) => event.stopPropagation()}
+                      >
+                        {data.productImageSrc ? (
+                          <img
+                            src={data.productImageSrc}
+                            alt={productName || 'Producto'}
+                            style={{ width: '100%', height: 86, objectFit: 'cover', borderRadius: 6, marginBottom: 6 }}
+                          />
+                        ) : (
+                          <div
+                            style={{
+                              width: '100%',
+                              height: 86,
+                              borderRadius: 6,
+                              border: `1px dashed ${ds.borderCard}`,
+                              display: 'grid',
+                              placeItems: 'center',
+                              color: ds.textHint,
+                              fontSize: 11,
+                              marginBottom: 6,
+                            }}
+                          >
+                            Sin imagen del producto
+                          </div>
+                        )}
+                        <div style={{ display: 'grid', gap: 6 }}>
+                          <input
+                            value={data.productName}
+                            onChange={(event) => updateNodeData(node.id, { productName: event.target.value })}
+                            placeholder="Nombre del producto"
+                            style={inputStyle}
+                          />
+                          <input
+                            type="file"
+                            accept="image/*"
+                            onChange={(event) => {
+                              event.stopPropagation();
+                              const file = event.target.files?.[0];
+                              if (!file) return;
+                              const previous = productImageObjectUrlsRef.current[node.id];
+                              if (previous && previous.startsWith('blob:')) URL.revokeObjectURL(previous);
+                              const blobUrl = URL.createObjectURL(file);
+                              productImageObjectUrlsRef.current[node.id] = blobUrl;
+                              updateNodeData(node.id, { productImageSrc: blobUrl });
+                            }}
+                            style={inputStyle}
+                          />
+                        </div>
+                      </div>
                       <button
                         type="button"
                         onClick={(event) => {
