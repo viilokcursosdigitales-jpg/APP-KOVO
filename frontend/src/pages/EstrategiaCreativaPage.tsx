@@ -754,7 +754,6 @@ export default function EstrategiaCreativaPage() {
   const addFormatoFromHook = (hookId: string) => {
     const hookNode = nodes.find((node) => node.id === hookId);
     if (!hookNode) return;
-    if (getChildrenByParent(hookId, 'formato').length > 0) return;
 
     const formatoIndex = formatoSequenceRef.current;
     formatoSequenceRef.current += 1;
@@ -783,7 +782,6 @@ export default function EstrategiaCreativaPage() {
   const addEstructuraFromFormato = (formatoId: string) => {
     const formatoNode = nodes.find((node) => node.id === formatoId);
     if (!formatoNode) return;
-    if (getChildrenByParent(formatoId, 'estructura').length > 0) return;
 
     const estructuraIndex = estructuraSequenceRef.current;
     estructuraSequenceRef.current += 1;
@@ -1885,18 +1883,17 @@ export default function EstrategiaCreativaPage() {
 
                   {hookIsNode ? (
                     <div style={{ display: 'grid', gap: 6, marginBottom: 6 }}>
-                      {connectedFormatos.length === 0 ? (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            addFormatoFromHook(node.id);
-                          }}
-                          style={{ ...actionBtnStyle('secondary'), fontSize: 11, padding: '5px 8px' }}
-                        >
-                          + Agregar formato
-                        </button>
-                      ) : (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          addFormatoFromHook(node.id);
+                        }}
+                        style={{ ...actionBtnStyle('secondary'), fontSize: 11, padding: '5px 8px' }}
+                      >
+                        + Agregar formato
+                      </button>
+                      {connectedFormatos.length > 0 ? (
                         <div style={{ display: 'grid', gap: 4 }}>
                           {connectedFormatos.map((formato) => (
                             <div
@@ -1944,24 +1941,23 @@ export default function EstrategiaCreativaPage() {
                             </div>
                           ))}
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   ) : null}
 
                   {formatoIsNode ? (
                     <div style={{ display: 'grid', gap: 6, marginBottom: 6 }}>
-                      {connectedEstructuras.length === 0 ? (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            addEstructuraFromFormato(node.id);
-                          }}
-                          style={{ ...actionBtnStyle('secondary'), fontSize: 11, padding: '5px 8px' }}
-                        >
-                          + Agregar estructura
-                        </button>
-                      ) : (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          addEstructuraFromFormato(node.id);
+                        }}
+                        style={{ ...actionBtnStyle('secondary'), fontSize: 11, padding: '5px 8px' }}
+                      >
+                        + Agregar estructura
+                      </button>
+                      {connectedEstructuras.length > 0 ? (
                         <div style={{ display: 'grid', gap: 4 }}>
                           {connectedEstructuras.map((estructura) => (
                             <div
@@ -2009,7 +2005,7 @@ export default function EstrategiaCreativaPage() {
                             </div>
                           ))}
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   ) : null}
 
