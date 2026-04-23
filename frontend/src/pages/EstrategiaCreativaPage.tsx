@@ -810,7 +810,6 @@ export default function EstrategiaCreativaPage() {
   const addCreativoFromEstructura = (estructuraId: string) => {
     const estructuraNode = nodes.find((node) => node.id === estructuraId);
     if (!estructuraNode) return;
-    if (getChildrenByParent(estructuraId, 'creativo').length > 0) return;
 
     const creativoIndex = creativoSequenceRef.current;
     creativoSequenceRef.current += 1;
@@ -2011,18 +2010,17 @@ export default function EstrategiaCreativaPage() {
 
                   {estructuraIsNode ? (
                     <div style={{ display: 'grid', gap: 6, marginBottom: 6 }}>
-                      {connectedCreativos.length === 0 ? (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            addCreativoFromEstructura(node.id);
-                          }}
-                          style={{ ...actionBtnStyle('secondary'), fontSize: 11, padding: '5px 8px' }}
-                        >
-                          + Agregar creativo
-                        </button>
-                      ) : (
+                      <button
+                        type="button"
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          addCreativoFromEstructura(node.id);
+                        }}
+                        style={{ ...actionBtnStyle('secondary'), fontSize: 11, padding: '5px 8px' }}
+                      >
+                        + Agregar creativo
+                      </button>
+                      {connectedCreativos.length > 0 ? (
                         <div style={{ display: 'grid', gap: 4 }}>
                           {connectedCreativos.map((creativo) => (
                             <div
@@ -2070,7 +2068,7 @@ export default function EstrategiaCreativaPage() {
                             </div>
                           ))}
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   ) : null}
 
