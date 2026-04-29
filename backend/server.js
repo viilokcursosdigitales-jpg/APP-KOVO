@@ -5498,6 +5498,78 @@ app.get('/api/shopify/callback', async (req, res) => {
   }
 });
 
+/**
+ * Temporal: insertar conexión Shopify manualmente (solo owner/admin de la misma organización).
+ * Valida el token offline contra GET /admin/api/2026-04/shop.json antes de persistir.
+ */
+app.post(
+  '/api/shopify/manual-connect',
+  verifyToken,
+  scopeToOrganization,
+  requireRole('owner', 'admin'),
+  async (req, res) => {
+    try {
+      const organizationId = Number(req.body?.organizationId);
+      const shop = sanitizeShopDomain(req.body?.shop);
+      const accessToken = String(req.body?.accessToken || '').trim();
+
+      if (!Number.isFinite(organizationId) || organizationId <= 0) {
+        return res.status(400).json({ error: 'organizationId inválido' });
+      }
+      if (organizationId !== req.organizationId) {
+        return res.status(403).json({ error: 'organizationId no coincide con tu organización' });
+      }
+      if (!shop) {
+        return res.status(400).json({ error: 'shop inválido (usa mitienda.myshopify.com)' });
+      }
+      if (!accessToken) {
+        return res.status(400).json({ error: 'accessToken requerido' });
+      }
+
+      const validateVersion = '2026-04';
+      const shopUrl = `https://${shop}/admin/api/${validateVersion}/shop.json`;
+      const checkRes = await fetch(shopUrl, {
+        headers: {
+          'X-Shopify-Access-Token': accessToken,
+          Accept: 'application/json',
+        },
+      });
+      const checkJson = await checkRes.json().catch(() => ({}));
+      if (!checkRes.ok || !checkJson?.shop) {
+        return res.status(400).json({
+          error: 'Token de Shopify inválido o sin acceso a shop.json',
+          httpStatus: checkRes.status,
+        });
+      }
+
+      const scopeStr = SHOPIFY_SCOPES || '';
+      await pool.query(
+        `INSERT INTO shopify_connections (organization_id, shop_domain, access_token, scope, status, installed_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'connected', now(), now())
+         ON CONFLICT (organization_id, shop_domain)
+         DO UPDATE SET
+           access_token = EXCLUDED.access_token,
+           scope = EXCLUDED.scope,
+           status = 'connected',
+           updated_at = now()`,
+        [organizationId, shop, accessToken, scopeStr],
+      );
+
+      await registerUninstallWebhook(shop, accessToken);
+
+      return res.json({
+        ok: true,
+        organization_id: organizationId,
+        shop_domain: shop,
+        shop_name: checkJson.shop?.name || null,
+      });
+    } catch (e) {
+      console.error('[shopify manual-connect]', e);
+      return res.status(500).json({ error: 'Error al guardar conexión' });
+    }
+  },
+);
+
 app.post('/api/shopify/webhooks/uninstalled', async (req, res) => {
   try {
     if (!SHOPIFY_API_SECRET) {
