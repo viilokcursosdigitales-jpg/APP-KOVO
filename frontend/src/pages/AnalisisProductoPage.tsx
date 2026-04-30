@@ -3,6 +3,7 @@ import { apiFetch } from '../auth/api';
 import { DataTable, Td, Th, tableBase } from '../design-system/DataTable';
 import { ds } from '../design-system/ds';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
+import { buildDateRange } from '../utils/datePresets';
 
 type ProductStatus = 'ganador' | 'prueba' | 'perdedor';
 type DateFilter = 'hoy' | 'ayer' | '3d' | '7d' | '14d' | '30d' | 'custom';
@@ -94,6 +95,7 @@ type TopProductAgg = {
   nombre: string;
   productId: number | null;
   pedidos: number;
+  pedidosDespachados: number;
   ventas: number;
   unidades: number;
   qty1Count: number;
@@ -116,6 +118,22 @@ function money(n: number): string {
 
 function pct(n: number): string {
   return `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
+}
+
+function pctPlain(part: number, total: number): string {
+  if (!Number.isFinite(part) || !Number.isFinite(total) || total <= 0) return '0.0%';
+  return `${((part / total) * 100).toFixed(1)}%`;
+}
+
+function pctValue(part: number, total: number): number {
+  if (!Number.isFinite(part) || !Number.isFinite(total) || total <= 0) return 0;
+  return (part / total) * 100;
+}
+
+function pctColor(p: number): string {
+  if (p >= 80) return ds.successText;
+  if (p >= 50) return ds.warningText;
+  return ds.dangerText;
 }
 
 function parsePercentInput(raw: string): number {
@@ -178,6 +196,13 @@ function addDays(d: Date, n: number): Date {
 }
 
 function buildPedidosRangeParams(filter: DateFilter): string {
+  if (filter === 'hoy' || filter === 'ayer') {
+    const exact = buildDateRange(filter, '', '');
+    const qsExact = new URLSearchParams();
+    if (exact.min) qsExact.set('created_at_min', exact.min);
+    if (exact.max) qsExact.set('created_at_max', exact.max);
+    return qsExact.toString();
+  }
   const now = new Date();
   let min = startOfDay(now);
   let max = endOfDay(now);
@@ -236,6 +261,17 @@ function parseOrderAmount(row: ShopifyOrderRow): number {
 function parseLineQty(raw: unknown): number {
   const n = Number.parseInt(String(raw ?? 0), 10);
   return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function orderUnits(row: ShopifyOrderRow): number {
+  const details = Array.isArray(row.lineItemsDetail) ? row.lineItemsDetail : [];
+  const fromLines = details.reduce((s, li) => s + parseLineQty(li?.quantity), 0);
+  if (fromLines > 0) return fromLines;
+  const qOverride = Number(row.quantity_override);
+  if (Number.isFinite(qOverride) && qOverride > 0) return qOverride;
+  const qDefault = Number(row.defaultQuantity ?? row.shopifyQuantity);
+  if (Number.isFinite(qDefault) && qDefault > 0) return qDefault;
+  return 0;
 }
 
 function textHasToken(raw: string, token: string): boolean {
@@ -530,12 +566,41 @@ export default function AnalisisProductoPage() {
     return normalizeSeries(vals);
   }, [active, periodDays]);
 
+  const pedidosTopBase = useMemo(() => {
+    const calculable = shopifyOrders.filter((o) => !isPedidosPruebaOrder(o));
+    const despachados = calculable.filter((o) => String(o.internal_status || '').trim().toLowerCase() === 'despachado');
+    const totalVentasAll = calculable.reduce((sum, o) => sum + parseOrderAmount(o), 0);
+    const totalUnidadesDespachado = despachados.reduce((sum, o) => sum + orderUnits(o), 0);
+    const productosTodos = new Set<string>();
+    const productosDespachados = new Set<string>();
+    for (const o of calculable) {
+      const details = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
+      for (const li of details) {
+        const title = String(li?.title || li?.name || '').trim();
+        if (!title) continue;
+        const pid = li?.product_id != null && Number.isFinite(Number(li.product_id)) ? Number(li.product_id) : null;
+        const key = pid != null ? `pid:${pid}` : `name:${title.toLowerCase()}`;
+        productosTodos.add(key);
+        if (String(o.internal_status || '').trim().toLowerCase() === 'despachado') productosDespachados.add(key);
+      }
+    }
+    return {
+      totalProductos: productosTodos.size,
+      totalProductosDespachados: productosDespachados.size,
+      totalPedidos: calculable.length,
+      totalPedidosDespachado: despachados.length,
+      totalVentasAll,
+      totalVentasDespachado: despachados.reduce((sum, o) => sum + parseOrderAmount(o), 0),
+      totalUnidades: calculable.reduce((sum, o) => sum + orderUnits(o), 0),
+      totalUnidadesDespachado,
+    };
+  }, [shopifyOrders]);
+
   const topProducts = useMemo(() => {
     const map = new Map<string, TopProductAgg>();
-    const baseOrders = shopifyOrders.filter(
-      (o) => !isPedidosPruebaOrder(o) && String(o.internal_status || '').trim().toLowerCase() === 'despachado',
-    );
+    const baseOrders = shopifyOrders.filter((o) => !isPedidosPruebaOrder(o));
     for (const order of baseOrders) {
+      const isDespachado = String(order.internal_status || '').trim().toLowerCase() === 'despachado';
       const totalVenta = parseOrderAmount(order);
       const details = Array.isArray(order.lineItemsDetail) ? order.lineItemsDetail : [];
       const byProductInOrder = new Map<string, { qty: number; upsell: boolean; downsell: boolean; title: string; productId: number | null }>();
@@ -566,12 +631,13 @@ export default function AnalisisProductoPage() {
       const totalQtyInOrder = [...byProductInOrder.values()].reduce((s, v) => s + v.qty, 0);
       for (const [key, entry] of byProductInOrder.entries()) {
         const share = totalQtyInOrder > 0 ? entry.qty / totalQtyInOrder : 1;
-        const ventasAsignadas = totalVenta * share;
+        const ventasAsignadas = isDespachado ? totalVenta * share : 0;
         const prev = map.get(key);
         const hasUpsell = entry.upsell || entry.qty >= 2;
         const hasDownsell = entry.downsell;
         if (prev) {
           prev.pedidos += 1;
+          if (isDespachado) prev.pedidosDespachados += 1;
           prev.unidades += entry.qty;
           prev.ventas += ventasAsignadas;
           if (entry.qty === 1) {
@@ -592,6 +658,7 @@ export default function AnalisisProductoPage() {
             nombre: entry.title,
             productId: entry.productId,
             pedidos: 1,
+            pedidosDespachados: isDespachado ? 1 : 0,
             ventas: ventasAsignadas,
             unidades: entry.qty,
             qty1Count: entry.qty === 1 ? 1 : 0,
@@ -745,11 +812,55 @@ export default function AnalisisProductoPage() {
 
       {moduleView === 'productos_top' ? (
         <section style={{ minWidth: 0 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(150px,1fr))', gap: 10, marginBottom: 12 }}>
-            <KpiCard title="Productos top" value={String(topRows.length)} delta={pct(0)} />
-            <KpiCard title="Cantidad de pedidos" value={String(topRows.reduce((s, r) => s + r.pedidos, 0))} delta={pct(0)} />
-            <KpiCard title="Ventas" value={money(topRows.reduce((s, r) => s + r.ventas, 0))} delta={pct(0)} />
-            <KpiCard title="Cantidad de unidades" value={String(topRows.reduce((s, r) => s + r.unidades, 0))} delta={pct(0)} />
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(180px,1fr))', gap: 10, marginBottom: 12 }}>
+            <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 6 }}>Productos top</div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: ds.textPrimary, lineHeight: 1.1 }}>
+                {pedidosTopBase.totalProductos}
+              </div>
+              <div style={{ fontSize: 12, color: ds.textSecondary, marginTop: 6 }}>
+                Despachados: {pedidosTopBase.totalProductosDespachados}{' '}
+                <span style={{ color: pctColor(pctValue(pedidosTopBase.totalProductosDespachados, pedidosTopBase.totalProductos)), fontWeight: 700 }}>
+                  ({pctPlain(pedidosTopBase.totalProductosDespachados, pedidosTopBase.totalProductos)})
+                </span>
+              </div>
+            </div>
+            <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 6 }}>Cantidad de pedidos</div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: ds.textPrimary, lineHeight: 1.1 }}>
+                {pedidosTopBase.totalPedidos}
+              </div>
+              <div style={{ fontSize: 12, color: ds.textSecondary, marginTop: 6 }}>
+                Despachados: {pedidosTopBase.totalPedidosDespachado}{' '}
+                <span style={{ color: pctColor(pctValue(pedidosTopBase.totalPedidosDespachado, pedidosTopBase.totalPedidos)), fontWeight: 700 }}>
+                  ({pctPlain(pedidosTopBase.totalPedidosDespachado, pedidosTopBase.totalPedidos)})
+                </span>
+              </div>
+            </div>
+            <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 6 }}>Ventas</div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: ds.textPrimary, lineHeight: 1.1 }}>
+                {money(pedidosTopBase.totalVentasAll)}
+              </div>
+              <div style={{ fontSize: 12, color: ds.textSecondary, marginTop: 6 }}>
+                Despachado: {money(pedidosTopBase.totalVentasDespachado)}{' '}
+                <span style={{ color: pctColor(pctValue(pedidosTopBase.totalVentasDespachado, pedidosTopBase.totalVentasAll)), fontWeight: 700 }}>
+                  ({pctPlain(pedidosTopBase.totalVentasDespachado, pedidosTopBase.totalVentasAll)})
+                </span>
+              </div>
+            </div>
+            <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: '12px 14px' }}>
+              <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 6 }}>Cantidad de unidades</div>
+              <div style={{ fontSize: 26, fontWeight: 700, color: ds.textPrimary, lineHeight: 1.1 }}>
+                {pedidosTopBase.totalUnidades}
+              </div>
+              <div style={{ fontSize: 12, color: ds.textSecondary, marginTop: 6 }}>
+                Despachadas: {pedidosTopBase.totalUnidadesDespachado}{' '}
+                <span style={{ color: pctColor(pctValue(pedidosTopBase.totalUnidadesDespachado, pedidosTopBase.totalUnidades)), fontWeight: 700 }}>
+                  ({pctPlain(pedidosTopBase.totalUnidadesDespachado, pedidosTopBase.totalUnidades)})
+                </span>
+              </div>
+            </div>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px,1fr) auto', gap: 8, marginBottom: 12 }}>
@@ -775,6 +886,7 @@ export default function AnalisisProductoPage() {
                   <Th>1 unidad (cant/ventas)</Th>
                   <Th>2 unidades (cant/ventas)</Th>
                   <Th>3 unidades (cant/ventas)</Th>
+                  <Th>% despachado</Th>
                   <Th>Upsell</Th>
                   <Th>Downsell</Th>
                 </tr>
@@ -792,6 +904,11 @@ export default function AnalisisProductoPage() {
                       <Td isLast={isLast}>{`${p.qty2Count} / ${money(p.qty2Ventas)}`}</Td>
                       <Td isLast={isLast}>{`${p.qty3Count} / ${money(p.qty3Ventas)}`}</Td>
                       <Td isLast={isLast}>
+                        <span style={{ color: pctColor(pctValue(p.pedidosDespachados, p.pedidos)), fontWeight: 700 }}>
+                          {pctPlain(p.pedidosDespachados, p.pedidos)}
+                        </span>
+                      </Td>
+                      <Td isLast={isLast}>
                         <StatusBadge variant={p.upsellOrders > 0 ? 'success' : 'paused'}>
                           {p.upsellOrders > 0 ? `Sí (${p.upsellOrders})` : 'No'}
                         </StatusBadge>
@@ -807,7 +924,7 @@ export default function AnalisisProductoPage() {
                 {!topRows.length ? (
                   <tr>
                     <td
-                      colSpan={9}
+                      colSpan={10}
                       style={{ padding: '12px 16px', fontSize: 12, color: ds.textMuted, borderBottom: 'none' }}
                     >
                       {loading ? 'Cargando productos top…' : 'No hay datos para los filtros seleccionados.'}
