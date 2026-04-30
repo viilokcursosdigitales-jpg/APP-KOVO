@@ -65,15 +65,45 @@ type MetaSpendPayload = {
 };
 
 type ShopifyOrderRow = {
+  id?: number;
   internal_status?: string;
   motico_status?: string;
   price_override?: number | null;
   shopifyTotal?: string | number;
   total?: string | number;
+  quantity_override?: number | null;
+  defaultQuantity?: number | null;
+  shopifyQuantity?: number | null;
+  lineItemsDetail?: {
+    product_id?: number | null;
+    title?: string;
+    name?: string;
+    quantity?: number;
+    properties?: { name?: string; value?: string }[];
+  }[];
 };
 
 type ShopifyOrdersPayload = {
   orders?: ShopifyOrderRow[];
+};
+
+type ModuleView = 'analisis' | 'productos_top';
+
+type TopProductAgg = {
+  key: string;
+  nombre: string;
+  productId: number | null;
+  pedidos: number;
+  ventas: number;
+  unidades: number;
+  qty1Count: number;
+  qty1Ventas: number;
+  qty2Count: number;
+  qty2Ventas: number;
+  qty3Count: number;
+  qty3Ventas: number;
+  upsellOrders: number;
+  downsellOrders: number;
 };
 
 function money(n: number): string {
@@ -157,6 +187,32 @@ function isPedidosPruebaOrder(row: Pick<ShopifyOrderRow, 'internal_status' | 'mo
   return st === 'prueba';
 }
 
+function parseOrderAmount(row: ShopifyOrderRow): number {
+  const raw =
+    row.price_override != null
+      ? Number(row.price_override)
+      : Number.parseFloat(String(row.shopifyTotal ?? row.total ?? '0'));
+  return Number.isFinite(raw) ? raw : 0;
+}
+
+function parseLineQty(raw: unknown): number {
+  const n = Number.parseInt(String(raw ?? 0), 10);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+function textHasToken(raw: string, token: string): boolean {
+  return String(raw || '').trim().toLowerCase().includes(token);
+}
+
+function lineHasOfferSignal(
+  line: NonNullable<ShopifyOrderRow['lineItemsDetail']>[number],
+  token: 'upsell' | 'downsell',
+): boolean {
+  if (textHasToken(String(line.title || ''), token) || textHasToken(String(line.name || ''), token)) return true;
+  const props = Array.isArray(line.properties) ? line.properties : [];
+  return props.some((p) => textHasToken(String(p?.name || ''), token) || textHasToken(String(p?.value || ''), token));
+}
+
 const inputStyle: CSSProperties = {
   width: '100%',
   borderRadius: 8,
@@ -201,6 +257,8 @@ export default function AnalisisProductoPage() {
   });
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string>('');
+  const [moduleView, setModuleView] = useState<ModuleView>('productos_top');
+  const [shopifyOrders, setShopifyOrders] = useState<ShopifyOrderRow[]>([]);
   const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
 
   useEffect(() => {
@@ -241,21 +299,19 @@ export default function AnalisisProductoPage() {
         spendRes.ok && Number.isFinite(Number(spendData.unlinked_spend)) ? Number(spendData.unlinked_spend) : 0,
       );
       const orders = Array.isArray(ordersData?.orders) ? ordersData.orders : [];
+      setShopifyOrders(orders);
       const despachadosCalculables = orders.filter(
         (o) => !isPedidosPruebaOrder(o) && String(o.internal_status || '').trim().toLowerCase() === 'despachado',
       );
       const totalVentasDespachado = despachadosCalculables.reduce((sum, o) => {
-        const raw =
-          o.price_override != null
-            ? Number(o.price_override)
-            : Number.parseFloat(String(o.shopifyTotal ?? o.total ?? '0'));
-        return sum + (Number.isFinite(raw) ? raw : 0);
+        return sum + parseOrderAmount(o);
       }, 0);
       setVentasTotalesPedidos(totalVentasDespachado);
     } catch {
       setError('Error de red');
       setDays([]);
       setVentasTotalesPedidos(0);
+      setShopifyOrders([]);
     } finally {
       setLoading(false);
     }
@@ -413,6 +469,91 @@ export default function AnalisisProductoPage() {
     return normalizeSeries(vals);
   }, [active, periodDays]);
 
+  const topProducts = useMemo(() => {
+    const map = new Map<string, TopProductAgg>();
+    const baseOrders = shopifyOrders.filter(
+      (o) => !isPedidosPruebaOrder(o) && String(o.internal_status || '').trim().toLowerCase() === 'despachado',
+    );
+    for (const order of baseOrders) {
+      const totalVenta = parseOrderAmount(order);
+      const details = Array.isArray(order.lineItemsDetail) ? order.lineItemsDetail : [];
+      const byProductInOrder = new Map<string, { qty: number; upsell: boolean; downsell: boolean; title: string; productId: number | null }>();
+      for (const li of details) {
+        const qty = parseLineQty(li?.quantity);
+        if (qty <= 0) continue;
+        const pid = li?.product_id != null && Number.isFinite(Number(li.product_id)) ? Number(li.product_id) : null;
+        const title = String(li?.title || li?.name || 'Producto').trim() || 'Producto';
+        const key = pid != null ? `pid:${pid}` : `name:${title.toLowerCase()}`;
+        const prev = byProductInOrder.get(key);
+        const lineUpsell = lineHasOfferSignal(li, 'upsell');
+        const lineDownsell = lineHasOfferSignal(li, 'downsell');
+        if (prev) {
+          prev.qty += qty;
+          prev.upsell = prev.upsell || lineUpsell;
+          prev.downsell = prev.downsell || lineDownsell;
+        } else {
+          byProductInOrder.set(key, {
+            qty,
+            upsell: lineUpsell,
+            downsell: lineDownsell,
+            title,
+            productId: pid,
+          });
+        }
+      }
+      if (!byProductInOrder.size) continue;
+      const totalQtyInOrder = [...byProductInOrder.values()].reduce((s, v) => s + v.qty, 0);
+      for (const [key, entry] of byProductInOrder.entries()) {
+        const share = totalQtyInOrder > 0 ? entry.qty / totalQtyInOrder : 1;
+        const ventasAsignadas = totalVenta * share;
+        const prev = map.get(key);
+        const hasUpsell = entry.upsell || entry.qty >= 2;
+        const hasDownsell = entry.downsell;
+        if (prev) {
+          prev.pedidos += 1;
+          prev.unidades += entry.qty;
+          prev.ventas += ventasAsignadas;
+          if (entry.qty === 1) {
+            prev.qty1Count += 1;
+            prev.qty1Ventas += ventasAsignadas;
+          } else if (entry.qty === 2) {
+            prev.qty2Count += 1;
+            prev.qty2Ventas += ventasAsignadas;
+          } else if (entry.qty === 3) {
+            prev.qty3Count += 1;
+            prev.qty3Ventas += ventasAsignadas;
+          }
+          if (hasUpsell) prev.upsellOrders += 1;
+          if (hasDownsell) prev.downsellOrders += 1;
+        } else {
+          map.set(key, {
+            key,
+            nombre: entry.title,
+            productId: entry.productId,
+            pedidos: 1,
+            ventas: ventasAsignadas,
+            unidades: entry.qty,
+            qty1Count: entry.qty === 1 ? 1 : 0,
+            qty1Ventas: entry.qty === 1 ? ventasAsignadas : 0,
+            qty2Count: entry.qty === 2 ? 1 : 0,
+            qty2Ventas: entry.qty === 2 ? ventasAsignadas : 0,
+            qty3Count: entry.qty === 3 ? 1 : 0,
+            qty3Ventas: entry.qty === 3 ? ventasAsignadas : 0,
+            upsellOrders: hasUpsell ? 1 : 0,
+            downsellOrders: hasDownsell ? 1 : 0,
+          });
+        }
+      }
+    }
+    return [...map.values()].sort((a, b) => b.ventas - a.ventas);
+  }, [shopifyOrders]);
+
+  const topRows = useMemo(
+    () => topProducts.filter((p) => p.nombre.toLowerCase().includes(query.toLowerCase().trim())),
+    [topProducts, query],
+  );
+  const topSalesMax = topRows.length ? Math.max(...topRows.slice(0, 10).map((p) => p.ventas)) : 0;
+
   return (
     <div style={{ fontFamily: ds.font, maxWidth: 1280, margin: '0 auto' }}>
       <header
@@ -479,6 +620,37 @@ export default function AnalisisProductoPage() {
         </div>
       </header>
 
+      <div style={{ display: 'flex', gap: 8, marginBottom: 12 }}>
+        <button
+          type="button"
+          onClick={() => setModuleView('analisis')}
+          style={{
+            ...inputStyle,
+            width: 'auto',
+            cursor: 'pointer',
+            fontWeight: 600,
+            background: moduleView === 'analisis' ? ds.brandBg : ds.bgCard,
+            color: moduleView === 'analisis' ? ds.brand : ds.textSecondary,
+          }}
+        >
+          Análisis general
+        </button>
+        <button
+          type="button"
+          onClick={() => setModuleView('productos_top')}
+          style={{
+            ...inputStyle,
+            width: 'auto',
+            cursor: 'pointer',
+            fontWeight: 600,
+            background: moduleView === 'productos_top' ? ds.brandBg : ds.bgCard,
+            color: moduleView === 'productos_top' ? ds.brand : ds.textSecondary,
+          }}
+        >
+          Productos top
+        </button>
+      </div>
+
       {error ? (
         <div
           style={{
@@ -510,6 +682,104 @@ export default function AnalisisProductoPage() {
         </div>
       ) : null}
 
+      {moduleView === 'productos_top' ? (
+        <section style={{ minWidth: 0 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,minmax(150px,1fr))', gap: 10, marginBottom: 12 }}>
+            <KpiCard title="Productos top" value={String(topRows.length)} delta={pct(0)} />
+            <KpiCard title="Cantidad de pedidos" value={String(topRows.reduce((s, r) => s + r.pedidos, 0))} delta={pct(0)} />
+            <KpiCard title="Ventas" value={money(topRows.reduce((s, r) => s + r.ventas, 0))} delta={pct(0)} />
+            <KpiCard title="Cantidad de unidades" value={String(topRows.reduce((s, r) => s + r.unidades, 0))} delta={pct(0)} />
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px,1fr) auto', gap: 8, marginBottom: 12 }}>
+            <input
+              style={inputStyle}
+              placeholder="Buscar producto top"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <button type="button" style={{ ...inputStyle, width: 'auto', cursor: 'pointer', fontWeight: 600 }}>
+              Filtro
+            </button>
+          </div>
+
+          <DataTable title="Top productos">
+            <table style={tableBase}>
+              <thead>
+                <tr>
+                  <Th style={{ width: '22%' }}>Producto</Th>
+                  <Th>Pedidos</Th>
+                  <Th>Ventas</Th>
+                  <Th>Unidades</Th>
+                  <Th>1 unidad (cant/ventas)</Th>
+                  <Th>2 unidades (cant/ventas)</Th>
+                  <Th>3 unidades (cant/ventas)</Th>
+                  <Th>Upsell</Th>
+                  <Th>Downsell</Th>
+                </tr>
+              </thead>
+              <tbody>
+                {topRows.map((p, idx) => {
+                  const isLast = idx === topRows.length - 1;
+                  return (
+                    <tr key={p.key}>
+                      <Td isLast={isLast} style={{ fontWeight: 600, color: ds.textPrimary }}>{p.nombre}</Td>
+                      <Td isLast={isLast}>{p.pedidos}</Td>
+                      <Td isLast={isLast}>{money(p.ventas)}</Td>
+                      <Td isLast={isLast}>{p.unidades}</Td>
+                      <Td isLast={isLast}>{`${p.qty1Count} / ${money(p.qty1Ventas)}`}</Td>
+                      <Td isLast={isLast}>{`${p.qty2Count} / ${money(p.qty2Ventas)}`}</Td>
+                      <Td isLast={isLast}>{`${p.qty3Count} / ${money(p.qty3Ventas)}`}</Td>
+                      <Td isLast={isLast}>
+                        <StatusBadge variant={p.upsellOrders > 0 ? 'success' : 'paused'}>
+                          {p.upsellOrders > 0 ? `Sí (${p.upsellOrders})` : 'No'}
+                        </StatusBadge>
+                      </Td>
+                      <Td isLast={isLast}>
+                        <StatusBadge variant={p.downsellOrders > 0 ? 'warning' : 'paused'}>
+                          {p.downsellOrders > 0 ? `Sí (${p.downsellOrders})` : 'No'}
+                        </StatusBadge>
+                      </Td>
+                    </tr>
+                  );
+                })}
+                {!topRows.length ? (
+                  <tr>
+                    <td
+                      colSpan={9}
+                      style={{ padding: '12px 16px', fontSize: 12, color: ds.textMuted, borderBottom: 'none' }}
+                    >
+                      {loading ? 'Cargando productos top…' : 'No hay datos para los filtros seleccionados.'}
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </DataTable>
+
+          <div style={{ marginTop: 12, background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: 12 }}>
+            <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary, marginBottom: 10 }}>
+              Ranking visual (Top 10 por ventas)
+            </div>
+            <div style={{ display: 'grid', gap: 8 }}>
+              {topRows.slice(0, 10).map((row) => {
+                const widthPct = topSalesMax > 0 ? Math.max(6, (row.ventas / topSalesMax) * 100) : 0;
+                return (
+                  <div key={`bar-${row.key}`} style={{ display: 'grid', gridTemplateColumns: '220px 1fr 120px', gap: 8, alignItems: 'center' }}>
+                    <div style={{ fontSize: 12, color: ds.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                      {row.nombre}
+                    </div>
+                    <div style={{ height: 10, borderRadius: 999, background: ds.bgSubtle, overflow: 'hidden' }}>
+                      <div style={{ width: `${widthPct}%`, height: '100%', background: ds.brand, borderRadius: 999 }} />
+                    </div>
+                    <div style={{ fontSize: 12, color: ds.textPrimary, textAlign: 'right', fontWeight: 600 }}>{money(row.ventas)}</div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </section>
+      ) : (
       <div className="analisis-producto-grid" style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 16 }}>
         <section style={{ minWidth: 0 }}>
           <div
@@ -695,6 +965,7 @@ export default function AnalisisProductoPage() {
           )}
         </aside>
       </div>
+      )}
 
       <style>{`
         @media (max-width: 1080px) {
