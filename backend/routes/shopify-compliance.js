@@ -49,5 +49,6 @@ function handleComplianceWebhook(topic) {
 router.post('/customers/redact', handleComplianceWebhook('customers/redact'));
 router.post('/shop/redact', handleComplianceWebhook('shop/redact'));
 router.post('/customers/data_request', handleComplianceWebhook('customers/data_request'));
+router.post('/', handleComplianceWebhook('base'));
 
 module.exports = router;
