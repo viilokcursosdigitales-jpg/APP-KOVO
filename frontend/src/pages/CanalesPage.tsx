@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { apiFetch, getStoredToken } from '../auth/api';
+import { useAuth } from '../auth/AuthContext';
 import { ds } from '../design-system/ds';
 import { IconMegaphone } from '../design-system/icons';
 import { PageHeader } from '../design-system/PageHeader';
@@ -27,10 +28,21 @@ function ShopifyGlyph() {
   );
 }
 
+const step1Items = [
+  'Ve a tu Shopify Admin → Configuración → Apps y canales de ventas',
+  'Haz clic en "Desarrollar apps" → "Crear una app" → nómbrala KOVO',
+  'En "Configuración de la API de Admin" activa todos los permisos de lectura y escritura para: pedidos, productos, inventario, clientes, analytics, fulfillments, locations, reports, shipping',
+  'Haz clic en "Guardar" → luego en "Instalar app"',
+  'Ve a "Instalación de la API" → copia el "Token de acceso de la API de Admin" (empieza con shpat_)',
+];
+
 export default function CanalesPage() {
   const navigate = useNavigate();
+  const { organization, canManageOrg } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [shopifyPanelOpen, setShopifyPanelOpen] = useState(false);
   const [shopDomainInput, setShopDomainInput] = useState('');
+  const [accessTokenInput, setAccessTokenInput] = useState('');
   const [shopifyConn, setShopifyConn] = useState<ShopifyConnection | null>(null);
   const [shopifyLoading, setShopifyLoading] = useState(true);
   const [shopifyActionLoading, setShopifyActionLoading] = useState(false);
@@ -73,7 +85,11 @@ export default function CanalesPage() {
 
   const shopifyConnected = shopifyConn?.status === 'connected' && Boolean(shopifyConn.shop_domain);
 
-  const handleConnectShopify = () => {
+  const handleManualConnectShopify = async () => {
+    if (!canManageOrg) {
+      setShopifyFormError('Solo un administrador u owner de la organización puede conectar Shopify.');
+      return;
+    }
     const shop = shopDomainInput.trim().toLowerCase();
     if (!shop.endsWith('.myshopify.com')) {
       setShopifyFormError('El dominio debe terminar en .myshopify.com');
@@ -83,15 +99,54 @@ export default function CanalesPage() {
       setShopifyFormError('Formato de tienda no válido');
       return;
     }
-    const token = getStoredToken();
-    if (!token) {
+    const accessToken = accessTokenInput.trim();
+    if (!accessToken) {
+      setShopifyFormError('Pega el token de acceso de la API de Admin (shpat_…).');
+      return;
+    }
+    if (!getStoredToken()) {
       setShopifyFormError('Inicia sesión para conectar Shopify.');
       navigate('/login');
       return;
     }
+    const orgId = organization?.id;
+    if (orgId == null) {
+      setShopifyFormError('No se pudo obtener tu organización. Vuelve a iniciar sesión.');
+      return;
+    }
+
     setShopifyFormError('');
-    const apiRoot = (import.meta.env.VITE_API_URL ?? '').replace(/\/$/, '') || window.location.origin;
-    window.location.href = `${apiRoot}/api/shopify/auth?shop=${encodeURIComponent(shop)}&kovo_token=${encodeURIComponent(token)}`;
+    setShopifyActionLoading(true);
+    try {
+      const res = await apiFetch('/api/shopify/manual-connect', {
+        method: 'POST',
+        body: JSON.stringify({
+          shop,
+          accessToken,
+          organizationId: orgId,
+        }),
+      });
+      const data = (await res.json().catch(() => ({}))) as { error?: string; message?: string };
+      if (!res.ok) {
+        const msg =
+          data.error ||
+          data.message ||
+          (res.status === 403
+            ? 'No tienes permiso para conectar (se requiere administrador u owner).'
+            : res.status === 400
+              ? 'No se pudo validar el token con Shopify. Revisa dominio, permisos de la app y el token (shpat_).'
+              : 'No se pudo conectar. Inténtalo de nuevo.');
+        setShopifyFormError(msg);
+        return;
+      }
+      setAccessTokenInput('');
+      setShopifyPanelOpen(false);
+      await loadShopifyConnection();
+    } catch {
+      setShopifyFormError('Error de red. Comprueba tu conexión e inténtalo de nuevo.');
+    } finally {
+      setShopifyActionLoading(false);
+    }
   };
 
   const handleDisconnectShopify = async () => {
@@ -125,7 +180,7 @@ export default function CanalesPage() {
         >
           <div style={{ fontWeight: 700, marginBottom: 6 }}>No pudimos conectar tu tienda</div>
           <p style={{ margin: 0, lineHeight: 1.45 }}>
-            Revisa que la app Shopify tenga el mismo App URL y redirect que en producción, e inténtalo de nuevo.
+            Revisa el dominio, el token de la API de Admin (shpat_…) y los permisos de tu app en Shopify, e inténtalo de nuevo.
           </p>
           <button
             type="button"
@@ -145,7 +200,7 @@ export default function CanalesPage() {
               cursor: 'pointer',
             }}
           >
-            Reintentar
+            Cerrar aviso
           </button>
         </div>
       )}
@@ -234,6 +289,8 @@ export default function CanalesPage() {
             border: `1px solid ${ds.borderCard}`,
             borderRadius: 14,
             padding: '18px 20px',
+            gridColumn: '1 / -1',
+            maxWidth: 640,
           }}
         >
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
@@ -260,7 +317,8 @@ export default function CanalesPage() {
           </div>
           <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Shopify</div>
           <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 6, lineHeight: 1.45 }}>
-            Conecta tu tienda para ver pedidos e inventario en KOVO (OAuth, sin pegar tokens).
+            Conecta tu tienda con una app personalizada en Shopify: tú creas la app, copias el token y lo pegas aquí. No
+            hace falta contactar al desarrollador.
           </div>
 
           {!shopifyLoading && shopifyConnected && shopifyConn ? (
@@ -268,7 +326,7 @@ export default function CanalesPage() {
               <div style={{ fontSize: 12, color: ds.textSecondary, fontWeight: 600 }}>{shopifyConn.shop_domain}</div>
               {shopifyConn.installed_at ? (
                 <div style={{ fontSize: 11, color: ds.textHint, marginTop: 4 }}>
-                  Instalado: {new Date(shopifyConn.installed_at).toLocaleString('es-ES')}
+                  Conectado: {new Date(shopifyConn.installed_at).toLocaleString('es-ES')}
                 </div>
               ) : null}
               <button
@@ -292,58 +350,171 @@ export default function CanalesPage() {
             </div>
           ) : !shopifyLoading ? (
             <div style={{ marginTop: 14 }}>
-              <label style={{ display: 'block', fontSize: 12, fontWeight: 500, color: ds.textSecondary, marginBottom: 6 }}>
-                Dominio de tu tienda
-              </label>
-              <input
-                type="text"
-                value={shopDomainInput}
-                onChange={(e) => setShopDomainInput(e.target.value)}
-                placeholder="mitienda.myshopify.com"
-                autoComplete="off"
-                style={{
-                  width: '100%',
-                  boxSizing: 'border-box',
-                  padding: '8px 12px',
-                  borderRadius: 8,
-                  border: `1px solid ${ds.borderCard}`,
-                  fontSize: 13,
-                  color: ds.textPrimary,
-                  background: ds.bgCard,
-                  marginBottom: 8,
-                }}
-              />
-              {shopifyFormError ? (
-                <div
-                  style={{
-                    fontSize: 12,
-                    color: ds.dangerText,
-                    marginBottom: 8,
-                    lineHeight: 1.45,
-                    whiteSpace: 'pre-line',
-                  }}
-                >
-                  {shopifyFormError}
-                </div>
-              ) : null}
-              <button
-                type="button"
-                disabled={shopifyActionLoading}
-                onClick={() => void handleConnectShopify()}
-                style={{
-                  width: '100%',
-                  padding: '8px 18px',
-                  borderRadius: 8,
-                  border: 'none',
-                  background: ds.brand,
-                  color: '#ffffff',
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: shopifyActionLoading ? 'wait' : 'pointer',
-                }}
-              >
-                {shopifyActionLoading ? 'Abriendo Shopify…' : 'Conectar Shopify'}
-              </button>
+              {!canManageOrg ? (
+                <p style={{ margin: 0, fontSize: 12, color: ds.textMuted, lineHeight: 1.5 }}>
+                  Solo un administrador u owner de la organización puede conectar o desconectar Shopify.
+                </p>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShopifyFormError('');
+                      setShopifyPanelOpen((o) => !o);
+                    }}
+                    style={{
+                      padding: '10px 18px',
+                      borderRadius: 8,
+                      border: 'none',
+                      background: ds.brand,
+                      color: '#ffffff',
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {shopifyPanelOpen ? 'Ocultar pasos' : 'Conectar Shopify'}
+                  </button>
+
+                  {shopifyPanelOpen ? (
+                    <div
+                      style={{
+                        marginTop: 18,
+                        paddingTop: 18,
+                        borderTop: `1px solid ${ds.borderCard}`,
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: 20,
+                      }}
+                    >
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: ds.textPrimary,
+                            marginBottom: 10,
+                            letterSpacing: 0.2,
+                          }}
+                        >
+                          Paso 1 — Crear tu app en Shopify
+                        </div>
+                        <ol
+                          style={{
+                            margin: 0,
+                            paddingLeft: 18,
+                            fontSize: 12,
+                            color: ds.textSecondary,
+                            lineHeight: 1.55,
+                          }}
+                        >
+                          {step1Items.map((line) => (
+                            <li key={line} style={{ marginBottom: 6 }}>
+                              {line}
+                            </li>
+                          ))}
+                        </ol>
+                      </div>
+
+                      <div>
+                        <div
+                          style={{
+                            fontSize: 12,
+                            fontWeight: 700,
+                            color: ds.textPrimary,
+                            marginBottom: 10,
+                            letterSpacing: 0.2,
+                          }}
+                        >
+                          Paso 2 — Conectar con Kovo
+                        </div>
+                        <label
+                          style={{ display: 'block', fontSize: 12, fontWeight: 500, color: ds.textSecondary, marginBottom: 6 }}
+                        >
+                          Dominio de tu tienda
+                        </label>
+                        <input
+                          type="text"
+                          value={shopDomainInput}
+                          onChange={(e) => setShopDomainInput(e.target.value)}
+                          placeholder="mitienda.myshopify.com"
+                          autoComplete="off"
+                          spellCheck={false}
+                          style={{
+                            width: '100%',
+                            maxWidth: 400,
+                            boxSizing: 'border-box',
+                            padding: '8px 12px',
+                            borderRadius: 8,
+                            border: `1px solid ${ds.borderCard}`,
+                            fontSize: 13,
+                            color: ds.textPrimary,
+                            background: ds.bgCard,
+                            marginBottom: 12,
+                          }}
+                        />
+                        <label
+                          style={{ display: 'block', fontSize: 12, fontWeight: 500, color: ds.textSecondary, marginBottom: 6 }}
+                        >
+                          Token de acceso
+                        </label>
+                        <input
+                          type="password"
+                          value={accessTokenInput}
+                          onChange={(e) => setAccessTokenInput(e.target.value)}
+                          placeholder="shpat_..."
+                          autoComplete="off"
+                          spellCheck={false}
+                          style={{
+                            width: '100%',
+                            maxWidth: 400,
+                            boxSizing: 'border-box',
+                            padding: '8px 12px',
+                            borderRadius: 8,
+                            border: `1px solid ${ds.borderCard}`,
+                            fontSize: 13,
+                            color: ds.textPrimary,
+                            background: ds.bgCard,
+                            fontFamily: 'ui-monospace, monospace',
+                            marginBottom: 8,
+                          }}
+                        />
+                        {shopifyFormError ? (
+                          <div
+                            style={{
+                              fontSize: 12,
+                              color: ds.dangerText,
+                              marginBottom: 8,
+                              lineHeight: 1.45,
+                              whiteSpace: 'pre-line',
+                            }}
+                          >
+                            {shopifyFormError}
+                          </div>
+                        ) : null}
+                        <button
+                          type="button"
+                          disabled={shopifyActionLoading}
+                          onClick={() => void handleManualConnectShopify()}
+                          style={{
+                            marginTop: 4,
+                            padding: '8px 18px',
+                            borderRadius: 8,
+                            border: 'none',
+                            background: ds.brand,
+                            color: '#ffffff',
+                            fontSize: 13,
+                            fontWeight: 600,
+                            cursor: shopifyActionLoading ? 'wait' : 'pointer',
+                          }}
+                        >
+                          {shopifyActionLoading ? 'Conectando…' : 'Conectar'}
+                        </button>
+                      </div>
+                    </div>
+                  ) : null}
+                </>
+              )}
             </div>
           ) : null}
         </div>
