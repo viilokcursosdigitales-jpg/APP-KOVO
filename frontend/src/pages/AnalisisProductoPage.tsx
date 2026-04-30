@@ -161,6 +161,44 @@ function monthKeysForCount(count: number): string {
   return out.join(',');
 }
 
+function toIsoUtc(d: Date): string {
+  return d.toISOString();
+}
+
+function startOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+function endOfDay(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+}
+
+function addDays(d: Date, n: number): Date {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate() + n, d.getHours(), d.getMinutes(), d.getSeconds(), d.getMilliseconds());
+}
+
+function buildPedidosRangeParams(filter: DateFilter): string {
+  const now = new Date();
+  let min = startOfDay(now);
+  let max = endOfDay(now);
+  if (filter === 'ayer') {
+    min = startOfDay(addDays(now, -1));
+    max = endOfDay(addDays(now, -1));
+  } else if (filter === '3d') {
+    min = startOfDay(addDays(now, -2));
+  } else if (filter === '7d' || filter === 'custom') {
+    min = startOfDay(addDays(now, -6));
+  } else if (filter === '14d') {
+    min = startOfDay(addDays(now, -13));
+  } else if (filter === '30d') {
+    min = startOfDay(addDays(now, -29));
+  }
+  const qs = new URLSearchParams();
+  qs.set('created_at_min', toIsoUtc(min));
+  qs.set('created_at_max', toIsoUtc(max));
+  return qs.toString();
+}
+
 function periodConfig(filter: DateFilter): {
   currentStart: number;
   currentLen: number;
@@ -273,6 +311,29 @@ export default function AnalisisProductoPage() {
     setLoading(true);
     setError(null);
     try {
+      if (moduleView === 'productos_top') {
+        const ordersRangeQs = buildPedidosRangeParams(filter);
+        const ordersRes = await apiFetch(`/api/shopify/orders?${ordersRangeQs}`);
+        const ordersData = (await ordersRes.json().catch(() => ({}))) as ShopifyOrdersPayload;
+        if (!ordersRes.ok) {
+          setError('No se pudo cargar Pedidos para Productos top');
+          setShopifyOrders([]);
+          setVentasTotalesPedidos(0);
+          return;
+        }
+        const orders = Array.isArray(ordersData?.orders) ? ordersData.orders : [];
+        setShopifyOrders(orders);
+        const despachadosCalculables = orders.filter(
+          (o) => !isPedidosPruebaOrder(o) && String(o.internal_status || '').trim().toLowerCase() === 'despachado',
+        );
+        const totalVentasDespachado = despachadosCalculables.reduce((sum, o) => sum + parseOrderAmount(o), 0);
+        setVentasTotalesPedidos(totalVentasDespachado);
+        setDays([]);
+        setMetaSpendByProductId({});
+        setMetaUnlinkedSpend(0);
+        return;
+      }
+
       const cfg = periodConfig(filter);
       const monthsCsv = monthKeysForCount(cfg.months);
       const suffix = monthsCsv ? `?months=${encodeURIComponent(monthsCsv)}` : '';
@@ -315,7 +376,7 @@ export default function AnalisisProductoPage() {
     } finally {
       setLoading(false);
     }
-  }, [filter]);
+  }, [filter, moduleView]);
 
   useEffect(() => {
     void load();
