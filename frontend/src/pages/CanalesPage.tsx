@@ -29,11 +29,11 @@ function ShopifyGlyph() {
 }
 
 const step1Items = [
-  'Ve a tu Shopify Admin → Configuración → Apps y canales de ventas',
-  'Haz clic en "Desarrollar apps" → "Crear una app" → nómbrala KOVO',
-  'En "Configuración de la API de Admin" activa todos los permisos de lectura y escritura para: pedidos, productos, inventario, clientes, analytics, fulfillments, locations, reports, shipping',
-  'Haz clic en "Guardar" → luego en "Instalar app"',
-  'Ve a "Instalación de la API" → copia el "Token de acceso de la API de Admin" (empieza con shpat_)',
+  'En Shopify Admin: Configuración → Apps y canales de ventas → Desarrollar apps → crea una app o abre la que usarás con KOVO (puedes llamarla KOVO).',
+  'Abre el Dev Dashboard de esa app. En Configuration / Configuración → Client credentials encontrarás el Client ID (Shopify también lo llama API key) y el Client secret.',
+  'En Admin API integration / Configuración de la API de Admin activa los alcances que necesites (pedidos, productos, inventario, clientes, analytics, fulfillments, locations, informes, envíos — lectura y/o escritura según tu caso) y guarda.',
+  'Instala la app en tu tienda si Shopify muestra "Install app" / "Instalar app" (así quedan aplicados los permisos).',
+  'Si no ves el Client secret completo, puedes revelarlo una vez o usar "Rotate" para generar uno nuevo y copiarlo en ese momento.',
 ];
 
 export default function CanalesPage() {
@@ -42,7 +42,8 @@ export default function CanalesPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [shopifyPanelOpen, setShopifyPanelOpen] = useState(false);
   const [shopDomainInput, setShopDomainInput] = useState('');
-  const [accessTokenInput, setAccessTokenInput] = useState('');
+  const [apiKeyInput, setApiKeyInput] = useState('');
+  const [apiSecretInput, setApiSecretInput] = useState('');
   const [shopifyConn, setShopifyConn] = useState<ShopifyConnection | null>(null);
   const [shopifyLoading, setShopifyLoading] = useState(true);
   const [shopifyActionLoading, setShopifyActionLoading] = useState(false);
@@ -85,7 +86,7 @@ export default function CanalesPage() {
 
   const shopifyConnected = shopifyConn?.status === 'connected' && Boolean(shopifyConn.shop_domain);
 
-  const handleManualConnectShopify = async () => {
+  const handleConnectCredentials = async () => {
     if (!canManageOrg) {
       setShopifyFormError('Solo un administrador u owner de la organización puede conectar Shopify.');
       return;
@@ -99,9 +100,14 @@ export default function CanalesPage() {
       setShopifyFormError('Formato de tienda no válido');
       return;
     }
-    const accessToken = accessTokenInput.trim();
-    if (!accessToken) {
-      setShopifyFormError('Pega el token de acceso de la API de Admin (shpat_…).');
+    const apiKey = apiKeyInput.trim();
+    const apiSecret = apiSecretInput.trim();
+    if (!apiKey) {
+      setShopifyFormError('Introduce el Client ID (API key) de tu app.');
+      return;
+    }
+    if (!apiSecret) {
+      setShopifyFormError('Introduce el Client secret de tu app.');
       return;
     }
     if (!getStoredToken()) {
@@ -118,11 +124,12 @@ export default function CanalesPage() {
     setShopifyFormError('');
     setShopifyActionLoading(true);
     try {
-      const res = await apiFetch('/api/shopify/manual-connect', {
+      const res = await apiFetch('/api/shopify/connect-credentials', {
         method: 'POST',
         body: JSON.stringify({
           shop,
-          accessToken,
+          apiKey,
+          apiSecret,
           organizationId: orgId,
         }),
       });
@@ -134,12 +141,13 @@ export default function CanalesPage() {
           (res.status === 403
             ? 'No tienes permiso para conectar (se requiere administrador u owner).'
             : res.status === 400
-              ? 'No se pudo validar el token con Shopify. Revisa dominio, permisos de la app y el token (shpat_).'
+              ? 'Shopify rechazó las credenciales o el dominio no coincide. Revisa Client ID, Client secret e instalación de la app.'
               : 'No se pudo conectar. Inténtalo de nuevo.');
         setShopifyFormError(msg);
         return;
       }
-      setAccessTokenInput('');
+      setApiKeyInput('');
+      setApiSecretInput('');
       setShopifyPanelOpen(false);
       await loadShopifyConnection();
     } catch {
@@ -180,7 +188,7 @@ export default function CanalesPage() {
         >
           <div style={{ fontWeight: 700, marginBottom: 6 }}>No pudimos conectar tu tienda</div>
           <p style={{ margin: 0, lineHeight: 1.45 }}>
-            Revisa el dominio, el token de la API de Admin (shpat_…) y los permisos de tu app en Shopify, e inténtalo de nuevo.
+            Revisa el dominio .myshopify.com, el Client ID y el Client secret del Dev Dashboard, que la app esté instalada en la tienda y los permisos de Admin API, e inténtalo de nuevo.
           </p>
           <button
             type="button"
@@ -317,8 +325,8 @@ export default function CanalesPage() {
           </div>
           <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Shopify</div>
           <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 6, lineHeight: 1.45 }}>
-            Conecta tu tienda con una app personalizada en Shopify: tú creas la app, copias el token y lo pegas aquí. No
-            hace falta contactar al desarrollador.
+            Usa tu propia app en el Dev Dashboard de Shopify: pegas el dominio de la tienda y las credenciales Client ID +
+            Client secret. KOVO valida la conexión con Shopify automáticamente.
           </div>
 
           {!shopifyLoading && shopifyConnected && shopifyConn ? (
@@ -428,6 +436,11 @@ export default function CanalesPage() {
                         >
                           Paso 2 — Conectar con Kovo
                         </div>
+                        <p style={{ margin: '0 0 12px', fontSize: 11, color: ds.textMuted, lineHeight: 1.5 }}>
+                          Usa el mismo dominio que aparece en la URL de administración de Shopify (formato{' '}
+                          <strong>tu-tienda.myshopify.com</strong>). Lo encuentras también en Configuración → Tienda →
+                          Dominios.
+                        </p>
                         <label
                           style={{ display: 'block', fontSize: 12, fontWeight: 500, color: ds.textSecondary, marginBottom: 6 }}
                         >
@@ -456,13 +469,47 @@ export default function CanalesPage() {
                         <label
                           style={{ display: 'block', fontSize: 12, fontWeight: 500, color: ds.textSecondary, marginBottom: 6 }}
                         >
-                          Token de acceso
+                          API Key (Client ID)
                         </label>
+                        <p style={{ margin: '0 0 6px', fontSize: 11, color: ds.textHint, lineHeight: 1.45 }}>
+                          En el Dev Dashboard de tu app: <strong>Configuration</strong> → <strong>Client credentials</strong>{' '}
+                          → <strong>Client ID</strong> (Shopify puede mostrarlo como API key).
+                        </p>
+                        <input
+                          type="text"
+                          value={apiKeyInput}
+                          onChange={(e) => setApiKeyInput(e.target.value)}
+                          placeholder="Client ID de tu app"
+                          autoComplete="off"
+                          spellCheck={false}
+                          style={{
+                            width: '100%',
+                            maxWidth: 400,
+                            boxSizing: 'border-box',
+                            padding: '8px 12px',
+                            borderRadius: 8,
+                            border: `1px solid ${ds.borderCard}`,
+                            fontSize: 13,
+                            color: ds.textPrimary,
+                            background: ds.bgCard,
+                            fontFamily: 'ui-monospace, monospace',
+                            marginBottom: 12,
+                          }}
+                        />
+                        <label
+                          style={{ display: 'block', fontSize: 12, fontWeight: 500, color: ds.textSecondary, marginBottom: 6 }}
+                        >
+                          API Secret (Client secret)
+                        </label>
+                        <p style={{ margin: '0 0 6px', fontSize: 11, color: ds.textHint, lineHeight: 1.45 }}>
+                          Mismo apartado <strong>Client credentials</strong>: <strong>Client secret</strong>. Es
+                          confidencial; no lo compartas fuera de KOVO.
+                        </p>
                         <input
                           type="password"
-                          value={accessTokenInput}
-                          onChange={(e) => setAccessTokenInput(e.target.value)}
-                          placeholder="shpat_..."
+                          value={apiSecretInput}
+                          onChange={(e) => setApiSecretInput(e.target.value)}
+                          placeholder="Client secret"
                           autoComplete="off"
                           spellCheck={false}
                           style={{
@@ -495,7 +542,7 @@ export default function CanalesPage() {
                         <button
                           type="button"
                           disabled={shopifyActionLoading}
-                          onClick={() => void handleManualConnectShopify()}
+                          onClick={() => void handleConnectCredentials()}
                           style={{
                             marginTop: 4,
                             padding: '8px 18px',

@@ -4,6 +4,51 @@ const DEFAULT_API_VERSION =
   process.env.SHOPIFY_API_VERSION || process.env.SHOPIFY_API_VERSTON || '2026-04';
 
 /**
+ * Admin API: token de acceso `shpat_…` u objeto JSON guardado en BD con API Key + Secret (Basic).
+ * @param {string} accessToken
+ * @returns {Record<string, string> | null}
+ */
+function buildShopifyAdminAuthHeaders(accessToken) {
+  const raw = String(accessToken || '').trim();
+  if (!raw) return null;
+  if (raw.startsWith('{')) {
+    try {
+      const j = JSON.parse(raw);
+      if (j && j.auth === 'basic_api' && j.apiKey != null && j.apiSecret != null) {
+        const k = String(j.apiKey).trim();
+        const s = String(j.apiSecret).trim();
+        if (!k || !s) return null;
+        const b64 = Buffer.from(`${k}:${s}`, 'utf8').toString('base64');
+        return {
+          Authorization: `Basic ${b64}`,
+          'Content-Type': 'application/json',
+        };
+      }
+    } catch {
+      return null;
+    }
+    return null;
+  }
+  return {
+    'X-Shopify-Access-Token': raw,
+    'Content-Type': 'application/json',
+  };
+}
+
+/**
+ * Serializa API Key + Secret para columna `access_token` (Basic Auth en llamadas subsiguientes).
+ * @param {string} apiKey
+ * @param {string} apiSecret
+ */
+function encodeShopifyBasicCredentialsRecord(apiKey, apiSecret) {
+  return JSON.stringify({
+    auth: 'basic_api',
+    apiKey: String(apiKey || '').trim(),
+    apiSecret: String(apiSecret || '').trim(),
+  });
+}
+
+/**
  * @param {string} shop ej. mitienda.myshopify.com
  * @returns {string | null} dominio normalizado o null
  */
@@ -59,16 +104,17 @@ async function shopifyRequest(shop, accessToken, endpoint, apiVersion = DEFAULT_
   if (!domain || !accessToken) {
     return { ok: false, status: 400, error: 'shop_or_token_invalid', data: null };
   }
+  const authHeaders = buildShopifyAdminAuthHeaders(accessToken);
+  if (!authHeaders) {
+    return { ok: false, status: 400, error: 'shop_or_token_invalid', data: null };
+  }
   const path = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
   const url = `https://${domain}/admin/api/${apiVersion}/${path}`;
   let res;
   try {
     res = await fetch(url, {
       method: 'GET',
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json',
-      },
+      headers: authHeaders,
     });
   } catch (e) {
     return { ok: false, status: 503, error: e.message || 'network', data: null };
@@ -114,6 +160,10 @@ async function shopifyFetchAllOrders(shop, accessToken, baseQs, opts = {}) {
   }
   const maxPages = Number.isFinite(Number(opts.maxPages)) && Number(opts.maxPages) > 0 ? Number(opts.maxPages) : 2000;
   const v = DEFAULT_API_VERSION;
+  const authHeaders = buildShopifyAdminAuthHeaders(accessToken);
+  if (!authHeaders) {
+    return { ok: false, orders: [], error: 'shop_or_token_invalid' };
+  }
   const all = [];
   let nextAbsUrl = null;
   for (let page = 0; page < maxPages; page += 1) {
@@ -129,10 +179,7 @@ async function shopifyFetchAllOrders(shop, accessToken, baseQs, opts = {}) {
     try {
       res = await fetch(url, {
         method: 'GET',
-        headers: {
-          'X-Shopify-Access-Token': accessToken,
-          'Content-Type': 'application/json',
-        },
+        headers: authHeaders,
       });
     } catch (e) {
       return { ok: false, orders: all, error: e.message || 'network', status: 503 };
@@ -172,16 +219,17 @@ async function shopifyJsonRequest(shop, accessToken, method, endpoint, body = nu
   if (!domain || !accessToken) {
     return { ok: false, status: 400, error: 'shop_or_token_invalid', data: null };
   }
+  const authHeaders = buildShopifyAdminAuthHeaders(accessToken);
+  if (!authHeaders) {
+    return { ok: false, status: 400, error: 'shop_or_token_invalid', data: null };
+  }
   const path = endpoint.startsWith('/') ? endpoint.slice(1) : endpoint;
   const url = `https://${domain}/admin/api/${apiVersion}/${path}`;
   let res;
   try {
     res = await fetch(url, {
       method,
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json',
-      },
+      headers: authHeaders,
       body: body != null && method !== 'GET' ? JSON.stringify(body) : undefined,
     });
   } catch (e) {
@@ -514,14 +562,17 @@ async function registerUninstallWebhook(shop, accessToken) {
   }
   const apiVersion = process.env.SHOPIFY_API_VERSION || DEFAULT_API_VERSION;
 
+  const authHeaders = buildShopifyAdminAuthHeaders(accessToken);
+  if (!authHeaders) {
+    console.error('[shopify] registerUninstallWebhook: credenciales inválidas');
+    return;
+  }
+
   let response;
   try {
     response = await fetch(`https://${domain}/admin/api/${apiVersion}/webhooks.json`, {
       method: 'POST',
-      headers: {
-        'X-Shopify-Access-Token': accessToken,
-        'Content-Type': 'application/json',
-      },
+      headers: authHeaders,
       body: JSON.stringify({
         webhook: {
           topic: 'app/uninstalled',
@@ -912,6 +963,8 @@ module.exports = {
   sanitizeShopDomain,
   verifyShopifyOAuthHmac,
   verifyShopifyWebhookHmac,
+  buildShopifyAdminAuthHeaders,
+  encodeShopifyBasicCredentialsRecord,
   shopifyRequest,
   shopifyJsonRequest,
   phoneWithoutColombia57,

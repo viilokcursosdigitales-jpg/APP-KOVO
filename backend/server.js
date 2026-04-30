@@ -38,6 +38,7 @@ const {
   verifyShopifyOAuthHmac,
   verifyShopifyWebhookHmac,
   shopifyRequest,
+  encodeShopifyBasicCredentialsRecord,
   registerUninstallWebhook,
   normalizeShopifyOrdersForApp,
   mapFinancialToBadge,
@@ -5565,6 +5566,84 @@ app.post(
       });
     } catch (e) {
       console.error('[shopify manual-connect]', e);
+      return res.status(500).json({ error: 'Error al guardar conexión' });
+    }
+  },
+);
+
+/**
+ * Conexión con Client ID + Client secret de la app personalizada del merchant (Basic Auth en Admin API).
+ */
+app.post(
+  '/api/shopify/connect-credentials',
+  verifyToken,
+  scopeToOrganization,
+  requireRole('owner', 'admin'),
+  async (req, res) => {
+    try {
+      const organizationId = Number(req.body?.organizationId);
+      const shop = sanitizeShopDomain(req.body?.shop);
+      const apiKey = String(req.body?.apiKey || '').trim();
+      const apiSecret = String(req.body?.apiSecret || '').trim();
+
+      if (!Number.isFinite(organizationId) || organizationId <= 0) {
+        return res.status(400).json({ error: 'organizationId inválido' });
+      }
+      if (organizationId !== req.organizationId) {
+        return res.status(403).json({ error: 'organizationId no coincide con tu organización' });
+      }
+      if (!shop) {
+        return res.status(400).json({ error: 'shop inválido (usa mitienda.myshopify.com)' });
+      }
+      if (!apiKey || !apiSecret) {
+        return res.status(400).json({ error: 'apiKey y apiSecret son obligatorios' });
+      }
+
+      const validateVersion = '2026-04';
+      const shopUrl = `https://${shop}/admin/api/${validateVersion}/shop.json`;
+      const basic = Buffer.from(`${apiKey}:${apiSecret}`, 'utf8').toString('base64');
+      const checkRes = await fetch(shopUrl, {
+        headers: {
+          Authorization: `Basic ${basic}`,
+          Accept: 'application/json',
+        },
+      });
+      const checkJson = await checkRes.json().catch(() => ({}));
+      if (checkRes.status !== 200 || !checkJson?.shop) {
+        const hint =
+          checkRes.status === 401 || checkRes.status === 403
+            ? 'Shopify rechazó las credenciales (401/403). Comprueba Client ID, Client secret y que la app esté instalada en la tienda.'
+            : 'No se pudo validar la tienda con Basic Auth. Revisa dominio .myshopify.com y credenciales del Dev Dashboard.';
+        return res.status(400).json({
+          error: hint,
+          httpStatus: checkRes.status,
+        });
+      }
+
+      const storedAccess = encodeShopifyBasicCredentialsRecord(apiKey, apiSecret);
+      const scopeStr = SHOPIFY_SCOPES || '';
+      await pool.query(
+        `INSERT INTO shopify_connections (organization_id, shop_domain, access_token, scope, status, installed_at, updated_at)
+         VALUES ($1, $2, $3, $4, 'connected', now(), now())
+         ON CONFLICT (organization_id, shop_domain)
+         DO UPDATE SET
+           access_token = EXCLUDED.access_token,
+           scope = EXCLUDED.scope,
+           status = 'connected',
+           updated_at = now()`,
+        [organizationId, shop, storedAccess, scopeStr],
+      );
+
+      await registerUninstallWebhook(shop, storedAccess);
+
+      return res.json({
+        ok: true,
+        organization_id: organizationId,
+        shop_domain: shop,
+        shop_name: checkJson.shop?.name || null,
+      });
+    } catch (e) {
+      console.error('[shopify connect-credentials]', e);
       return res.status(500).json({ error: 'Error al guardar conexión' });
     }
   },
