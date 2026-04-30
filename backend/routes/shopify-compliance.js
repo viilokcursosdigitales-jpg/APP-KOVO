@@ -1,4 +1,5 @@
 const express = require('express');
+const crypto = require('crypto');
 const { verifyShopifyWebhookHmac } = require('../shopifyService');
 
 const router = express.Router();
@@ -17,7 +18,21 @@ function handleComplianceWebhook(topic) {
   return (req, res) => {
     const hmacHeader = req.get('X-Shopify-Hmac-Sha256');
     const rawBody = req.rawBody || (Buffer.isBuffer(req.body) ? req.body : null);
-    if (!SHOPIFY_API_SECRET || !rawBody || !verifyShopifyWebhookHmac(rawBody, hmacHeader, SHOPIFY_API_SECRET)) {
+    const calculatedHmac =
+      rawBody && SHOPIFY_API_SECRET
+        ? crypto.createHmac('sha256', SHOPIFY_API_SECRET).update(rawBody).digest('base64')
+        : null;
+    const isValid =
+      Boolean(SHOPIFY_API_SECRET) && Boolean(rawBody) && verifyShopifyWebhookHmac(rawBody, hmacHeader, SHOPIFY_API_SECRET);
+
+    console.log(`[shopify compliance debug] ${topic}`, {
+      rawBodyPreview: rawBody ? rawBody.toString('utf8', 0, 100) : null,
+      hmacReceived: hmacHeader || null,
+      hmacCalculated: calculatedHmac,
+      hmacMatch: isValid,
+    });
+
+    if (!isValid) {
       return res.status(401).send('Unauthorized');
     }
 
