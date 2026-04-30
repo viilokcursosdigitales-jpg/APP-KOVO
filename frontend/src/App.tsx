@@ -22,6 +22,7 @@ const ComisionVentasPage = lazy(() => import('./pages/ComisionVentasPage'));
 const MetaAdsPage = lazy(() => import('./pages/MetaAdsPage'));
 const MoticoPage = lazy(() => import('./pages/MoticoPage'));
 const PedidosPage = lazy(() => import('./pages/PedidosPage'));
+const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
 const RelacionPagosMoticoPage = lazy(() => import('./pages/RelacionPagosMoticoPage'));
 const Profile = lazy(() => import('./pages/Profile'));
 const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'));
@@ -73,6 +74,7 @@ export default function App() {
         <Route path="/aceptar-invitacion" element={<AcceptInvitation />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
 
         <Route element={<PrivateRoute />}>
           <Route element={<AppShell />}>
