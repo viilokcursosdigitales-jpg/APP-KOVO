@@ -58,6 +58,7 @@ const {
   sendPasswordResetEmail,
   getMailTransportInfo,
 } = require('./mailService');
+const shopifyComplianceRoutes = require('./routes/shopify-compliance');
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
 const hasFrontendDist = fs.existsSync(staticDir);
 
@@ -249,6 +250,20 @@ app.use(
     credentials: true,
   }),
 );
+app.use(
+  '/webhooks',
+  express.raw({
+    type: 'application/json',
+    limit: '1mb',
+  }),
+);
+app.use('/webhooks', (req, res, next) => {
+  if (Buffer.isBuffer(req.body)) {
+    req.rawBody = req.body;
+  }
+  next();
+});
+app.use('/webhooks', shopifyComplianceRoutes);
 app.use(
   express.json({
     limit: '6mb',
