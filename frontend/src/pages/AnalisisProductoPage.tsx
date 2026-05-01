@@ -96,6 +96,7 @@ type TopProductAgg = {
   productId: number | null;
   pedidos: number;
   pedidosDespachados: number;
+  ventasTotales: number;
   ventas: number;
   unidades: number;
   qty1Count: number;
@@ -644,7 +645,8 @@ export default function AnalisisProductoPage() {
       const totalQtyInOrder = [...byProductInOrder.values()].reduce((s, v) => s + v.qty, 0);
       for (const [key, entry] of byProductInOrder.entries()) {
         const share = totalQtyInOrder > 0 ? entry.qty / totalQtyInOrder : 1;
-        const ventasAsignadas = isDespachado ? totalVenta * share : 0;
+        const ventasTotalesAsignadas = totalVenta * share;
+        const ventasDespachoAsignadas = isDespachado ? totalVenta * share : 0;
         const prev = map.get(key);
         const hasUpsell = entry.upsell || entry.qty >= 2;
         const hasDownsell = entry.downsell;
@@ -652,16 +654,17 @@ export default function AnalisisProductoPage() {
           prev.pedidos += 1;
           if (isDespachado) prev.pedidosDespachados += 1;
           prev.unidades += entry.qty;
-          prev.ventas += ventasAsignadas;
+          prev.ventasTotales += ventasTotalesAsignadas;
+          prev.ventas += ventasDespachoAsignadas;
           if (entry.qty === 1) {
             prev.qty1Count += 1;
-            prev.qty1Ventas += ventasAsignadas;
+            prev.qty1Ventas += ventasDespachoAsignadas;
           } else if (entry.qty === 2) {
             prev.qty2Count += 1;
-            prev.qty2Ventas += ventasAsignadas;
+            prev.qty2Ventas += ventasDespachoAsignadas;
           } else if (entry.qty === 3) {
             prev.qty3Count += 1;
-            prev.qty3Ventas += ventasAsignadas;
+            prev.qty3Ventas += ventasDespachoAsignadas;
           }
           if (hasUpsell) prev.upsellOrders += 1;
           if (hasDownsell) prev.downsellOrders += 1;
@@ -672,28 +675,29 @@ export default function AnalisisProductoPage() {
             productId: entry.productId,
             pedidos: 1,
             pedidosDespachados: isDespachado ? 1 : 0,
-            ventas: ventasAsignadas,
+            ventasTotales: ventasTotalesAsignadas,
+            ventas: ventasDespachoAsignadas,
             unidades: entry.qty,
             qty1Count: entry.qty === 1 ? 1 : 0,
-            qty1Ventas: entry.qty === 1 ? ventasAsignadas : 0,
+            qty1Ventas: entry.qty === 1 ? ventasDespachoAsignadas : 0,
             qty2Count: entry.qty === 2 ? 1 : 0,
-            qty2Ventas: entry.qty === 2 ? ventasAsignadas : 0,
+            qty2Ventas: entry.qty === 2 ? ventasDespachoAsignadas : 0,
             qty3Count: entry.qty === 3 ? 1 : 0,
-            qty3Ventas: entry.qty === 3 ? ventasAsignadas : 0,
+            qty3Ventas: entry.qty === 3 ? ventasDespachoAsignadas : 0,
             upsellOrders: hasUpsell ? 1 : 0,
             downsellOrders: hasDownsell ? 1 : 0,
           });
         }
       }
     }
-    return [...map.values()].sort((a, b) => b.ventas - a.ventas);
+    return [...map.values()].sort((a, b) => b.ventasTotales - a.ventasTotales);
   }, [shopifyOrders]);
 
   const topRows = useMemo(
     () => topProducts.filter((p) => p.nombre.toLowerCase().includes(query.toLowerCase().trim())),
     [topProducts, query],
   );
-  const topSalesMax = topRows.length ? Math.max(...topRows.slice(0, 10).map((p) => p.ventas)) : 0;
+  const topSalesMax = topRows.length ? Math.max(...topRows.slice(0, 10).map((p) => p.ventasTotales)) : 0;
 
   return (
     <div style={{ fontFamily: ds.font, maxWidth: 1280, margin: '0 auto' }}>
@@ -896,6 +900,7 @@ export default function AnalisisProductoPage() {
                   <Th>Pedidos</Th>
                   <Th>Gasto publicitario</Th>
                   <Th>CPA Meta</Th>
+                  <Th>Ventas Totales</Th>
                   <Th>Ventas</Th>
                   <Th>Unidades</Th>
                   <Th>1 unidad (cant/ventas)</Th>
@@ -920,6 +925,7 @@ export default function AnalisisProductoPage() {
                       <Td isLast={isLast}>{p.pedidos}</Td>
                       <Td isLast={isLast}>{money(gastoPub)}</Td>
                       <Td isLast={isLast}>{money(cpaMeta)}</Td>
+                      <Td isLast={isLast}>{money(p.ventasTotales)}</Td>
                       <Td isLast={isLast}>{money(p.ventas)}</Td>
                       <Td isLast={isLast}>{p.unidades}</Td>
                       <Td isLast={isLast}>{`${p.qty1Count} / ${money(p.qty1Ventas)}`}</Td>
@@ -946,7 +952,7 @@ export default function AnalisisProductoPage() {
                 {!topRows.length ? (
                   <tr>
                     <td
-                      colSpan={12}
+                      colSpan={13}
                       style={{ padding: '12px 16px', fontSize: 12, color: ds.textMuted, borderBottom: 'none' }}
                     >
                       {loading ? 'Cargando productos top…' : 'No hay datos para los filtros seleccionados.'}
@@ -963,7 +969,7 @@ export default function AnalisisProductoPage() {
             </div>
             <div style={{ display: 'grid', gap: 8 }}>
               {topRows.slice(0, 10).map((row) => {
-                const widthPct = topSalesMax > 0 ? Math.max(6, (row.ventas / topSalesMax) * 100) : 0;
+                const widthPct = topSalesMax > 0 ? Math.max(6, (row.ventasTotales / topSalesMax) * 100) : 0;
                 return (
                   <div key={`bar-${row.key}`} style={{ display: 'grid', gridTemplateColumns: '220px 1fr 120px', gap: 8, alignItems: 'center' }}>
                     <div style={{ fontSize: 12, color: ds.textSecondary, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
@@ -972,7 +978,7 @@ export default function AnalisisProductoPage() {
                     <div style={{ height: 10, borderRadius: 999, background: ds.bgSubtle, overflow: 'hidden' }}>
                       <div style={{ width: `${widthPct}%`, height: '100%', background: ds.brand, borderRadius: 999 }} />
                     </div>
-                    <div style={{ fontSize: 12, color: ds.textPrimary, textAlign: 'right', fontWeight: 600 }}>{money(row.ventas)}</div>
+                    <div style={{ fontSize: 12, color: ds.textPrimary, textAlign: 'right', fontWeight: 600 }}>{money(row.ventasTotales)}</div>
                   </div>
                 );
               })}
