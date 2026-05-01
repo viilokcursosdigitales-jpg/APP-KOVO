@@ -349,24 +349,37 @@ export default function AnalisisProductoPage() {
     try {
       if (moduleView === 'productos_top') {
         const ordersRangeQs = buildPedidosRangeParams(filter);
-        const ordersRes = await apiFetch(`/api/shopify/orders?${ordersRangeQs}`);
+        const metaPeriod = periodConfig(filter).metaPeriod;
+        const [ordersRes, spendRes] = await Promise.all([
+          apiFetch(`/api/shopify/orders?${ordersRangeQs}`),
+          apiFetch(`/api/product-analytics/meta-spend?period=${encodeURIComponent(metaPeriod)}`),
+        ]);
         const ordersData = (await ordersRes.json().catch(() => ({}))) as ShopifyOrdersPayload;
+        const spendData = (await spendRes.json().catch(() => ({}))) as MetaSpendPayload;
         if (!ordersRes.ok) {
           setError('No se pudo cargar Pedidos para Productos top');
           setShopifyOrders([]);
           setVentasTotalesPedidos(0);
+          setMetaSpendByProductId({});
+          setMetaUnlinkedSpend(0);
           return;
         }
         const orders = Array.isArray(ordersData?.orders) ? ordersData.orders : [];
         setShopifyOrders(orders);
+        setMetaSpendByProductId(
+          spendRes.ok && spendData.product_spend && typeof spendData.product_spend === 'object'
+            ? spendData.product_spend
+            : {},
+        );
+        setMetaUnlinkedSpend(
+          spendRes.ok && Number.isFinite(Number(spendData.unlinked_spend)) ? Number(spendData.unlinked_spend) : 0,
+        );
         const despachadosCalculables = orders.filter(
           (o) => !isPedidosPruebaOrder(o) && String(o.internal_status || '').trim().toLowerCase() === 'despachado',
         );
         const totalVentasDespachado = despachadosCalculables.reduce((sum, o) => sum + parseOrderAmount(o), 0);
         setVentasTotalesPedidos(totalVentasDespachado);
         setDays([]);
-        setMetaSpendByProductId({});
-        setMetaUnlinkedSpend(0);
         return;
       }
 
@@ -881,6 +894,7 @@ export default function AnalisisProductoPage() {
                 <tr>
                   <Th style={{ width: '22%' }}>Producto</Th>
                   <Th>Pedidos</Th>
+                  <Th>Gasto publicitario</Th>
                   <Th>Ventas</Th>
                   <Th>Unidades</Th>
                   <Th>1 unidad (cant/ventas)</Th>
@@ -894,10 +908,15 @@ export default function AnalisisProductoPage() {
               <tbody>
                 {topRows.map((p, idx) => {
                   const isLast = idx === topRows.length - 1;
+                  const gastoPub =
+                    p.productId != null && Number.isFinite(Number(metaSpendByProductId[String(p.productId)]))
+                      ? Number(metaSpendByProductId[String(p.productId)])
+                      : 0;
                   return (
                     <tr key={p.key}>
                       <Td isLast={isLast} style={{ fontWeight: 600, color: ds.textPrimary }}>{p.nombre}</Td>
                       <Td isLast={isLast}>{p.pedidos}</Td>
+                      <Td isLast={isLast}>{money(gastoPub)}</Td>
                       <Td isLast={isLast}>{money(p.ventas)}</Td>
                       <Td isLast={isLast}>{p.unidades}</Td>
                       <Td isLast={isLast}>{`${p.qty1Count} / ${money(p.qty1Ventas)}`}</Td>
@@ -924,7 +943,7 @@ export default function AnalisisProductoPage() {
                 {!topRows.length ? (
                   <tr>
                     <td
-                      colSpan={10}
+                      colSpan={11}
                       style={{ padding: '12px 16px', fontSize: 12, color: ds.textMuted, borderBottom: 'none' }}
                     >
                       {loading ? 'Cargando productos top…' : 'No hay datos para los filtros seleccionados.'}
