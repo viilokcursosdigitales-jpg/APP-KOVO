@@ -288,6 +288,19 @@ function lineHasOfferSignal(
   return props.some((p) => textHasToken(String(p?.name || ''), token) || textHasToken(String(p?.value || ''), token));
 }
 
+function lineItemTitleForProductId(orders: ShopifyOrderRow[], productId: number): string | null {
+  for (const o of orders) {
+    const details = Array.isArray(o.lineItemsDetail) ? o.lineItemsDetail : [];
+    for (const li of details) {
+      const pid = li?.product_id != null && Number.isFinite(Number(li.product_id)) ? Number(li.product_id) : null;
+      if (pid !== productId) continue;
+      const t = String(li?.title || li?.name || '').trim();
+      if (t) return t;
+    }
+  }
+  return null;
+}
+
 const inputStyle: CSSProperties = {
   width: '100%',
   borderRadius: 8,
@@ -690,8 +703,42 @@ export default function AnalisisProductoPage() {
         }
       }
     }
-    return [...map.values()].sort((a, b) => b.ventasTotales - a.ventasTotales);
-  }, [shopifyOrders]);
+    for (const [pidStr, rawSpend] of Object.entries(metaSpendByProductId)) {
+      const spend = Number(rawSpend);
+      if (!Number.isFinite(spend) || spend < 0) continue;
+      const pid = Number.parseInt(String(pidStr), 10);
+      if (!Number.isFinite(pid)) continue;
+      const key = `pid:${pid}`;
+      if (map.has(key)) continue;
+      const nombre = lineItemTitleForProductId(baseOrders, pid) || `Producto ${pid}`;
+      map.set(key, {
+        key,
+        nombre,
+        productId: pid,
+        pedidos: 0,
+        pedidosDespachados: 0,
+        ventasTotales: 0,
+        ventas: 0,
+        unidades: 0,
+        qty1Count: 0,
+        qty1Ventas: 0,
+        qty2Count: 0,
+        qty2Ventas: 0,
+        qty3Count: 0,
+        qty3Ventas: 0,
+        upsellOrders: 0,
+        downsellOrders: 0,
+      });
+    }
+    const gastoOf = (p: TopProductAgg) =>
+      p.productId != null && Number.isFinite(Number(metaSpendByProductId[String(p.productId)]))
+        ? Number(metaSpendByProductId[String(p.productId)])
+        : 0;
+    return [...map.values()].sort((a, b) => {
+      if (b.ventasTotales !== a.ventasTotales) return b.ventasTotales - a.ventasTotales;
+      return gastoOf(b) - gastoOf(a);
+    });
+  }, [shopifyOrders, metaSpendByProductId]);
 
   const topRows = useMemo(
     () => topProducts.filter((p) => p.nombre.toLowerCase().includes(query.toLowerCase().trim())),
