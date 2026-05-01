@@ -948,6 +948,7 @@ export default function AnalisisProductoPage() {
                   <Th>Gasto publicitario</Th>
                   <Th>CPA Meta</Th>
                   <Th>Ventas Totales</Th>
+                  <Th>Roas meta</Th>
                   <Th>Ventas</Th>
                   <Th>Unidades</Th>
                   <Th>1 unidad (cant/ventas)</Th>
@@ -966,6 +967,7 @@ export default function AnalisisProductoPage() {
                       ? Number(metaSpendByProductId[String(p.productId)])
                       : 0;
                   const cpaMeta = p.pedidos > 0 ? gastoPub / p.pedidos : 0;
+                  const roasMeta = gastoPub > 0 ? p.ventasTotales / gastoPub : 0;
                   return (
                     <tr key={p.key}>
                       <Td isLast={isLast} style={{ fontWeight: 600, color: ds.textPrimary }}>{p.nombre}</Td>
@@ -973,6 +975,7 @@ export default function AnalisisProductoPage() {
                       <Td isLast={isLast}>{money(gastoPub)}</Td>
                       <Td isLast={isLast}>{money(cpaMeta)}</Td>
                       <Td isLast={isLast}>{money(p.ventasTotales)}</Td>
+                      <Td isLast={isLast}>{`${roasMeta.toFixed(2)}x`}</Td>
                       <Td isLast={isLast}>{money(p.ventas)}</Td>
                       <Td isLast={isLast}>{p.unidades}</Td>
                       <Td isLast={isLast}>{`${p.qty1Count} / ${money(p.qty1Ventas)}`}</Td>
@@ -999,7 +1002,7 @@ export default function AnalisisProductoPage() {
                 {!topRows.length ? (
                   <tr>
                     <td
-                      colSpan={13}
+                      colSpan={14}
                       style={{ padding: '12px 16px', fontSize: 12, color: ds.textMuted, borderBottom: 'none' }}
                     >
                       {loading ? 'Cargando productos top…' : 'No hay datos para los filtros seleccionados.'}
