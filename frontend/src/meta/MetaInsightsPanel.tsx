@@ -956,6 +956,9 @@ export function MetaInsightsPanel({
 
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
+      const spendNum = Number(row.spend);
+      if (!Number.isFinite(spendNum) || spendNum <= 0) return false;
+
       const st = String(row.status || '').toUpperCase();
       if (campaignActivityFilter === 'active' && st !== 'ACTIVE') return false;
       if (campaignActivityFilter === 'inactive' && st === 'ACTIVE') return false;
@@ -970,10 +973,54 @@ export function MetaInsightsPanel({
     });
   }, [rows, campaignActivityFilter, filterProductId, level, campaignProductLinks]);
 
+  /** Meta puede devolver filas con métricas en 0; la tabla solo lista las que tienen gasto &gt; 0 en el período. */
+  const hasFetchedRowWithSpend = useMemo(
+    () =>
+      rows.some((row) => {
+        const s = Number(row.spend);
+        return Number.isFinite(s) && s > 0;
+      }),
+    [rows],
+  );
+
   const tableRows = useMemo(() => dedupeInsightRowsById(filteredRows, level), [filteredRows, level]);
 
+  /** Ventas Shopify atribuidas solo a filas visibles (tras filtro estado + gasto &gt; 0). */
+  const shopifyVentasAttributedVisible = useMemo(
+    () => tableRows.reduce((a, row) => a + shopifySalesAmountForInsightRow(shopifyVentasByLevel, row), 0),
+    [tableRows, shopifyVentasByLevel],
+  );
+
+  /** Pedidos Shopify enlazados a anuncios visibles en la pestaña Anuncios. */
+  const shopifyComprasAttributedVisibleAds = useMemo(
+    () =>
+      tableRows.reduce((a, row) => a + shopifyComprasCountForAdRow(shopifyComprasByAd, row), 0),
+    [tableRows, shopifyComprasByAd],
+  );
+
+  /** Pedidos Shopify atribuidos a cualquier fila Meta sin aplicar filtros de esta pantalla (cada pedido cuenta una vez). */
+  const shopifyComprasTotalAttributed = useMemo(
+    () => Object.values(shopifyComprasByAd).reduce((a, n) => a + (Number(n) || 0), 0),
+    [shopifyComprasByAd],
+  );
+  const shopifyVentasTotalAttributed = useMemo(
+    () => Object.values(shopifyVentasByLevel).reduce((a, n) => a + (Number(n) || 0), 0),
+    [shopifyVentasByLevel],
+  );
+
+  /** Compras Shopify en tarjeta resumen: mismas filas que la tabla (anuncios con gasto en el período). */
+  const shopifyComprasCardValue = shopifyPedidosAvailable
+    ? level === 'ads'
+      ? shopifyComprasAttributedVisibleAds
+      : shopifyComprasTotalAttributed
+    : 0;
+
+  /** Numerador ROAS Shopify en tarjetas = ventas enlazadas a filas visibles (gasto &gt; 0 del período). */
+  const shopifyVentasForRoasCard = shopifyPedidosAvailable ? shopifyVentasAttributedVisible : shopifyVentasTotalAttributed;
+
+  /** Agregaciones KPI = filas de la tabla (dedupe en nivel anuncio). Todas llevan gasto &gt; 0. */
   const displayTotals = useMemo(() => {
-    const base = filteredRows.reduce(
+    const base = tableRows.reduce(
       (acc, x) => ({
         impressions: acc.impressions + x.impressions,
         clicks: acc.clicks + x.clicks,
@@ -989,17 +1036,7 @@ export function MetaInsightsPanel({
     const roas = base.spend > 0 && base.revenue > 0 ? base.revenue / base.spend : 0;
     const cpa = base.purchases > 0 ? base.spend / base.purchases : 0;
     return { ...base, cpm, cpc, ctr, roas, cpa };
-  }, [filteredRows]);
-
-  /** Pedidos Shopify atribuidos a cualquier anuncio de la lista (cada pedido cuenta una vez en total). */
-  const shopifyComprasTotalAttributed = useMemo(
-    () => Object.values(shopifyComprasByAd).reduce((a, n) => a + (Number(n) || 0), 0),
-    [shopifyComprasByAd],
-  );
-  const shopifyVentasTotalAttributed = useMemo(
-    () => Object.values(shopifyVentasByLevel).reduce((a, n) => a + (Number(n) || 0), 0),
-    [shopifyVentasByLevel],
-  );
+  }, [tableRows]);
 
   const load = useCallback(async () => {
     const cacheKey = `${level}|${period}|${filterActId || 'all'}`;
@@ -1135,14 +1172,14 @@ export function MetaInsightsPanel({
     if (level === 'ads' && shopifyPedidosAvailable) {
       cards.push({
         label: 'Comp. Shopify (Σ)',
-        value: formatNumber(shopifyComprasTotalAttributed),
+        value: formatNumber(shopifyComprasCardValue),
         title:
-          'Total de pedidos Shopify del período (calendario de la tienda) que se pudieron enlazar a algún anuncio de esta lista (UTMs, URL, nombre). Cada pedido cuenta una vez. No incluye pedidos sin señal clara ni anuncios fuera de la lista.',
+          'Pedidos Shopify del período enlazados a los anuncios que ves en esta tabla (con gasto &gt; 0 en el rango seleccionado). Por UTMs/URL/nombre; un pedido cuenta una vez por anuncio coincidente en la vista.',
       });
     }
     const roasValue =
       shopifyPedidosAvailable
-        ? formatRoasMeta(displayTotals.spend > 0 ? shopifyVentasTotalAttributed / displayTotals.spend : 0)
+        ? formatRoasMeta(displayTotals.spend > 0 ? shopifyVentasForRoasCard / displayTotals.spend : 0)
         : formatRoasMeta(displayTotals.roas);
 
     cards.push(
@@ -1154,7 +1191,13 @@ export function MetaInsightsPanel({
       { label: 'ROAS', value: roasValue },
     );
     return cards;
-  }, [displayTotals, level, shopifyPedidosAvailable, shopifyComprasTotalAttributed, shopifyVentasTotalAttributed]);
+  }, [
+    displayTotals,
+    level,
+    shopifyPedidosAvailable,
+    shopifyComprasCardValue,
+    shopifyVentasForRoasCard,
+  ]);
 
   const levelTabs: { id: InsightLevel; label: string }[] = [
     { id: 'campaigns', label: 'Campañas' },
@@ -1256,7 +1299,7 @@ export function MetaInsightsPanel({
         <select
           value={campaignActivityFilter}
           onChange={(e) => setCampaignActivityFilter(e.target.value as CampaignActivityFilter)}
-          title="Filtra por estado efectivo en Meta (campaña, conjunto o anuncio según la pestaña)"
+          title="Filtra por estado efectivo en Meta (campaña, conjunto o anuncio según la pestaña). La tabla solo incluye líneas con gasto publicitario &gt; 0 en el período seleccionado arriba."
           style={{
             padding: '8px 12px',
             borderRadius: 8,
@@ -1485,10 +1528,15 @@ export function MetaInsightsPanel({
                       No hay filas con datos de insights en este período (puede que no haya entregas o que el token no
                       tenga permisos).
                     </>
+                  ) : !hasFetchedRowWithSpend ? (
+                    <>
+                      Ningún registro tiene gasto publicitario en el período seleccionado. Cambia las fechas, la cuenta u
+                      otra vista (campaña / conjunto / anuncio).
+                    </>
                   ) : (
                     <>
-                      Ninguna fila coincide con los filtros de estado de campaña o producto. Prueba &quot;Todas las
-                      campañas&quot; o &quot;Todos los productos&quot;.
+                      Hay datos con gasto en el período, pero ninguna fila coincide con activo/no activo, producto o
+                      cuenta elegidos — o el producto filtrado no está vinculado a campañas con gasto. Ajusta los filtros.
                     </>
                   )}
                 </td>
