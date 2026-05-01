@@ -128,6 +128,9 @@ type MetaInsightsCacheStore = Record<string, MetaInsightsCacheEntry>;
 const META_INSIGHTS_CACHE_KEY = 'kovo_meta_insights_cache_v1';
 const META_INSIGHTS_CACHE_TTL_MS = 1000 * 60 * 10;
 
+/** Fila campaña sin producto Shopify vinculado (Anuncios Meta → Campañas). */
+const CAMPAIGN_ROW_MISSING_PRODUCT_BG = 'rgba(58, 12, 16, 0.42)';
+
 type ShopifyOrderAttribution = {
   productIds?: number[];
   utm?: Record<string, string>;
@@ -749,6 +752,7 @@ export function MetaInsightsPanel({
   const [campaignActivityFilter, setCampaignActivityFilter] = useState<CampaignActivityFilter>('active');
   const [filterProductId, setFilterProductId] = useState('');
   const [campaignProductLinks, setCampaignProductLinks] = useState<Record<string, number[]>>({});
+  const [campaignProductLinksReady, setCampaignProductLinksReady] = useState(false);
   const [shopifyProducts, setShopifyProducts] = useState<ShopifyProductOption[]>([]);
   const [shopifyCatalogOk, setShopifyCatalogOk] = useState(false);
   const [targetsByProduct, setTargetsByProduct] = useState<Record<number, ProductMarketingTargets>>({});
@@ -786,7 +790,11 @@ export function MetaInsightsPanel({
     (async () => {
       try {
         const res = await apiFetch('/api/meta/campaign-product-links');
-        if (!res.ok || c) return;
+        if (c) return;
+        if (!res.ok) {
+          setCampaignProductLinks({});
+          return;
+        }
         const data = (await res.json()) as { links?: Record<string, number[]> };
         if (c) return;
         const raw = data.links && typeof data.links === 'object' ? data.links : {};
@@ -798,7 +806,9 @@ export function MetaInsightsPanel({
         }
         setCampaignProductLinks(next);
       } catch {
-        /* ignore */
+        if (!c) setCampaignProductLinks({});
+      } finally {
+        if (!c) setCampaignProductLinksReady(true);
       }
     })();
     return () => {
@@ -1397,7 +1407,9 @@ export function MetaInsightsPanel({
         <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textMuted, maxWidth: 720, lineHeight: 1.45 }}>
           En <strong style={{ color: ds.textSecondary }}>Campañas</strong>, la columna <strong>Act.</strong> usa el mismo
           tipo de interruptor que el Administrador de anuncios de Meta (azul = entregando, gris = pausada). Requiere{' '}
-          <code style={{ fontSize: 11 }}>ads_management</code> en el token.
+          <code style={{ fontSize: 11 }}>ads_management</code> en el token. Las filas{' '}
+          <strong style={{ color: ds.dangerText }}>sin ningún producto Shopify asignado</strong> se resaltan en rojo hasta
+          que vincules al menos uno.
         </p>
       ) : null}
 
@@ -1545,6 +1557,15 @@ export function MetaInsightsPanel({
               tableRows.map((row) => {
                 const ev = buildRowTargetEvaluation(row, level, campaignProductLinks, targetsByProduct);
                 const rowBg = insightRowBg(ev.rowHighlight);
+                const linkedProductIds = campaignProductLinks[String(row.id)] || [];
+                const campaignMissingShopifyProduct =
+                  level === 'campaigns' &&
+                  campaignProductLinksReady &&
+                  linkedProductIds.length === 0;
+                const trBackground = campaignMissingShopifyProduct ? CAMPAIGN_ROW_MISSING_PRODUCT_BG : rowBg;
+                const trTitle = [ev.tooltip, campaignMissingShopifyProduct ? 'Sin producto Shopify asignado.' : '']
+                  .filter(Boolean)
+                  .join(' ');
                 const roasRealLevel =
                   shopifyPedidosAvailable
                     ? (() => {
@@ -1557,9 +1578,9 @@ export function MetaInsightsPanel({
                     key={`${row.adAccountId}-${row.id}`}
                     style={{
                       borderBottom: `1px solid ${ds.borderRow}`,
-                      background: rowBg,
+                      background: trBackground,
                     }}
-                    title={ev.tooltip}
+                    title={trTitle || undefined}
                   >
                     <td style={{ padding: '12px 16px', maxWidth: 160 }} title={row.adAccountId}>
                       <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{row.adAccountName}</div>
