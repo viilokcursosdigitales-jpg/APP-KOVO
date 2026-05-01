@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { apiFetch } from '../auth/api';
 import { DataTable, Td, Th, tableBase } from '../design-system/DataTable';
 import { ds } from '../design-system/ds';
@@ -331,7 +331,7 @@ function KpiCard({ title, value, delta }: { title: string; value: string; delta:
 export default function AnalisisProductoPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<DateFilter>('7d');
+  const [filter, setFilter] = useState<DateFilter>('hoy');
   const [days, setDays] = useState<SeriesDay[]>([]);
   const [metaSpendByProductId, setMetaSpendByProductId] = useState<Record<string, number>>({});
   const [metaUnlinkedSpend, setMetaUnlinkedSpend] = useState(0);
@@ -347,6 +347,8 @@ export default function AnalisisProductoPage() {
   const [selected, setSelected] = useState<string>('');
   const [moduleView, setModuleView] = useState<ModuleView>('productos_top');
   const [shopifyOrders, setShopifyOrders] = useState<ShopifyOrderRow[]>([]);
+  /** Invalida efectos tardíos (Meta-spend asíncrono) al cambiar filtro/vista/recarga. */
+  const analisisProductoLoadGenRef = useRef(0);
   const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
 
   useEffect(() => {
@@ -358,42 +360,58 @@ export default function AnalisisProductoPage() {
   }, [adminPercentInput]);
 
   const load = useCallback(async () => {
+    const loadGeneration = ++analisisProductoLoadGenRef.current;
     setLoading(true);
     setError(null);
+    /** Productos top: quitar el spinner apenas cargan pedidos; Meta-spend llega después. */
+    let productosTopDeferSpinnerToOrdersOnly = false;
     try {
       if (moduleView === 'productos_top') {
+        productosTopDeferSpinnerToOrdersOnly = true;
         const ordersRangeQs = buildPedidosRangeParams(filter);
         const metaPeriod = periodConfig(filter).metaPeriod;
-        const [ordersRes, spendRes] = await Promise.all([
-          apiFetch(`/api/shopify/orders?${ordersRangeQs}`),
-          apiFetch(`/api/product-analytics/meta-spend?period=${encodeURIComponent(metaPeriod)}`),
-        ]);
+        const ordersRes = await apiFetch(`/api/shopify/orders?${ordersRangeQs}&purpose=productos_top`);
         const ordersData = (await ordersRes.json().catch(() => ({}))) as ShopifyOrdersPayload;
-        const spendData = (await spendRes.json().catch(() => ({}))) as MetaSpendPayload;
         if (!ordersRes.ok) {
           setError('No se pudo cargar Pedidos para Productos top');
           setShopifyOrders([]);
           setVentasTotalesPedidos(0);
           setMetaSpendByProductId({});
           setMetaUnlinkedSpend(0);
+          productosTopDeferSpinnerToOrdersOnly = false;
           return;
         }
         const orders = Array.isArray(ordersData?.orders) ? ordersData.orders : [];
         setShopifyOrders(orders);
-        setMetaSpendByProductId(
-          spendRes.ok && spendData.product_spend && typeof spendData.product_spend === 'object'
-            ? spendData.product_spend
-            : {},
-        );
-        setMetaUnlinkedSpend(
-          spendRes.ok && Number.isFinite(Number(spendData.unlinked_spend)) ? Number(spendData.unlinked_spend) : 0,
-        );
         const despachadosCalculables = orders.filter(
           (o) => !isPedidosPruebaOrder(o) && String(o.internal_status || '').trim().toLowerCase() === 'despachado',
         );
         const totalVentasDespachado = despachadosCalculables.reduce((sum, o) => sum + parseOrderAmount(o), 0);
         setVentasTotalesPedidos(totalVentasDespachado);
         setDays([]);
+        setLoading(false);
+
+        void (async () => {
+          try {
+            const spendRes = await apiFetch(
+              `/api/product-analytics/meta-spend?period=${encodeURIComponent(metaPeriod)}`,
+            );
+            const spendData = (await spendRes.json().catch(() => ({}))) as MetaSpendPayload;
+            if (loadGeneration !== analisisProductoLoadGenRef.current) return;
+            setMetaSpendByProductId(
+              spendRes.ok && spendData.product_spend && typeof spendData.product_spend === 'object'
+                ? spendData.product_spend
+                : {},
+            );
+            setMetaUnlinkedSpend(
+              spendRes.ok && Number.isFinite(Number(spendData.unlinked_spend)) ? Number(spendData.unlinked_spend) : 0,
+            );
+          } catch {
+            if (loadGeneration !== analisisProductoLoadGenRef.current) return;
+            setMetaSpendByProductId({});
+            setMetaUnlinkedSpend(0);
+          }
+        })();
         return;
       }
 
@@ -432,12 +450,15 @@ export default function AnalisisProductoPage() {
       }, 0);
       setVentasTotalesPedidos(totalVentasDespachado);
     } catch {
+      productosTopDeferSpinnerToOrdersOnly = false;
       setError('Error de red');
       setDays([]);
       setVentasTotalesPedidos(0);
       setShopifyOrders([]);
     } finally {
-      setLoading(false);
+      if (!productosTopDeferSpinnerToOrdersOnly) {
+        setLoading(false);
+      }
     }
   }, [filter, moduleView]);
 

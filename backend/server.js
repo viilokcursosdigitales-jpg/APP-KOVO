@@ -5796,6 +5796,8 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
     }
     const mensajeroFilter =
       typeof req.query.mensajero_filter === 'string' ? req.query.mensajero_filter.trim().toLowerCase() : '';
+    const listPurposeRaw = typeof req.query.purpose === 'string' ? req.query.purpose.trim().toLowerCase() : '';
+    const skipPricingForProductTop = listPurposeRaw === 'productos_top';
     const qs = new URLSearchParams();
     qs.set('status', 'any');
     /** Motico necesita cada línea de producto completa; `fields` en listados puede acortar `line_items`. */
@@ -5951,7 +5953,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         orders = orders.filter((o) => Array.isArray(o.productIds) && o.productIds.includes(want));
       }
     }
-    if (orders.length > 0) {
+    if (orders.length > 0 && !skipPricingForProductTop) {
       const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap(orders);
       const pidCollector = collectOrderLineProductIdsForPricing(orders, lineTitleToProductIdMap);
       const uniqPids = [...new Set(pidCollector)];
