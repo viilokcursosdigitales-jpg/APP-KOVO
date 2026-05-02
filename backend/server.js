@@ -4119,6 +4119,7 @@ const UNIFIED_ORDER_ESTADO_LIST = [
   'no_llego_mensaje',
   'confirmado',
   'despachado',
+  'pagado',
   'devolucion',
   'prueba',
   'cancelado',
@@ -4139,6 +4140,7 @@ const UNIFIED_ESTADO_RANK = {
   confirmado: 30,
   prueba: 35,
   despachado: 50,
+  pagado: 52,
   devolucion: 55,
   cancelado: 60,
 };
@@ -4151,8 +4153,6 @@ function normalizeLegacyMoticoEstadoToUnified(raw) {
   if (SHOPIFY_INTERNAL_STATUSES.has(s)) return s;
   const legacy = {
     imprimir_guia: 'confirmado',
-    /** Antes Motico usaba «pagado» como estado operativo; ya no debe bloquear edición como «despachado». */
-    pagado: 'confirmado',
     pendiente_pago: 'sin_confirmar',
     devolucion: 'cancelado',
     motico: 'confirmado',

@@ -8,6 +8,7 @@ export const ORDER_INTERNAL_ESTADO_OPTIONS = [
   { value: 'no_llego_mensaje', label: 'No le llegó el mensaje' },
   { value: 'confirmado', label: 'Confirmado' },
   { value: 'despachado', label: 'Despachado' },
+  { value: 'pagado', label: 'Pagado' },
   { value: 'devolucion', label: 'Devolución' },
   { value: 'prueba', label: 'Prueba' },
   { value: 'cancelado', label: 'Cancelado' },
@@ -59,6 +60,13 @@ export const ORDER_INTERNAL_ESTADO_ROW_META: Record<
     chipBg: '#ccfbf1',
     chipFg: '#134e4a',
     chipBorder: '#5eead4',
+  },
+  /** KOVO marca (purple) — uso en cobro completado tras despacho. */
+  pagado: {
+    rowColor: '#6c47ff',
+    chipBg: '#f3efff',
+    chipFg: '#4a2fd4',
+    chipBorder: '#9b80ff',
   },
   devolucion: {
     rowColor: '#dc2626',
