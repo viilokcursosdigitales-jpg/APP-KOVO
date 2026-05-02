@@ -327,7 +327,6 @@ export default function RelacionPagosMoticoPage() {
   const [pagosNequiDraft, setPagosNequiDraft] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [savingRef, setSavingRef] = useState<string | null>(null);
   const [savingOrderEstadoRef, setSavingOrderEstadoRef] = useState<string | null>(null);
   const [savingNequiRef, setSavingNequiRef] = useState<string | null>(null);
   const [selectedRefs, setSelectedRefs] = useState<Set<string>>(() => new Set());
@@ -606,34 +605,6 @@ export default function RelacionPagosMoticoPage() {
     });
   }, [rows]);
 
-  const onEstadoChange = useCallback(
-    async (ref: string, next: MoticoRelacionPagoEstado) => {
-      const prev = estadoByRef[ref] || 'pendiente_pago';
-      setEstadoByRef((m) => ({ ...m, [ref]: next }));
-      setSavingRef(ref);
-      setError('');
-      try {
-        const res = await apiFetch('/api/motico/relacion-pagos/estado', {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ order_ref: ref, estado_pago: next }),
-        });
-        if (!res.ok) {
-          const data = (await res.json().catch(() => ({}))) as { error?: string };
-          setEstadoByRef((m) => ({ ...m, [ref]: prev }));
-          setError(typeof data.error === 'string' ? data.error : 'No se pudo guardar el estado');
-          return;
-        }
-      } catch {
-        setEstadoByRef((m) => ({ ...m, [ref]: prev }));
-        setError('Error de red al guardar');
-      } finally {
-        setSavingRef(null);
-      }
-    },
-    [estadoByRef],
-  );
-
   const onOrderEstadoChange = useCallback(async (o: OrderRow, next: string) => {
     const ref = orderRef(o);
     const nextEstado = coerceOrderInternalEstadoForSelect(next);
@@ -765,7 +736,7 @@ export default function RelacionPagosMoticoPage() {
         title="Relación de Pagos Motico"
         subtitle={
           shopifyConnected && shopDomain
-            ? `Pedidos con mensajero Motico (cualquier estado) · ${shopDomain}. El estado de la última columna es el seguimiento de cobro a Motico.${
+            ? `Pedidos con mensajero Motico (cualquier estado) · ${shopDomain}. El cobro a Motico se agrupa en los KPIs y en el filtro «Estado cobro Motico».${
                 estadoFilterActive ? ' · Filtro por estados activo' : ''
               }${normalizeSearchText(searchInput) ? ' · Búsqueda activa' : ''}`
             : 'Pedidos con mensajero Motico (cualquier estado). Conecta Shopify para ver datos.'
@@ -1051,7 +1022,7 @@ export default function RelacionPagosMoticoPage() {
               Total pedidos en relación:{' '}
               <strong style={{ color: ds.textSecondary }}>{relacionPagosKpis.n}</strong>
               {' · '}
-              Los porcentajes son sobre esta cantidad (columna Estado).
+              Los porcentajes son sobre esta cantidad (según estado de cobro a Motico).
             </div>
           ) : null}
         </div>
@@ -1147,7 +1118,7 @@ export default function RelacionPagosMoticoPage() {
             </div>
           ) : null}
           <div style={{ overflowX: 'auto', borderRadius: 12, border: `1px solid ${ds.borderCard}` }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1600 }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13, minWidth: 1380 }}>
             <thead>
               <tr style={{ background: ds.bgSubtle }}>
                 <th style={{ ...relacionStickyCheckbox(ds.bgSubtle, 12), padding: '10px 4px' }}>
@@ -1215,9 +1186,6 @@ export default function RelacionPagosMoticoPage() {
                 <th style={{ textAlign: 'right', padding: '12px 10px', fontWeight: 700, color: ds.textPrimary }}>
                   Saldo
                 </th>
-                <th style={{ textAlign: 'left', padding: '12px 14px', fontWeight: 700, color: ds.textPrimary, minWidth: 200 }}>
-                  Estado
-                </th>
               </tr>
             </thead>
             <tbody>
@@ -1227,7 +1195,6 @@ export default function RelacionPagosMoticoPage() {
                   String(o.shippingAddress?.name || '').trim() ||
                   String(o.client || '').trim() ||
                   '—';
-                const cur = estadoByRef[ref] || 'pendiente_pago';
                 const precioTotal = relacionPrecioTotal(o);
                 const pendiente = pendientePagoAlRecibir(o);
                 const cProd = numOrZero(o.product_cost_motico);
@@ -1243,7 +1210,6 @@ export default function RelacionPagosMoticoPage() {
                 const saldoColor =
                   saldo > 0 ? ds.successText : saldo < 0 ? ds.dangerText : ds.textPrimary;
                 const curcy = o.currency || defaultCurrency;
-                const busy = savingRef === ref;
                 const busyOrderEstado = savingOrderEstadoRef === ref;
                 const nequiBusy = savingNequiRef === ref;
                 const nequiInputVal = pagosNequiDraft[ref] ?? String(nequiCommitted);
@@ -1389,31 +1355,6 @@ export default function RelacionPagosMoticoPage() {
                       }}
                     >
                       {formatMoneyAmount(saldo, curcy)}
-                    </td>
-                    <td style={{ padding: '10px 12px' }}>
-                      <select
-                        value={cur}
-                        disabled={busy}
-                        onChange={(e) => void onEstadoChange(ref, e.target.value as MoticoRelacionPagoEstado)}
-                        style={{
-                          width: '100%',
-                          maxWidth: 220,
-                          padding: '8px 10px',
-                          borderRadius: 8,
-                          border: `1px solid ${ds.borderCard}`,
-                          background: ds.bgCard,
-                          color: ds.textPrimary,
-                          fontSize: 13,
-                          fontWeight: 500,
-                          cursor: busy ? 'wait' : 'pointer',
-                        }}
-                      >
-                        {PAGO_ESTADO_OPTIONS.map((opt) => (
-                          <option key={opt.value} value={opt.value}>
-                            {opt.label}
-                          </option>
-                        ))}
-                      </select>
                     </td>
                   </tr>
                 );
