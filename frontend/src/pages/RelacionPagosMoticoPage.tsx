@@ -14,6 +14,7 @@ import {
   ORDER_INTERNAL_ESTADO_OPTIONS,
   ORDER_INTERNAL_ESTADO_ROW_META,
   coerceOrderInternalEstadoForSelect,
+  type OrderInternalEstadoValue,
 } from '../constants/orderInternalEstado';
 import { ds } from '../design-system/ds';
 import { IconCart, IconPackage, IconProduct, IconTruck, IconTrendingUp } from '../design-system/icons';
@@ -256,6 +257,14 @@ function numOrZero(v: unknown): number {
   return Number.isFinite(n) ? n : 0;
 }
 
+function allCobroEstadosSelected(s: ReadonlySet<MoticoRelacionPagoEstado>) {
+  return PAGO_ESTADO_OPTIONS.every((o) => s.has(o.value));
+}
+
+function allPedidoEstadosSelected(s: ReadonlySet<OrderInternalEstadoValue>) {
+  return ORDER_INTERNAL_ESTADO_OPTIONS.every((o) => s.has(o.value));
+}
+
 function relacionRowMatchesSearch(
   o: OrderRow,
   normalizedTerm: string,
@@ -322,6 +331,12 @@ export default function RelacionPagosMoticoPage() {
   const [savingOrderEstadoRef, setSavingOrderEstadoRef] = useState<string | null>(null);
   const [savingNequiRef, setSavingNequiRef] = useState<string | null>(null);
   const [selectedRefs, setSelectedRefs] = useState<Set<string>>(() => new Set());
+  const [filtroEstadoCobro, setFiltroEstadoCobro] = useState<Set<MoticoRelacionPagoEstado>>(
+    () => new Set(PAGO_ESTADO_OPTIONS.map((o) => o.value)),
+  );
+  const [filtroEstadoPedido, setFiltroEstadoPedido] = useState<Set<OrderInternalEstadoValue>>(
+    () => new Set(ORDER_INTERNAL_ESTADO_OPTIONS.map((o) => o.value)),
+  );
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const nequiTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({});
@@ -356,14 +371,63 @@ export default function RelacionPagosMoticoPage() {
 
   const normalizedSearchTerm = useMemo(() => normalizeSearchText(searchTerm), [searchTerm]);
 
-  const rows = useMemo(
+  const estadoFilterActive =
+    !allCobroEstadosSelected(filtroEstadoCobro) || !allPedidoEstadosSelected(filtroEstadoPedido);
+
+  const toggleFiltroCobro = useCallback((value: MoticoRelacionPagoEstado) => {
+    setFiltroEstadoCobro((prev) => {
+      const next = new Set(prev);
+      if (next.has(value)) {
+        if (next.size <= 1) return next;
+        next.delete(value);
+      } else {
+        next.add(value);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleFiltroPedido = useCallback((value: OrderInternalEstadoValue) => {
+    setFiltroEstadoPedido((prev) => {
+      const next = new Set(prev);
+      if (next.has(value)) {
+        if (next.size <= 1) return next;
+        next.delete(value);
+      } else {
+        next.add(value);
+      }
+      return next;
+    });
+  }, []);
+
+  const selectAllEstadoCobro = useCallback(() => {
+    setFiltroEstadoCobro(new Set(PAGO_ESTADO_OPTIONS.map((o) => o.value)));
+  }, []);
+
+  const selectAllEstadoPedido = useCallback(() => {
+    setFiltroEstadoPedido(new Set(ORDER_INTERNAL_ESTADO_OPTIONS.map((o) => o.value)));
+  }, []);
+
+  const rowsAfterEstadoFilters = useMemo(
     () =>
       baseRows.filter((o) => {
+        const ref = orderRef(o);
+        const cobro = estadoByRef[ref] || 'pendiente_pago';
+        if (!filtroEstadoCobro.has(cobro)) return false;
+        const ped = coerceOrderInternalEstadoForSelect(o.motico_status || o.internal_status);
+        return filtroEstadoPedido.has(ped);
+      }),
+    [baseRows, estadoByRef, filtroEstadoCobro, filtroEstadoPedido],
+  );
+
+  const rows = useMemo(
+    () =>
+      rowsAfterEstadoFilters.filter((o) => {
         const ref = orderRef(o);
         const est = estadoByRef[ref] || 'pendiente_pago';
         return relacionRowMatchesSearch(o, normalizedSearchTerm, est);
       }),
-    [baseRows, normalizedSearchTerm, estadoByRef],
+    [rowsAfterEstadoFilters, normalizedSearchTerm, estadoByRef],
   );
 
   useEffect(() => {
@@ -460,8 +524,8 @@ export default function RelacionPagosMoticoPage() {
   }, [shopifyConnected, loadEstados, orders.length]);
 
   const defaultCurrency = useMemo(
-    () => rows[0]?.currency || baseRows[0]?.currency || 'COP',
-    [rows, baseRows],
+    () => rows[0]?.currency || rowsAfterEstadoFilters[0]?.currency || baseRows[0]?.currency || 'COP',
+    [rows, rowsAfterEstadoFilters, baseRows],
   );
 
   const relacionPagosKpis = useMemo(() => {
@@ -666,8 +730,9 @@ export default function RelacionPagosMoticoPage() {
       setPagosNequiByRef((m) => ({ ...m, [ref]: v }));
       setPagosNequiDraft((d) => {
         if (!Object.prototype.hasOwnProperty.call(d, ref)) return d;
-        const { [ref]: _r, ...rest } = d;
-        return rest;
+        const next = { ...d };
+        delete next[ref];
+        return next;
       });
     } catch {
       setError('Error de red al guardar');
@@ -701,8 +766,8 @@ export default function RelacionPagosMoticoPage() {
         subtitle={
           shopifyConnected && shopDomain
             ? `Pedidos con mensajero Motico (cualquier estado) · ${shopDomain}. El estado de la última columna es el seguimiento de cobro a Motico.${
-                normalizeSearchText(searchInput) ? ' · Búsqueda activa' : ''
-              }`
+                estadoFilterActive ? ' · Filtro por estados activo' : ''
+              }${normalizeSearchText(searchInput) ? ' · Búsqueda activa' : ''}`
             : 'Pedidos con mensajero Motico (cualquier estado). Conecta Shopify para ver datos.'
         }
       />
@@ -768,6 +833,99 @@ export default function RelacionPagosMoticoPage() {
         <Link to="/pedidos" style={{ fontSize: 12, color: ds.brand, fontWeight: 600, whiteSpace: 'nowrap' }}>
           Ir a Pedidos
         </Link>
+      </div>
+
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 10, marginBottom: 14 }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: ds.textMuted, fontWeight: 600 }}>Estado cobro Motico</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', flex: '1 1 200px' }}>
+            {PAGO_ESTADO_OPTIONS.map((opt) => {
+              const on = filtroEstadoCobro.has(opt.value);
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => toggleFiltroCobro(opt.value)}
+                  style={{
+                    padding: '6px 12px',
+                    borderRadius: 8,
+                    border: `1px solid ${on ? ds.brand : ds.borderCard}`,
+                    background: on ? ds.brandBg : ds.bgCard,
+                    color: on ? ds.brand : ds.textSecondary,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+            {!allCobroEstadosSelected(filtroEstadoCobro) ? (
+              <button
+                type="button"
+                onClick={selectAllEstadoCobro}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: 'transparent',
+                  color: ds.textMuted,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Mostrar todos
+              </button>
+            ) : null}
+          </div>
+        </div>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+          <span style={{ fontSize: 12, color: ds.textMuted, fontWeight: 600 }}>Estado del pedido</span>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, alignItems: 'center', flex: '1 1 240px' }}>
+            {ORDER_INTERNAL_ESTADO_OPTIONS.map((opt) => {
+              const on = filtroEstadoPedido.has(opt.value);
+              return (
+                <button
+                  key={opt.value}
+                  type="button"
+                  onClick={() => toggleFiltroPedido(opt.value)}
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: 8,
+                    border: `1px solid ${on ? ds.brand : ds.borderCard}`,
+                    background: on ? ds.brandBg : ds.bgCard,
+                    color: on ? ds.brand : ds.textSecondary,
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+            {!allPedidoEstadosSelected(filtroEstadoPedido) ? (
+              <button
+                type="button"
+                onClick={selectAllEstadoPedido}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: 8,
+                  border: `1px solid ${ds.borderCard}`,
+                  background: 'transparent',
+                  color: ds.textMuted,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                }}
+              >
+                Mostrar todos
+              </button>
+            ) : null}
+          </div>
+        </div>
       </div>
 
       {shopifyConnected && !loading ? (
@@ -934,6 +1092,10 @@ export default function RelacionPagosMoticoPage() {
       ) : shopifyConnected && baseRows.length === 0 ? (
         <div style={{ color: ds.textSecondary, fontSize: 14 }}>
           No hay pedidos con mensajero Motico en el rango seleccionado.
+        </div>
+      ) : shopifyConnected && rowsAfterEstadoFilters.length === 0 && baseRows.length > 0 ? (
+        <div style={{ color: ds.textSecondary, fontSize: 14 }}>
+          Ningún pedido coincide con los filtros de estado. Activa más estados o pulsa «Mostrar todos» en cada grupo.
         </div>
       ) : shopifyConnected && rows.length === 0 ? (
         <div style={{ color: ds.textSecondary, fontSize: 14 }}>
