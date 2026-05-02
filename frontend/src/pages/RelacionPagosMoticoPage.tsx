@@ -21,6 +21,11 @@ import { IconCart, IconPackage, IconProduct, IconTruck, IconTrendingUp } from '.
 import { KpiCard } from '../design-system/KpiCard';
 import { PageHeader } from '../design-system/PageHeader';
 import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
+import {
+  buildRelacionMoticoDespachadosExcelBlob,
+  triggerExcelBlobDownload,
+  type RelacionMoticoDespachoExcelRow,
+} from '../utils/relacionPagosMoticoExcelExport';
 
 type MoticoRelacionPagoEstado = 'pendiente_pago' | 'pagado' | 'cancelado' | 'devolucion';
 
@@ -329,6 +334,7 @@ export default function RelacionPagosMoticoPage() {
   );
   const [searchInput, setSearchInput] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
+  const [exportDespachadosLoading, setExportDespachadosLoading] = useState(false);
   const nequiTimersRef = useRef<Record<string, ReturnType<typeof setTimeout> | undefined>>({});
   const headerSelectAllRef = useRef<HTMLInputElement>(null);
 
@@ -351,6 +357,14 @@ export default function RelacionPagosMoticoPage() {
     });
     return out;
   }, [orders]);
+
+  const despachadosForExcel = useMemo(
+    () =>
+      baseRows.filter(
+        (o) => coerceOrderInternalEstadoForSelect(o.motico_status || o.internal_status) === 'despachado',
+      ),
+    [baseRows],
+  );
 
   useEffect(() => {
     const id = window.setTimeout(() => {
@@ -666,6 +680,65 @@ export default function RelacionPagosMoticoPage() {
     }
   }, []);
 
+  const exportDespachadosExcel = useCallback(async () => {
+    if (despachadosForExcel.length === 0) {
+      setError('No hay pedidos en estado Despachado en el rango actual.');
+      return;
+    }
+    setExportDespachadosLoading(true);
+    setError('');
+    try {
+      const cur =
+        despachadosForExcel.find((o) => String(o.currency || '').trim())?.currency?.trim() ||
+        baseRows.find((o) => String(o.currency || '').trim())?.currency?.trim() ||
+        'COP';
+      const excelRows: RelacionMoticoDespachoExcelRow[] = despachadosForExcel.map((o) => {
+        const ref = orderRef(o);
+        const estado = coerceOrderInternalEstadoForSelect(o.motico_status || o.internal_status);
+        const estadoLabel = ORDER_INTERNAL_ESTADO_OPTIONS.find((x) => x.value === estado)?.label ?? estado;
+        const nombre =
+          String(o.shippingAddress?.name || '').trim() || String(o.client || '').trim() || '—';
+        const orderSub = `${o.orderName || `#${o.id}`}${o.is_motico_manual ? ' · Manual' : ''}`;
+        const shipPhone = String(o.shippingAddress?.phone || '').trim();
+        const telefono = String(o.phoneLocal || '').trim() || shipPhone || '—';
+        const precioTotal = relacionPrecioTotal(o);
+        const pendiente = pendientePagoAlRecibir(o);
+        const cProd = numOrZero(o.product_cost_motico);
+        const cFlete = numOrZero(o.freight_cost_motico);
+        const gMotico = gananciaMotico(o);
+        const debeProveedor = pendiente - cProd - cFlete;
+        const nequi = pagosNequiByRef[ref] ?? 0;
+        const saldo = debeProveedor - nequi;
+        const cobroKey = estadoByRef[ref] || 'pendiente_pago';
+        const cobroLabel =
+          PAGO_ESTADO_OPTIONS.find((x) => x.value === cobroKey)?.label ?? String(cobroKey);
+        return {
+          estadoPedido: estadoLabel,
+          fechaUltimoDespacho: formatFechaUltimoDespachado(o.last_despachado_at),
+          cliente: nombre,
+          refPedido: orderSub,
+          telefono,
+          correo: String(o.email || '').trim() || '—',
+          precioTotal,
+          pendientePagoAlRecibir: pendiente,
+          costoProducto: cProd,
+          costoFlete: cFlete,
+          gananciaMotico: gMotico,
+          debeProveedor,
+          pagosNequi: nequi,
+          saldo,
+          estadoCobroMotico: cobroLabel,
+        };
+      });
+      const built = await buildRelacionMoticoDespachadosExcelBlob(excelRows, cur);
+      triggerExcelBlobDownload(built.blob, built.filename);
+    } catch {
+      setError('No se pudo generar el Excel. Intenta de nuevo.');
+    } finally {
+      setExportDespachadosLoading(false);
+    }
+  }, [baseRows, despachadosForExcel, estadoByRef, pagosNequiByRef]);
+
   const schedulePagosNequiSave = useCallback(
     (ref: string, draft: string) => {
       const prevT = nequiTimersRef.current[ref];
@@ -795,6 +868,32 @@ export default function RelacionPagosMoticoPage() {
             </option>
           ))}
         </select>
+        <button
+          type="button"
+          title="Incluye todos los pedidos Motico en Despachado dentro del rango de fechas (sin aplicar búsqueda ni filtro del menú)."
+          disabled={
+            !shopifyConnected || loading || exportDespachadosLoading || despachadosForExcel.length === 0
+          }
+          onClick={() => void exportDespachadosExcel()}
+          style={{
+            marginLeft: 'auto',
+            padding: '8px 14px',
+            borderRadius: 8,
+            border: `1px solid ${despachadosForExcel.length === 0 ? ds.borderCard : ds.brand}`,
+            background: despachadosForExcel.length === 0 ? ds.bgSubtle : ds.brandBg,
+            color: despachadosForExcel.length === 0 ? ds.textMuted : ds.brand,
+            fontSize: 13,
+            fontWeight: 700,
+            cursor:
+              !shopifyConnected || loading || exportDespachadosLoading || despachadosForExcel.length === 0
+                ? 'not-allowed'
+                : 'pointer',
+          }}
+        >
+          {exportDespachadosLoading
+            ? 'Generando Excel…'
+            : `Excel despachados (${despachadosForExcel.length})`}
+        </button>
       </div>
 
       {shopifyConnected && !loading ? (
