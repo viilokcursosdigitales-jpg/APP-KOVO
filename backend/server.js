@@ -3096,11 +3096,6 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
     const rawSelected = req.body?.selectedAdAccountIds;
     const selectedInput = Array.isArray(rawSelected) ? rawSelected.map((x) => String(x)) : [];
 
-    const limit = await checkPlanLimit(req.organizationId, 'meta_connection');
-    if (!limit.ok) {
-      return res.status(403).json({ error: limit.message, code: 'plan_limit' });
-    }
-
     let verified;
     try {
       verified = await verifyMetaWithGraphApi(appId, appSecret, accessToken || undefined);

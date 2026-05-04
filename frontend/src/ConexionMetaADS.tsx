@@ -237,7 +237,7 @@ function formatConnectedDate(iso: string): string {
 }
 
 export default function ConexionMetaADS() {
-  const { limits, refreshUser } = useAuth();
+  const { refreshUser } = useAuth();
   const baseId = useId();
   const [saved, setSaved] = useState<SavedConnection | null>(null);
   const [step, setStep] = useState<FlowStep>('home');
@@ -250,18 +250,11 @@ export default function ConexionMetaADS() {
   const [fieldErrors, setFieldErrors] = useState<{ appId?: string; appSecret?: string }>({});
   const [loading, setLoading] = useState(false);
   const [errorCode, setErrorCode] = useState<MetaConnectionErrorCode | null>(null);
-  const [planLimitMessage, setPlanLimitMessage] = useState('');
 
   const [adAccounts, setAdAccounts] = useState<AdAccountOption[]>([]);
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [showTokenReconnectBanner, setShowTokenReconnectBanner] = useState(false);
-
-  const metaAtLimit =
-    limits != null &&
-    limits.meta.max != null &&
-    limits.meta.used >= limits.meta.max &&
-    !saved;
 
   useEffect(() => {
     let cancelled = false;
@@ -331,7 +324,6 @@ export default function ConexionMetaADS() {
     if (!validateForm()) return;
     setLoading(true);
     setErrorCode(null);
-    setPlanLimitMessage('');
     setPreviewError(null);
     try {
       const res = await apiFetch('/api/meta/connections', {
@@ -355,13 +347,6 @@ export default function ConexionMetaADS() {
           insights_ready?: boolean;
         };
       };
-
-      if (res.status === 403 && data.code === 'plan_limit') {
-        setPlanLimitMessage(typeof data.error === 'string' ? data.error : 'Límite del plan alcanzado');
-        setStep('home');
-        await refreshUser();
-        return;
-      }
 
       if (!res.ok) {
         const code = data.code as MetaConnectionErrorCode | undefined;
@@ -461,7 +446,6 @@ export default function ConexionMetaADS() {
     setLoading(true);
     setPreviewError(null);
     setErrorCode(null);
-    setPlanLimitMessage('');
     try {
       if (step === 'edit_accounts' && saved) {
         const res = await apiFetch(`/api/meta/connections/${saved.connectionId}/ad-accounts`, {
@@ -515,13 +499,6 @@ export default function ConexionMetaADS() {
           insights_ready?: boolean;
         };
       };
-
-      if (res.status === 403 && data.code === 'plan_limit') {
-        setPlanLimitMessage(typeof data.error === 'string' ? data.error : 'Límite del plan alcanzado');
-        setStep('home');
-        await refreshUser();
-        return;
-      }
 
       if (!res.ok) {
         const code = data.code as MetaConnectionErrorCode | undefined;
@@ -623,7 +600,6 @@ export default function ConexionMetaADS() {
     setAccessToken('');
     setFieldErrors({});
     setErrorCode(null);
-    setPlanLimitMessage('');
     setAdAccounts([]);
     setSelectedAccountIds([]);
     setPreviewError(null);
@@ -950,8 +926,6 @@ export default function ConexionMetaADS() {
           </ol>
           <button
             type="button"
-            disabled={metaAtLimit}
-            title={metaAtLimit ? 'Actualiza tu plan para agregar más conexiones' : undefined}
             onClick={() => setStep('form')}
             style={{
               marginTop: 28,
@@ -959,10 +933,10 @@ export default function ConexionMetaADS() {
               padding: '14px 20px',
               borderRadius: 10,
               border: 'none',
-              background: metaAtLimit ? alpha.brand45 : ds.brand,
+              background: ds.brand,
               color: '#fff',
               fontWeight: 700,
-              cursor: metaAtLimit ? 'not-allowed' : 'pointer',
+              cursor: 'pointer',
               fontSize: 16,
             }}
           >
@@ -1059,14 +1033,14 @@ export default function ConexionMetaADS() {
           </ul>
           <button
             type="button"
-            disabled={loading || metaAtLimit}
+            disabled={loading}
             onClick={() => void handleConfirmAccountsSave()}
             style={{
               width: '100%',
               padding: '14px 20px',
               borderRadius: 10,
               border: 'none',
-              background: loading || metaAtLimit ? alpha.brand45 : ds.brand,
+              background: loading ? alpha.brand45 : ds.brand,
               color: '#fff',
               fontWeight: 700,
               cursor: loading ? 'wait' : 'pointer',
@@ -1226,18 +1200,17 @@ export default function ConexionMetaADS() {
 
           <button
             type="button"
-            disabled={loading || metaAtLimit}
-            title={metaAtLimit ? 'Actualiza tu plan para agregar más conexiones' : undefined}
+            disabled={loading}
             onClick={() => void handlePreviewAdAccounts()}
             style={{
               width: '100%',
               padding: '14px 20px',
               borderRadius: 10,
               border: 'none',
-              background: loading || metaAtLimit ? alpha.brand45 : ds.brand,
+              background: loading ? alpha.brand45 : ds.brand,
               color: '#fff',
               fontWeight: 700,
-              cursor: loading ? 'wait' : metaAtLimit ? 'not-allowed' : 'pointer',
+              cursor: loading ? 'wait' : 'pointer',
               fontSize: 16,
               display: 'flex',
               alignItems: 'center',
@@ -1257,7 +1230,7 @@ export default function ConexionMetaADS() {
 
           <button
             type="button"
-            disabled={loading || metaAtLimit}
+            disabled={loading}
             onClick={() => void handleConnectAppOnly()}
             style={{
               width: '100%',
@@ -1267,7 +1240,7 @@ export default function ConexionMetaADS() {
               background: ds.bgCard,
               color: ds.brand,
               fontWeight: 600,
-              cursor: loading || metaAtLimit ? 'not-allowed' : 'pointer',
+              cursor: loading ? 'not-allowed' : 'pointer',
               fontSize: 14,
             }}
           >
@@ -1291,45 +1264,26 @@ export default function ConexionMetaADS() {
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', justifyContent: 'space-between', gap: 12, marginBottom: 20 }}>
         <StatusBadge status={badgeStatus} />
       </div>
-      {planLimitMessage && (
-        <div
-          style={{
-            marginBottom: 16,
-            padding: '12px 14px',
-            borderRadius: 10,
-            background: ds.warningBg,
-            color: ds.warningText,
-            fontSize: 14,
-          }}
-        >
-          {planLimitMessage}
-        </div>
-      )}
       <h2 style={{ margin: '0 0 12px', fontSize: 'clamp(22px, 4vw, 28px)', color: ds.textPrimary, lineHeight: 1.2 }}>
         Conecta tu cuenta de anuncios en Meta
       </h2>
       <p style={{ margin: '0 0 28px', color: ds.textSecondary, fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>
         Enlaza tu propia app de Facebook Developer para ver métricas y gestionar anuncios con tus credenciales. Tú controlas el acceso; nosotros solo usamos lo que autorices en Meta.
       </p>
-      <div
-        style={{ width: '100%', maxWidth: 360 }}
-        title={metaAtLimit ? 'Actualiza tu plan para agregar más conexiones' : undefined}
-      >
+      <div style={{ width: '100%', maxWidth: 360 }}>
         <button
           type="button"
-          disabled={metaAtLimit}
           onClick={() => {
-            setPlanLimitMessage('');
             setStep('guide');
           }}
           style={{
             padding: '14px 28px',
             borderRadius: 10,
             border: 'none',
-            background: metaAtLimit ? alpha.brand45 : ds.brand,
+            background: ds.brand,
             color: '#fff',
             fontWeight: 700,
-            cursor: metaAtLimit ? 'not-allowed' : 'pointer',
+            cursor: 'pointer',
             fontSize: 16,
             width: '100%',
           }}

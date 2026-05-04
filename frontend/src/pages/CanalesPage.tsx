@@ -14,6 +14,13 @@ type ShopifyConnection = {
   installed_at: string | null;
 };
 
+type MetaConnectionsResponse = {
+  connections?: Array<{
+    status?: string;
+    selected_ad_account_ids?: string[];
+  }>;
+};
+
 function ShopifyGlyph() {
   return (
     <svg width="22" height="22" viewBox="0 0 24 24" fill="none" aria-hidden>
@@ -48,6 +55,9 @@ export default function CanalesPage() {
   const [shopifyLoading, setShopifyLoading] = useState(true);
   const [shopifyActionLoading, setShopifyActionLoading] = useState(false);
   const [shopifyFormError, setShopifyFormError] = useState('');
+  const [metaLoading, setMetaLoading] = useState(true);
+  const [metaConnected, setMetaConnected] = useState(false);
+  const [metaLinkedAccountsCount, setMetaLinkedAccountsCount] = useState(0);
 
   const urlShopifyFlag = searchParams.get('shopify');
 
@@ -68,9 +78,40 @@ export default function CanalesPage() {
     }
   }, []);
 
+  const loadMetaConnection = useCallback(async () => {
+    setMetaLoading(true);
+    try {
+      const res = await apiFetch('/api/meta/connections');
+      if (!res.ok) {
+        setMetaConnected(false);
+        setMetaLinkedAccountsCount(0);
+        return;
+      }
+      const data = (await res.json()) as MetaConnectionsResponse;
+      const hasConnected = Array.isArray(data.connections)
+        ? data.connections.some((c) => c?.status === 'connected')
+        : false;
+      setMetaConnected(hasConnected);
+      const connected = Array.isArray(data.connections)
+        ? data.connections.find((c) => c?.status === 'connected')
+        : null;
+      const count = Array.isArray(connected?.selected_ad_account_ids) ? connected.selected_ad_account_ids.length : 0;
+      setMetaLinkedAccountsCount(count);
+    } catch {
+      setMetaConnected(false);
+      setMetaLinkedAccountsCount(0);
+    } finally {
+      setMetaLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     void loadShopifyConnection();
   }, [loadShopifyConnection]);
+
+  useEffect(() => {
+    void loadMetaConnection();
+  }, [loadMetaConnection]);
 
   useEffect(() => {
     if (urlShopifyFlag === 'connected' || urlShopifyFlag === 'error') {
@@ -263,14 +304,29 @@ export default function CanalesPage() {
             >
               <IconMegaphone />
             </div>
-            <StatusBadge variant="success">Conectado</StatusBadge>
+            {metaLoading ? (
+              <span style={{ fontSize: 12, color: ds.textMuted }}>…</span>
+            ) : metaConnected ? (
+              <StatusBadge variant="success">Conectado</StatusBadge>
+            ) : (
+              <StatusBadge variant="paused">No conectado</StatusBadge>
+            )}
           </div>
           <div style={{ fontSize: 13, fontWeight: 600, color: ds.textPrimary }}>Anuncios Meta</div>
           <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 6, lineHeight: 1.45 }}>
-            Campañas y embudo desde el módulo Anuncios Meta.
+            Conecta y gestiona tus cuentas publicitarias desde el módulo Anuncios Meta.
+          </div>
+          <div style={{ fontSize: 11, color: ds.textHint, marginTop: 6, lineHeight: 1.45 }}>
+            {metaLoading
+              ? 'Cargando estado de conexión…'
+              : metaConnected
+                ? metaLinkedAccountsCount === 1
+                  ? '1 cuenta vinculada'
+                  : `${metaLinkedAccountsCount} cuentas vinculadas`
+                : 'Sin cuentas vinculadas'}
           </div>
           <Link
-            to="/meta-ads"
+            to="/meta-ads?tab=conexion"
             style={{
               display: 'inline-block',
               marginTop: 14,
@@ -280,7 +336,7 @@ export default function CanalesPage() {
               textDecoration: 'none',
             }}
           >
-            Gestionar en Anuncios Meta →
+            Conectar cuenta publicitaria →
           </Link>
         </div>
 
