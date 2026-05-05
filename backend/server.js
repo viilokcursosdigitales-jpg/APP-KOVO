@@ -3014,6 +3014,48 @@ app.delete(
   },
 );
 
+/**
+ * URL del diálogo OAuth de Meta (uso compartido: redirect legacy y JSON para front cross-origin).
+ * @returns {string | null} null si faltan env
+ */
+function buildMetaOAuthAuthorizeUrl(organizationId, userId) {
+  if (!META_APP_ID_ENV || !META_APP_SECRET_ENV || !META_REDIRECT_URI_ENV) return null;
+  const state = signMetaOAuthState({
+    o: organizationId,
+    u: userId,
+  });
+  const dialog = new URL(`https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth`);
+  dialog.searchParams.set('client_id', META_APP_ID_ENV);
+  dialog.searchParams.set('redirect_uri', META_REDIRECT_URI_ENV);
+  dialog.searchParams.set('state', state);
+  dialog.searchParams.set('scope', 'ads_read,ads_management,read_insights');
+  dialog.searchParams.set('response_type', 'code');
+  return dialog.toString();
+}
+
+/** JSON con la URL para el navegador: imprescindible si el SPA llama al API en otro host (fetch + 302 opaque). */
+app.get(
+  '/api/meta/auth-url',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('meta_ads'),
+  async (req, res) => {
+    try {
+      const url = buildMetaOAuthAuthorizeUrl(req.organizationId, req.user.userId);
+      if (!url) {
+        return res.status(503).json({
+          error:
+            'OAuth Meta no está configurado. Define META_APP_ID, META_APP_SECRET y META_REDIRECT_URI en el servidor.',
+        });
+      }
+      res.json({ url });
+    } catch (e) {
+      console.error('[meta-oauth/auth-url]', e);
+      res.status(500).json({ error: 'No se pudo iniciar la conexión con Meta' });
+    }
+  },
+);
+
 app.get(
   '/api/meta/auth',
   verifyToken,
@@ -3021,23 +3063,14 @@ app.get(
   requireModuleAccess('meta_ads'),
   async (req, res) => {
     try {
-      if (!META_APP_ID_ENV || !META_APP_SECRET_ENV || !META_REDIRECT_URI_ENV) {
+      const url = buildMetaOAuthAuthorizeUrl(req.organizationId, req.user.userId);
+      if (!url) {
         return res.status(503).json({
           error:
             'OAuth Meta no está configurado. Define META_APP_ID, META_APP_SECRET y META_REDIRECT_URI en el servidor.',
         });
       }
-      const state = signMetaOAuthState({
-        o: req.organizationId,
-        u: req.user.userId,
-      });
-      const dialog = new URL(`https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth`);
-      dialog.searchParams.set('client_id', META_APP_ID_ENV);
-      dialog.searchParams.set('redirect_uri', META_REDIRECT_URI_ENV);
-      dialog.searchParams.set('state', state);
-      dialog.searchParams.set('scope', 'ads_read,ads_management,read_insights');
-      dialog.searchParams.set('response_type', 'code');
-      res.redirect(302, dialog.toString());
+      res.redirect(302, url);
     } catch (e) {
       console.error('[meta-oauth/auth]', e);
       res.status(500).json({ error: 'No se pudo iniciar la conexión con Meta' });

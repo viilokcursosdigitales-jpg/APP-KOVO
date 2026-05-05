@@ -415,19 +415,18 @@ export default function ConexionMetaADS() {
     setPreviewError(null);
     setOauthConnectLoading(true);
     try {
-      const res = await fetch(apiUrl('/api/meta/auth'), {
+      /** JSON evita respuestas opaque: con API en otro dominio el 302 a Facebook oculta status/Location al fetch. */
+      const res = await fetch(apiUrl('/api/meta/auth-url'), {
         headers: { Authorization: `Bearer ${jwt}` },
-        redirect: 'manual',
       });
-      if (res.status === 302) {
-        const loc = res.headers.get('Location');
-        if (loc) {
-          window.location.assign(loc);
-          return;
-        }
+      const body = (await res.json().catch(() => ({}))) as { url?: string; error?: string };
+      if (res.ok && typeof body.url === 'string' && body.url.startsWith('https://')) {
+        window.location.assign(body.url);
+        return;
       }
-      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
-      window.alert(typeof errBody.error === 'string' ? errBody.error : 'No se pudo iniciar la conexión con Meta.');
+      window.alert(
+        typeof body.error === 'string' ? body.error : 'No se pudo iniciar la conexión con Meta.',
+      );
     } catch {
       window.alert('Error de red al contactar el servidor.');
     } finally {
