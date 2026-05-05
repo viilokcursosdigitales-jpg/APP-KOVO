@@ -32,7 +32,10 @@ const {
   ensureValidMetaTokenForOrg,
   exchangeAndPersistLongLivedForConnection,
   runEvaluatorTokenRefreshCron,
+  exchangeFbUserToken,
+  getMetaConnectionConnectedForOrg,
 } = require('./metaTokenService');
+const { signMetaOAuthState, verifyMetaOAuthState, exchangeMetaOAuthCode } = require('./metaOAuth');
 const {
   sanitizeShopDomain,
   verifyShopifyOAuthHmac,
@@ -218,7 +221,7 @@ function parseCorsOrigins() {
           .filter(Boolean)
       : [];
   const fromShopifyEnv = [];
-  for (const u of [process.env.SHOPIFY_APP_URL, process.env.SHOPIFY_REDIRECT_URI]) {
+  for (const u of [process.env.SHOPIFY_APP_URL, process.env.SHOPIFY_REDIRECT_URI, process.env.PUBLIC_APP_URL]) {
     const s = String(u || '').trim();
     if (!s.startsWith('http')) continue;
     try {
@@ -248,6 +251,7 @@ app.use(
       callback(null, false);
     },
     credentials: true,
+    exposedHeaders: ['Location'],
   }),
 );
 app.use(
@@ -831,10 +835,47 @@ async function buildSessionPayload(userId) {
 }
 
 const META_GRAPH_VERSION = process.env.META_GRAPH_VERSION || 'v21.0';
+const META_APP_ID_ENV = String(process.env.META_APP_ID || '').replace(/\s/g, '');
+const META_APP_SECRET_ENV = String(process.env.META_APP_SECRET || '').trim();
+const META_REDIRECT_URI_ENV = String(process.env.META_REDIRECT_URI || '').trim();
+
+/** @returns {string} base del frontend para redirigir tras OAuth Meta */
+function metaOAuthPublicBaseUrl() {
+  const b = String(process.env.PUBLIC_APP_URL || '').trim().replace(/\/$/, '');
+  if (b) return b;
+  return 'http://localhost:5173';
+}
+
+/** @param {Record<string, string | undefined>} params query (meta_oauth, reason, …) */
+function redirectMetaOAuthBrowser(res, params) {
+  const q = new URLSearchParams();
+  q.set('tab', 'conexion');
+  Object.entries(params).forEach(([k, v]) => {
+    if (v != null && String(v).length > 0) q.set(k, String(v));
+  });
+  res.redirect(302, `${metaOAuthPublicBaseUrl()}/meta-ads?${q.toString()}`);
+}
+
+async function fetchMetaGraphUserDisplayName(graphVersion, userAccessToken) {
+  try {
+    const meUrl = new URL(`https://graph.facebook.com/${graphVersion}/me`);
+    meUrl.searchParams.set('fields', 'name');
+    meUrl.searchParams.set('access_token', userAccessToken);
+    const meRes = await fetch(meUrl);
+    const me = await meRes.json().catch(() => ({}));
+    if (meRes.ok && me.name && String(me.name).trim()) return String(me.name).trim();
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
 
 /**
  * Valida App ID + App Secret contra la Graph API (client_credentials).
- * Si se envía accessToken de usuario, comprueba con debug_token y opcionalmente obtiene el nombre.
+ * Si se envía accessToken, valida con debug_token (mismo flujo para token de
+ * usuario de corta/larga duración y para System User Token de Business Manager).
+ * El nombre mostrado se intenta leer con GET /me; si falla (p. ej. algunos
+ * tokens de sistema), se usa un valor por defecto.
  */
 async function verifyMetaWithGraphApi(appId, appSecret, accessToken) {
   const id = String(appId || '').replace(/\s/g, '');
@@ -921,6 +962,11 @@ async function verifyMetaWithGraphApi(appId, appSecret, accessToken) {
       throw e;
     }
 
+    const graphTokenType = d && d.type != null ? String(d.type).toUpperCase() : '';
+    if (graphTokenType === 'SYSTEM_USER') {
+      accountName = `Usuario del sistema · App ${id.slice(-4)}`;
+    }
+
     try {
       const meUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/me`);
       meUrl.searchParams.set('fields', 'name');
@@ -931,7 +977,7 @@ async function verifyMetaWithGraphApi(appId, appSecret, accessToken) {
         accountName = String(me.name).trim();
       }
     } catch {
-      /* mantener nombre por defecto */
+      /* mantener nombre por defecto (p. ej. System User sin /me como usuario) */
     }
   }
 
@@ -2967,6 +3013,162 @@ app.delete(
     }
   },
 );
+
+app.get(
+  '/api/meta/auth',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('meta_ads'),
+  async (req, res) => {
+    try {
+      if (!META_APP_ID_ENV || !META_APP_SECRET_ENV || !META_REDIRECT_URI_ENV) {
+        return res.status(503).json({
+          error:
+            'OAuth Meta no está configurado. Define META_APP_ID, META_APP_SECRET y META_REDIRECT_URI en el servidor.',
+        });
+      }
+      const state = signMetaOAuthState({
+        o: req.organizationId,
+        u: req.user.userId,
+      });
+      const dialog = new URL(`https://www.facebook.com/${META_GRAPH_VERSION}/dialog/oauth`);
+      dialog.searchParams.set('client_id', META_APP_ID_ENV);
+      dialog.searchParams.set('redirect_uri', META_REDIRECT_URI_ENV);
+      dialog.searchParams.set('state', state);
+      dialog.searchParams.set('scope', 'ads_read,ads_management,read_insights');
+      dialog.searchParams.set('response_type', 'code');
+      res.redirect(302, dialog.toString());
+    } catch (e) {
+      console.error('[meta-oauth/auth]', e);
+      res.status(500).json({ error: 'No se pudo iniciar la conexión con Meta' });
+    }
+  },
+);
+
+app.get('/api/meta/callback', async (req, res) => {
+  try {
+    const errQ = req.query.error;
+    if (errQ) {
+      redirectMetaOAuthBrowser(res, {
+        meta_oauth: 'error',
+        reason: String(errQ),
+      });
+      return;
+    }
+
+    const code = req.query.code ? String(req.query.code) : '';
+    const stateRaw = req.query.state != null ? String(req.query.state) : '';
+    if (!code || !stateRaw) {
+      redirectMetaOAuthBrowser(res, { meta_oauth: 'error', reason: 'missing_params' });
+      return;
+    }
+
+    if (!META_APP_ID_ENV || !META_APP_SECRET_ENV || !META_REDIRECT_URI_ENV) {
+      redirectMetaOAuthBrowser(res, { meta_oauth: 'error', reason: 'server_config' });
+      return;
+    }
+
+    const parsed = verifyMetaOAuthState(stateRaw);
+    if (!parsed) {
+      redirectMetaOAuthBrowser(res, { meta_oauth: 'error', reason: 'invalid_state' });
+      return;
+    }
+    const { organizationId, userId } = parsed;
+
+    const uq = await pool.query(
+      `SELECT id, organization_id, is_active FROM users WHERE id = $1`,
+      [userId],
+    );
+    const uRow = uq.rows[0];
+    if (
+      !uRow ||
+      !uRow.is_active ||
+      Number(uRow.organization_id) !== Number(organizationId)
+    ) {
+      redirectMetaOAuthBrowser(res, { meta_oauth: 'error', reason: 'user_mismatch' });
+      return;
+    }
+
+    const shortEx = await exchangeMetaOAuthCode(
+      META_GRAPH_VERSION,
+      META_APP_ID_ENV,
+      META_APP_SECRET_ENV,
+      META_REDIRECT_URI_ENV,
+      code,
+    );
+    if (!shortEx.ok) {
+      console.error('[meta-oauth] code exchange', shortEx.error);
+      redirectMetaOAuthBrowser(res, { meta_oauth: 'error', reason: 'token_exchange' });
+      return;
+    }
+
+    const longEx = await exchangeFbUserToken(
+      META_GRAPH_VERSION,
+      META_APP_ID_ENV,
+      META_APP_SECRET_ENV,
+      shortEx.access_token,
+    );
+    if (!longEx.ok) {
+      console.error('[meta-oauth] long-lived exchange', longEx.error);
+      redirectMetaOAuthBrowser(res, { meta_oauth: 'error', reason: 'long_lived_exchange' });
+      return;
+    }
+
+    const longToken = longEx.access_token;
+    const expiresIso = longEx.expires_at.toISOString();
+    const displayName =
+      (await fetchMetaGraphUserDisplayName(META_GRAPH_VERSION, longToken)) ||
+      `Meta · ${META_APP_ID_ENV.slice(-4)}`;
+
+    const existing = await getMetaConnectionConnectedForOrg(pool, organizationId);
+    if (existing) {
+      await pool.query(
+        `UPDATE meta_connections
+         SET access_token = $1,
+             token_expires_at = $2,
+             app_id = $3,
+             app_secret = $4,
+             token_type = 'evaluator',
+             status = 'connected',
+             disconnect_reason = NULL,
+             account_name = $5,
+             created_by = $6,
+             updated_at = now()
+         WHERE id = $7 AND organization_id = $8`,
+        [longToken, expiresIso, META_APP_ID_ENV, '', displayName, userId, existing.id, organizationId],
+      );
+    } else {
+      const limit = await checkPlanLimit(organizationId, 'meta_connection');
+      if (!limit.ok) {
+        redirectMetaOAuthBrowser(res, { meta_oauth: 'error', reason: 'plan_limit' });
+        return;
+      }
+      await pool.query(
+        `INSERT INTO meta_connections
+         (organization_id, created_by, app_id, app_secret, access_token, status, connected_at, account_name, selected_ad_account_ids, token_type, token_expires_at, disconnect_reason, updated_at)
+         VALUES ($1, $2, $3, $4, $5, 'connected', now(), $6, '[]'::jsonb, 'evaluator', $7, NULL, now())`,
+        [
+          organizationId,
+          userId,
+          META_APP_ID_ENV,
+          '',
+          longToken,
+          displayName,
+          expiresIso,
+        ],
+      );
+    }
+
+    redirectMetaOAuthBrowser(res, { meta_oauth: 'success' });
+  } catch (e) {
+    console.error('[meta-oauth/callback]', e);
+    try {
+      redirectMetaOAuthBrowser(res, { meta_oauth: 'error', reason: 'server' });
+    } catch (e2) {
+      res.status(500).send('Error OAuth Meta');
+    }
+  }
+});
 
 app.get('/api/meta/connections', verifyToken, scopeToOrganization, async (req, res) => {
   try {

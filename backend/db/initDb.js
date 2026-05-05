@@ -78,6 +78,17 @@ async function initDb(pool) {
   `);
 
   try {
+    await pool.query(`
+      ALTER TABLE meta_connections
+      ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+    `);
+  } catch (e) {
+    if (e && e.code !== '42701') {
+      console.warn('[initDb] meta_connections.updated_at:', e && e.message);
+    }
+  }
+
+  try {
     await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hotmart_email TEXT`);
     await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan_activated_at TIMESTAMPTZ`);
   } catch (e) {

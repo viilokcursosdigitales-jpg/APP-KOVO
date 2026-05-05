@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Link } from 'react-router-dom';
-import { apiFetch } from './auth/api';
+import { Link, useSearchParams } from 'react-router-dom';
+import { apiFetch, apiUrl, getStoredToken } from './auth/api';
 import { useAuth } from './auth/AuthContext';
 import { alpha, ds } from './design-system/ds';
 import { KOVO_META_CONNECTION_EVENT } from './meta/useMetaInsightsReady';
@@ -208,6 +208,10 @@ function CheckAnimated() {
 
 const GUIDE_STEPS: { title: string; body: string }[] = [
   {
+    title: 'Conexión con Meta (recomendado)',
+    body: `Pulsa «Conectar con Meta» en KOVO: se abrirá Facebook para que autorices la app KOVO con tus permisos (ads_read, ads_management, read_insights). Tras aceptar, KOVO guarda un token seguro por tu organización; no hace falta copiar tokens a mano.`,
+  },
+  {
     title: 'Crea tu cuenta de desarrollador',
     body: `Entra en Facebook Developers y regístrate o inicia sesión con tu cuenta de Facebook. Así tendrás tu propio espacio para gestionar apps.`,
   },
@@ -221,9 +225,28 @@ const GUIDE_STEPS: { title: string; body: string }[] = [
   },
   {
     title: 'Token y cuentas publicitarias',
-    body: `Genera un token de usuario con permisos ads_read (y de gestión si aplica) en Graph API Explorer o tu flujo OAuth. En KOVO podrás elegir qué cuentas publicitarias (act_) sincronizar para ver campañas, conjuntos y anuncios en tiempo real.`,
+    body: `Para pruebas puedes generar un token de usuario con permisos ads_read (y ads_management si aplica) en Graph API Explorer o tu flujo OAuth. En KOVO elegirás qué cuentas publicitarias (act_) sincronizar.`,
+  },
+  {
+    title: 'Producción: System User Token permanente',
+    body: `En Meta Business Manager ve a Configuración → Usuarios del sistema. Crea un usuario del sistema con rol «Empleado» o «Admin». Asigna tu app (por ejemplo KOVO Analytics) con permisos ads_read, ads_management y read_insights. Pulsa «Generar token», selecciona la opción para que no expire, y copia el token en KOVO. Marca en el formulario que es un System User Token para que no intentemos canjearlo por otro tipo de token.`,
   },
 ];
+
+function metaOAuthErrorHint(reason: string): string {
+  const m: Record<string, string> = {
+    plan_limit: 'Tu plan no permite más conexiones Meta para esta organización.',
+    access_denied: 'No se otorgaron permisos en Meta. Inténtalo de nuevo y acepta los permisos.',
+    invalid_state: 'La sesión de enlace expiró o no es válida. Vuelve a pulsar Conectar con Meta.',
+    user_mismatch: 'El usuario de KOVO no coincide con la sesión de OAuth. Cierra sesión y vuelve a entrar.',
+    token_exchange: 'Meta no aceptó el código de autorización (revisa META_REDIRECT_URI y App Secret).',
+    long_lived_exchange: 'No se pudo obtener el token de larga duración. Revisa la configuración de la app.',
+    missing_params: 'Faltan parámetros en la respuesta de Meta.',
+    server_config: 'OAuth Meta no está configurado en el servidor (META_APP_ID / META_REDIRECT_URI).',
+    server: 'Error interno al completar la conexión. Inténtalo más tarde.',
+  };
+  return m[reason] || `No se pudo completar la conexión (${reason || 'desconocido'}).`;
+}
 
 function formatConnectedDate(iso: string): string {
   try {
@@ -238,6 +261,7 @@ function formatConnectedDate(iso: string): string {
 
 export default function ConexionMetaADS() {
   const { refreshUser } = useAuth();
+  const [searchParams, setSearchParams] = useSearchParams();
   const baseId = useId();
   const [saved, setSaved] = useState<SavedConnection | null>(null);
   const [step, setStep] = useState<FlowStep>('home');
@@ -246,6 +270,8 @@ export default function ConexionMetaADS() {
   const [appId, setAppId] = useState('');
   const [appSecret, setAppSecret] = useState('');
   const [accessToken, setAccessToken] = useState('');
+  /** Token de usuario del sistema (Business Manager): no caduca; el backend guarda token_type = system_user y no hace intercambio a long-lived. */
+  const [tokenIsSystemUser, setTokenIsSystemUser] = useState(false);
 
   const [fieldErrors, setFieldErrors] = useState<{ appId?: string; appSecret?: string }>({});
   const [loading, setLoading] = useState(false);
@@ -255,12 +281,72 @@ export default function ConexionMetaADS() {
   const [selectedAccountIds, setSelectedAccountIds] = useState<string[]>([]);
   const [previewError, setPreviewError] = useState<string | null>(null);
   const [showTokenReconnectBanner, setShowTokenReconnectBanner] = useState(false);
+  const [oauthConnectLoading, setOauthConnectLoading] = useState(false);
+
+  useEffect(() => {
+    const oauth = searchParams.get('meta_oauth');
+    if (!oauth) return;
+    const reason = searchParams.get('reason') || '';
+    const next = new URLSearchParams(searchParams);
+    next.delete('meta_oauth');
+    next.delete('reason');
+    setSearchParams(next, { replace: true });
+
+    if (oauth === 'success') {
+      let cancelled = false;
+      (async () => {
+        setBootstrapLoading(true);
+        try {
+          const res = await apiFetch(`/api/meta/connections?_=${Date.now()}`);
+          if (cancelled || !res.ok) return;
+          const data = (await res.json()) as {
+            connections: Array<{
+              id: number;
+              status: string;
+              account_name: string;
+              connected_at: string;
+              app_id_hint: string;
+              selected_ad_account_ids?: string[];
+              insights_ready?: boolean;
+              disconnect_reason?: string | null;
+            }>;
+          };
+          const c = data.connections.find((x) => x.status === 'connected');
+          if (c) {
+            const sel = Array.isArray(c.selected_ad_account_ids) ? c.selected_ad_account_ids.map(String) : [];
+            setSaved({
+              connectionId: c.id,
+              accountName: c.account_name,
+              connectedAt: c.connected_at,
+              appIdHint: c.app_id_hint,
+              selectedAdAccountIds: sel,
+              insightsReady: Boolean(c.insights_ready),
+            });
+            setStep('success');
+            setShowTokenReconnectBanner(false);
+          }
+          await refreshUser();
+          notifyMetaDashboardRefresh();
+        } finally {
+          if (!cancelled) setBootstrapLoading(false);
+        }
+      })();
+      return () => {
+        cancelled = true;
+      };
+    }
+    if (oauth === 'error') {
+      setPreviewError(metaOAuthErrorHint(reason));
+      setStep('home');
+    }
+    return undefined;
+  }, [searchParams, setSearchParams, refreshUser]);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
-        const res = await apiFetch('/api/meta/connections');
+        const res = await apiFetch(`/api/meta/connections?_=${Date.now()}`);
         if (cancelled || !res.ok) return;
         const data = (await res.json()) as {
           connections: Array<{
@@ -318,6 +404,35 @@ export default function ConexionMetaADS() {
 
   const toggleAccountId = useCallback((id: string) => {
     setSelectedAccountIds((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+  }, []);
+
+  const handleConnectWithMetaOAuth = useCallback(async () => {
+    const jwt = getStoredToken();
+    if (!jwt) {
+      window.alert('Inicia sesión en KOVO para conectar Meta.');
+      return;
+    }
+    setPreviewError(null);
+    setOauthConnectLoading(true);
+    try {
+      const res = await fetch(apiUrl('/api/meta/auth'), {
+        headers: { Authorization: `Bearer ${jwt}` },
+        redirect: 'manual',
+      });
+      if (res.status === 302) {
+        const loc = res.headers.get('Location');
+        if (loc) {
+          window.location.assign(loc);
+          return;
+        }
+      }
+      const errBody = (await res.json().catch(() => ({}))) as { error?: string };
+      window.alert(typeof errBody.error === 'string' ? errBody.error : 'No se pudo iniciar la conexión con Meta.');
+    } catch {
+      window.alert('Error de red al contactar el servidor.');
+    } finally {
+      setOauthConnectLoading(false);
+    }
   }, []);
 
   const handleConnectAppOnly = useCallback(async () => {
@@ -410,6 +525,7 @@ export default function ConexionMetaADS() {
           appId: appId.trim(),
           appSecret: appSecret.trim(),
           accessToken: tok,
+          tokenType: tokenIsSystemUser ? 'system_user' : 'evaluator',
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -436,7 +552,7 @@ export default function ConexionMetaADS() {
     } finally {
       setLoading(false);
     }
-  }, [appId, appSecret, accessToken, validateForm]);
+  }, [appId, appSecret, accessToken, tokenIsSystemUser, validateForm]);
 
   const handleConfirmAccountsSave = useCallback(async () => {
     if (selectedAccountIds.length === 0) {
@@ -485,6 +601,7 @@ export default function ConexionMetaADS() {
           appSecret: appSecret.trim(),
           accessToken: accessToken.trim(),
           selectedAdAccountIds: selectedAccountIds,
+          tokenType: tokenIsSystemUser ? 'system_user' : 'evaluator',
         }),
       });
       const data = (await res.json().catch(() => ({}))) as {
@@ -550,6 +667,7 @@ export default function ConexionMetaADS() {
     appId,
     appSecret,
     accessToken,
+    tokenIsSystemUser,
     refreshUser,
   ]);
 
@@ -582,7 +700,7 @@ export default function ConexionMetaADS() {
   const handleDisconnect = useCallback(async () => {
     if (
       !window.confirm(
-        '¿Desconectar tu cuenta de anuncios en Meta? Deberás volver a introducir las credenciales para sincronizar datos.',
+        '¿Desconectar tu cuenta de anuncios en Meta? Podrás volver a usar «Conectar con Meta» cuando quieras.',
       )
     ) {
       return;
@@ -696,9 +814,9 @@ export default function ConexionMetaADS() {
         </div>
         <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>¡Conexión correcta con Meta!</h2>
         <p style={{ margin: '0 0 20px', color: ds.textSecondary, fontSize: 15, lineHeight: 1.5 }}>
-          Tu app de Meta está vinculada. Si elegiste cuentas publicitarias y guardaste un token de usuario, el apartado{' '}
-          <strong>Análisis de creativo</strong> mostrará métricas reales (campañas, conjuntos y anuncios). Si conectaste
-          solo App ID y Secret, el panel seguirá en modo demostración hasta que añadas token y cuentas.
+          Si completaste OAuth o pegaste un token, el apartado <strong>Análisis de creativo</strong> puede mostrar
+          métricas reales cuando elijas cuentas publicitarias abajo. Sin cuentas seleccionadas, algunos paneles siguen en
+          modo demostración.
         </p>
         {saved.selectedAdAccountIds.length > 0 && (
           <p style={{ margin: '0 0 16px', fontSize: 14, color: ds.textPrimary, textAlign: 'left' }}>
@@ -926,21 +1044,51 @@ export default function ConexionMetaADS() {
           </ol>
           <button
             type="button"
-            onClick={() => setStep('form')}
+            disabled={oauthConnectLoading}
+            onClick={() => void handleConnectWithMetaOAuth()}
             style={{
               marginTop: 28,
               width: '100%',
               padding: '14px 20px',
               borderRadius: 10,
               border: 'none',
-              background: ds.brand,
+              background: oauthConnectLoading ? alpha.brand45 : ds.brand,
               color: '#fff',
               fontWeight: 700,
-              cursor: 'pointer',
+              cursor: oauthConnectLoading ? 'wait' : 'pointer',
               fontSize: 16,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: 8,
             }}
           >
-            Continuar al formulario
+            {oauthConnectLoading ? (
+              <>
+                <Spinner />
+                Abriendo Meta…
+              </>
+            ) : (
+              'Conectar con Meta (OAuth)'
+            )}
+          </button>
+          <button
+            type="button"
+            onClick={() => setStep('form')}
+            style={{
+              marginTop: 12,
+              width: '100%',
+              padding: '12px 20px',
+              borderRadius: 10,
+              border: `1px solid ${alpha.brand40}`,
+              background: ds.bgCard,
+              color: ds.brand,
+              fontWeight: 600,
+              cursor: 'pointer',
+              fontSize: 14,
+            }}
+          >
+            Conexión manual (App ID, secret y token)
           </button>
         </div>
       </div>,
@@ -1095,8 +1243,12 @@ export default function ConexionMetaADS() {
         >
           <h2 style={{ margin: '0 0 8px', fontSize: 22, color: ds.textPrimary }}>Datos de tu app</h2>
           <p style={{ margin: '0 0 24px', color: ds.textSecondary, fontSize: 14 }}>
-            Los datos se guardan en el servidor y quedan aislados por organización (multi-tenant). Solo usuarios
-            autorizados de tu empresa pueden gestionarlos.
+            La opción recomendada es <strong>Conectar con Meta (OAuth)</strong> desde la pantalla anterior. Usa este
+            formulario solo si tu equipo debe pegar credenciales manualmente (p. ej. entorno de pruebas).
+          </p>
+          <p style={{ margin: '0 0 24px', color: ds.textSecondary, fontSize: 14 }}>
+            Lo que guardes aquí queda aislado por organización (multi-tenant). Solo usuarios autorizados pueden
+            gestionarlo.
           </p>
 
           <label style={{ display: 'block', marginBottom: 18 }}>
@@ -1158,12 +1310,27 @@ export default function ConexionMetaADS() {
             )}
           </label>
 
-          <label style={{ display: 'block', marginBottom: 24 }}>
+          <p
+            style={{
+              margin: '0 0 18px',
+              padding: '12px 14px',
+              borderRadius: 10,
+              background: alpha.brand12,
+              border: `1px solid ${alpha.brand35}`,
+              fontSize: 14,
+              color: ds.textSecondary,
+              lineHeight: 1.5,
+            }}
+          >
+            Para conexión permanente, usa un System User Token desde Meta Business Manager.
+          </p>
+
+          <label style={{ display: 'block', marginBottom: 12 }}>
             <span style={{ display: 'flex', alignItems: 'center', fontWeight: 600, color: ds.textPrimary, marginBottom: 8 }}>
-              Access Token de usuario (para métricas en vivo)
+              Access Token (métricas en vivo)
               <FieldTooltip
                 id={`${baseId}-token`}
-                text="Token de usuario de Meta con permisos ads_read (y ads_management si gestionas anuncios). Genera uno en Graph API Explorer seleccionando tu app, o con el flujo OAuth. Sin token solo puedes validar App ID y Secret; no habrá cuentas publicitarias ni datos reales en el panel."
+                text="Puede ser un token de usuario (Graph API Explorer u OAuth) o un System User Token de Business Manager (recomendado en producción, sin caducidad). Permisos típicos: ads_read, ads_management, read_insights. Sin token solo puedes validar App ID y Secret; no habrá cuentas publicitarias ni datos reales."
               />
             </span>
             <input
@@ -1171,7 +1338,7 @@ export default function ConexionMetaADS() {
               autoComplete="off"
               value={accessToken}
               onChange={(e) => setAccessToken(e.target.value)}
-              placeholder="Recomendado para listar cuentas y ver campañas"
+              placeholder="Token de usuario o System User (Business Manager)"
               style={{
                 width: '100%',
                 boxSizing: 'border-box',
@@ -1181,6 +1348,31 @@ export default function ConexionMetaADS() {
                 fontSize: 15,
               }}
             />
+          </label>
+
+          <label
+            style={{
+              display: 'flex',
+              alignItems: 'flex-start',
+              gap: 10,
+              marginBottom: 24,
+              cursor: 'pointer',
+              fontSize: 14,
+              color: ds.textSecondary,
+              lineHeight: 1.45,
+            }}
+          >
+            <input
+              type="checkbox"
+              checked={tokenIsSystemUser}
+              onChange={(e) => setTokenIsSystemUser(e.target.checked)}
+              style={{ marginTop: 4, cursor: 'pointer', flexShrink: 0 }}
+              aria-describedby={`${baseId}-sysuser-hint`}
+            />
+            <span id={`${baseId}-sysuser-hint`}>
+              Este es un System User Token (Business Manager, no caduca). Marca esta opción en producción para guardar el
+              tipo de token correcto en KOVO.
+            </span>
           </label>
 
           {previewError && (
@@ -1268,27 +1460,70 @@ export default function ConexionMetaADS() {
         Conecta tu cuenta de anuncios en Meta
       </h2>
       <p style={{ margin: '0 0 28px', color: ds.textSecondary, fontSize: 16, lineHeight: 1.55, maxWidth: 520 }}>
-        Enlaza tu propia app de Facebook Developer para ver métricas y gestionar anuncios con tus credenciales. Tú controlas el acceso; nosotros solo usamos lo que autorices en Meta.
+        Pulsa el botón para abrir el inicio de sesión de Meta y autorizar a KOVO con tus permisos. El token queda asociado
+        a tu organización; cada miembro con acceso puede reconectar si hace falta.
       </p>
-      <div style={{ width: '100%', maxWidth: 360 }}>
+      {previewError && (
+        <div
+          style={{
+            marginBottom: 20,
+            padding: '12px 14px',
+            borderRadius: 10,
+            background: ds.dangerBg,
+            color: ds.dangerText,
+            fontSize: 14,
+            maxWidth: 520,
+          }}
+        >
+          {previewError}
+        </div>
+      )}
+      <div style={{ width: '100%', maxWidth: 360, display: 'flex', flexDirection: 'column', gap: 12 }}>
         <button
           type="button"
-          onClick={() => {
-            setStep('guide');
-          }}
+          disabled={oauthConnectLoading}
+          onClick={() => void handleConnectWithMetaOAuth()}
           style={{
             padding: '14px 28px',
             borderRadius: 10,
             border: 'none',
-            background: ds.brand,
+            background: oauthConnectLoading ? alpha.brand45 : ds.brand,
             color: '#fff',
             fontWeight: 700,
-            cursor: 'pointer',
+            cursor: oauthConnectLoading ? 'wait' : 'pointer',
             fontSize: 16,
+            width: '100%',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            gap: 8,
+          }}
+        >
+          {oauthConnectLoading ? (
+            <>
+              <Spinner />
+              Redirigiendo…
+            </>
+          ) : (
+            'Conectar con Meta'
+          )}
+        </button>
+        <button
+          type="button"
+          onClick={() => setStep('guide')}
+          style={{
+            padding: '12px 20px',
+            borderRadius: 10,
+            border: `1px solid ${alpha.brand40}`,
+            background: ds.bgCard,
+            color: ds.brand,
+            fontWeight: 600,
+            cursor: 'pointer',
+            fontSize: 14,
             width: '100%',
           }}
         >
-          Conectar con Meta
+          Guía y conexión manual
         </button>
       </div>
     </div>,

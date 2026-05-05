@@ -38,7 +38,7 @@ export default function MetaAdsPage() {
         title="Anuncios Meta"
         subtitle={
           metaTab === 'conexion'
-            ? 'Vincula tu app de Facebook Developer y gestiona el acceso a tus anuncios'
+            ? 'Conecta con Meta mediante OAuth (recomendado) o gestiona el acceso a tus anuncios'
             : 'Análisis de campañas y embudo de conversión'
         }
       />

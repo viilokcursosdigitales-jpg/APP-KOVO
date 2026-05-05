@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS meta_connections (
   disconnect_reason TEXT,
   status TEXT NOT NULL DEFAULT 'connected' CHECK (status IN ('connected', 'disconnected', 'error')),
   connected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   account_name TEXT,
   selected_ad_account_ids JSONB NOT NULL DEFAULT '[]'::jsonb
 );
