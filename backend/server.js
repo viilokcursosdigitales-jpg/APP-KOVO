@@ -873,7 +873,6 @@ async function verifyMetaWithGraphApi(appId, appSecret, accessToken) {
     throw e;
   }
 
-  const appAccessToken = tokenBody.access_token;
   let accountName = `Cuenta publicitaria · App ${id.slice(-4)}`;
 
   if (userToken.length > 0) {
@@ -884,7 +883,8 @@ async function verifyMetaWithGraphApi(appId, appSecret, accessToken) {
     }
     const debugUrl = new URL(`https://graph.facebook.com/${META_GRAPH_VERSION}/debug_token`);
     debugUrl.searchParams.set('input_token', userToken);
-    debugUrl.searchParams.set('access_token', appAccessToken);
+    /** Meta admite token de app (OAuth) o app_id|app_secret; este último suele ser el más fiable para debug_token. */
+    debugUrl.searchParams.set('access_token', `${id}|${secret}`);
 
     let debugRes;
     try {
@@ -897,10 +897,27 @@ async function verifyMetaWithGraphApi(appId, appSecret, accessToken) {
 
     const debugBody = await debugRes.json().catch(() => ({}));
     const d = debugBody.data;
-    if (!debugRes.ok || !d || d.is_valid !== true) {
-      const errCode = d && d.error && d.error.code;
+    /** Meta puede devolver OAuthException en la raíz ({ error }) o dentro de data ({ data.error }). */
+    const fbErr = debugBody.error || (d && d.error);
+    const errCode = fbErr && fbErr.code;
+    const tokenOk = debugRes.ok && d && d.is_valid === true;
+
+    if (!tokenOk) {
       const e = new Error('token');
-      e.code = errCode === 190 ? 'token_expired' : 'invalid_credentials';
+      if (errCode === 190) {
+        e.code = 'token_expired';
+      } else if (errCode === 200) {
+        e.code = 'permissions';
+      } else if (
+        d &&
+        d.is_valid === false &&
+        d.app_id != null &&
+        String(d.app_id) !== String(id)
+      ) {
+        e.code = 'permissions';
+      } else {
+        e.code = 'invalid_credentials';
+      }
       throw e;
     }
 
@@ -3005,6 +3022,8 @@ app.post('/api/meta/preview-ad-accounts', verifyToken, scopeToOrganization, asyn
       const map = {
         invalid_credentials: 'El App ID o App Secret son incorrectos',
         token_expired: 'El Access Token ha expirado, genera uno nuevo',
+        permissions:
+          'El token no corresponde a esta app, o falta permiso. Verifica que el token sea de la misma app y tenga ads_read',
         network: 'No se pudo contactar a Meta',
       };
       const status = code === 'network' ? 503 : 400;
