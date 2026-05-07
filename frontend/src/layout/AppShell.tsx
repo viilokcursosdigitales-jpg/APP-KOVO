@@ -65,6 +65,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   }, [expanded]);
 
   const group1: NavItem[] = [
+    { to: '/inicio', label: 'Inicio', icon: <IconLayout />, moduleId: 'dashboard' },
     { to: '/pedidos', label: 'Pedidos', icon: <IconCart />, moduleId: 'pedidos' },
     { to: '/inventario', label: 'Inventario', icon: <IconPackage />, moduleId: 'inventario' },
   ];
@@ -215,7 +216,19 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
             <IconChevronDown size={14} />
           </span>
         </button>
-        {expanded[id] ? <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{items.map(renderItem)}</div> : null}
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateRows: expanded[id] ? '1fr' : '0fr',
+            opacity: expanded[id] ? 1 : 0,
+            transform: expanded[id] ? 'translateY(0)' : 'translateY(-4px)',
+            transition: 'grid-template-rows 180ms ease, opacity 160ms ease, transform 180ms ease',
+          }}
+        >
+          <div style={{ overflow: 'hidden' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{items.map(renderItem)}</div>
+          </div>
+        </div>
       </div>
     );
   };
