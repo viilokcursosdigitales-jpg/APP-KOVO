@@ -8,7 +8,6 @@ import {
   IconCalculadora,
   IconCart,
   IconChevronDown,
-  IconFunnel,
   IconLayout,
   IconMegaphone,
   IconPackage,
@@ -71,9 +70,8 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   ];
 
   const marketing: NavItem[] = [
-    { to: '/meta-ads', label: 'Anuncios Meta', icon: <IconMegaphone />, moduleId: 'meta_ads' },
+    { to: '/meta-ads', label: 'Análisis de creativos', icon: <IconMegaphone />, moduleId: 'meta_ads' },
     { to: '/analisis-producto', label: 'Análisis de productos', icon: <IconProduct />, moduleId: 'analisis_producto' },
-    { to: '/ads-funnel', label: 'Embudo de anuncios', icon: <IconFunnel />, moduleId: 'ads_funnel' },
   ];
   const logistica: NavItem[] = [{ to: '/reporte-dropi', label: 'Reporte Dropi', icon: <IconTruck />, moduleId: null }];
   const finanzas: NavItem[] = [
@@ -83,7 +81,6 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   ];
   const integraciones: NavItem[] = [
     { to: '/canales?tab=shopify', label: 'Conexión Shopify', icon: <IconShare />, moduleId: 'canales' },
-    { to: '/canales?tab=meta', label: 'Conexión Meta', icon: <IconMegaphone />, moduleId: 'canales' },
   ];
   const configuracion: NavItem[] = [
     { to: '/profile', label: 'Cuenta', icon: <IconUser />, moduleId: null },
