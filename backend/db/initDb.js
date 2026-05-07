@@ -91,8 +91,23 @@ async function initDb(pool) {
   try {
     await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hotmart_email TEXT`);
     await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan_activated_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ`);
+    await pool.query(
+      `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'trial'`,
+    );
+    await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS last_payment_at TIMESTAMPTZ`);
+    await pool.query(
+      `ALTER TABLE organizations
+       DROP CONSTRAINT IF EXISTS organizations_subscription_status_check`,
+    );
+    await pool.query(
+      `ALTER TABLE organizations
+       ADD CONSTRAINT organizations_subscription_status_check
+       CHECK (subscription_status IN ('trial', 'active', 'expired'))`,
+    );
   } catch (e) {
-    console.error('[initDb] organizations Hotmart columns (hotmart_email / plan_activated_at):', e && e.message);
+    console.error('[initDb] organizations subscription columns:', e && e.message);
   }
 
   await pool.query(`
@@ -427,7 +442,9 @@ async function initDb(pool) {
     const orgName = `${(u.name || 'Usuario').split(' ')[0]} — empresa`;
     const slug = await uniqueSlug(pool, orgName);
     const ins = await pool.query(
-      `INSERT INTO organizations (name, slug, plan) VALUES ($1, $2, 'free') RETURNING id`,
+      `INSERT INTO organizations (name, slug, plan, trial_started_at, subscription_status, subscription_expires_at)
+       VALUES ($1, $2, 'free', now(), 'active', now() + interval '30 days')
+       RETURNING id`,
       [orgName, slug],
     );
     const orgId = ins.rows[0].id;
@@ -440,6 +457,15 @@ async function initDb(pool) {
   await pool.query(
     `UPDATE users SET role = 'owner'
      WHERE organization_id IS NOT NULL AND (role IS NULL OR role = '')`,
+  );
+
+  await pool.query(
+    `UPDATE organizations
+     SET trial_started_at = COALESCE(trial_started_at, now()),
+         subscription_status = 'active',
+         subscription_expires_at = COALESCE(subscription_expires_at, now() + interval '30 days'),
+         last_payment_at = COALESCE(last_payment_at, now())
+     WHERE subscription_status IS NULL OR subscription_status <> 'active' OR subscription_expires_at IS NULL`,
   );
 
   const { rows: orgs } = await pool.query('SELECT id FROM organizations');

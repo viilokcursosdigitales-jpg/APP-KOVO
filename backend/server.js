@@ -120,6 +120,8 @@ const JWT_EXPIRES = '7d';
 const BCRYPT_ROUNDS = 10;
 const RESET_TOKEN_HOURS = 1;
 const INVITE_DAYS = 7;
+const TRIAL_DAYS = 5;
+const SUBSCRIPTION_DAYS = 30;
 
 const PLAN_LIMITS = {
   free: { users: 5, metaConnections: 1 },
@@ -697,6 +699,77 @@ async function verifyToken(req, res, next) {
   next();
 }
 
+function addUtcDays(dateInput, days) {
+  const base = new Date(dateInput);
+  if (Number.isNaN(base.getTime())) return null;
+  const next = new Date(base.getTime());
+  next.setUTCDate(next.getUTCDate() + days);
+  return next;
+}
+
+function daysLeftUntil(futureDate, now = new Date()) {
+  if (!(futureDate instanceof Date) || Number.isNaN(futureDate.getTime())) return 0;
+  const diffMs = futureDate.getTime() - now.getTime();
+  if (diffMs <= 0) return 0;
+  return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
+}
+
+async function computeSubscriptionAccess(organizationId) {
+  const { rows } = await pool.query(
+    `SELECT trial_started_at, subscription_status, subscription_expires_at
+     FROM organizations
+     WHERE id = $1`,
+    [organizationId],
+  );
+  const org = rows[0] || {};
+  const now = new Date();
+  const trialStartedAt = org.trial_started_at ? new Date(org.trial_started_at) : null;
+  const trialEndsAt = trialStartedAt ? addUtcDays(trialStartedAt, TRIAL_DAYS) : null;
+  const subscriptionExpiresAt = org.subscription_expires_at ? new Date(org.subscription_expires_at) : null;
+
+  const hasActiveSubscription =
+    String(org.subscription_status || '').toLowerCase() === 'active' &&
+    subscriptionExpiresAt instanceof Date &&
+    !Number.isNaN(subscriptionExpiresAt.getTime()) &&
+    subscriptionExpiresAt > now;
+  const hasActiveTrial = trialEndsAt instanceof Date && !Number.isNaN(trialEndsAt.getTime()) && trialEndsAt > now;
+
+  let status = 'expired';
+  let daysLeft = 0;
+  if (hasActiveSubscription) {
+    status = 'active';
+    daysLeft = daysLeftUntil(subscriptionExpiresAt, now);
+  } else if (hasActiveTrial) {
+    status = 'trial';
+    daysLeft = daysLeftUntil(trialEndsAt, now);
+  }
+
+  return {
+    status,
+    daysLeft,
+    trialEndsAt: trialEndsAt ? trialEndsAt.toISOString() : null,
+    subscriptionExpiresAt: subscriptionExpiresAt ? subscriptionExpiresAt.toISOString() : null,
+    canAccess: hasActiveSubscription || hasActiveTrial,
+  };
+}
+
+async function requireAccess(req, res, next) {
+  try {
+    const access = await computeSubscriptionAccess(req.organizationId);
+    if (!access.canAccess) {
+      return res.status(403).json({
+        error: 'Tu periodo de prueba finalizo y tu suscripcion no esta activa. Activa o renueva tu plan para continuar.',
+        code: 'subscription_required',
+      });
+    }
+    req.subscriptionAccess = access;
+    return next();
+  } catch (e) {
+    console.error('[requireAccess]', e);
+    return res.status(500).json({ error: 'No se pudo validar el acceso de la suscripcion' });
+  }
+}
+
 function requireRole(...allowed) {
   return (req, res, next) => {
     (async () => {
@@ -716,7 +789,7 @@ function requireRole(...allowed) {
 
 function scopeToOrganization(req, res, next) {
   req.organizationId = req.user.organizationId;
-  next();
+  return requireAccess(req, res, next);
 }
 
 /** Nombre de producto estable para guardar y buscar (minúsculas, sin acentos, espacios colapsados). */
@@ -1508,7 +1581,9 @@ app.post('/api/auth/register', async (req, res) => {
     const slug = await uniqueSlug(pool, organizationName);
 
     const orgIns = await pool.query(
-      `INSERT INTO organizations (name, slug, plan) VALUES ($1, $2, 'free') RETURNING id`,
+      `INSERT INTO organizations (name, slug, plan, trial_started_at, subscription_status)
+       VALUES ($1, $2, 'free', now(), 'trial')
+       RETURNING id`,
       [organizationName, slug],
     );
     const orgId = orgIns.rows[0].id;
@@ -1742,6 +1817,16 @@ app.get('/api/auth/me', verifyToken, async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: 'Error al obtener el usuario' });
+  }
+});
+
+app.get('/api/subscription/status', verifyToken, async (req, res) => {
+  try {
+    const access = await computeSubscriptionAccess(req.user.organizationId);
+    return res.json(access);
+  } catch (e) {
+    console.error('[subscription/status]', e);
+    return res.status(500).json({ error: 'No se pudo consultar el estado de suscripcion' });
   }
 });
 
@@ -5635,11 +5720,13 @@ app.get('/api/shopify/callback', async (req, res) => {
   const redirectErr = () => res.redirect(302, `${base}/canales?shopify=error`);
   const redirectOk = () => res.redirect(302, `${base}/canales?shopify=connected`);
 
-  console.log('Shopify callback params:', {
-    shop: req.query.shop,
-    code: !!req.query.code,
-    state: req.query.state,
-    hmac: !!req.query.hmac,
+  console.log('[shopify callback] entrada (raw)', {
+    timestamp: new Date().toISOString(),
+    method: req.method,
+    path: req.path,
+    originalUrl: req.originalUrl,
+    query: req.query,
+    queryJson: JSON.stringify(req.query),
   });
 
   try {
@@ -5667,7 +5754,6 @@ app.get('/api/shopify/callback', async (req, res) => {
       return redirectErr();
     }
 
-    console.log('Raw callback query:', JSON.stringify(req.query));
     console.log('[shopify callback] antes de verificar HMAC');
     const hmacOk = verifyShopifyOAuthHmac(query, SHOPIFY_API_SECRET);
     if (!hmacOk) {
@@ -5983,8 +6069,27 @@ app.post('/api/hotmart/webhook', async (req, res) => {
         console.log('[hotmart] sin usuario u organización para email', email);
       } else if (event === 'PURCHASE_APPROVED') {
         await pool.query(
-          `UPDATE organizations SET plan = 'pro', hotmart_email = $2, plan_activated_at = now() WHERE id = $1`,
-          [orgId, email],
+          `UPDATE organizations
+           SET plan = 'pro',
+               hotmart_email = $2,
+               plan_activated_at = now(),
+               subscription_status = 'active',
+               subscription_expires_at = now() + ($3::text || ' days')::interval,
+               last_payment_at = now()
+           WHERE id = $1`,
+          [orgId, email, SUBSCRIPTION_DAYS],
+        );
+      } else if (event === 'PURCHASE_COMPLETE') {
+        await pool.query(
+          `UPDATE organizations
+           SET plan = 'pro',
+               hotmart_email = $2,
+               plan_activated_at = now(),
+               subscription_status = 'active',
+               subscription_expires_at = now() + ($3::text || ' days')::interval,
+               last_payment_at = now()
+           WHERE id = $1`,
+          [orgId, email, SUBSCRIPTION_DAYS],
         );
       } else if (
         event === 'PURCHASE_CANCELED' ||
@@ -5992,7 +6097,13 @@ app.post('/api/hotmart/webhook', async (req, res) => {
         event === 'PURCHASE_REFUNDED'
       ) {
         await pool.query(
-          `UPDATE organizations SET plan = 'free', hotmart_email = NULL, plan_activated_at = NULL WHERE id = $1`,
+          `UPDATE organizations
+           SET plan = 'free',
+               hotmart_email = NULL,
+               plan_activated_at = NULL,
+               subscription_status = 'expired',
+               subscription_expires_at = now()
+           WHERE id = $1`,
           [orgId],
         );
       }

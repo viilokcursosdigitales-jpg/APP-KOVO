@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { useAuth } from '../auth/AuthContext';
 import { apiFetch, getStoredToken } from '../auth/api';
+import SubscriptionBanner, { type SubscriptionStatusPayload } from '../components/SubscriptionBanner';
 import { ds } from '../design-system/ds';
 import {
   IconCalculadora,
@@ -229,6 +230,8 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
 
 export function AppShell() {
   const [mobile, setMobile] = useState(false);
+  const [subscription, setSubscription] = useState<SubscriptionStatusPayload | null>(null);
+  const location = useLocation();
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 767px)');
@@ -264,6 +267,28 @@ export function AppShell() {
     return () => window.clearTimeout(t);
   }, []);
 
+  useEffect(() => {
+    if (!getStoredToken()) return;
+    let cancelled = false;
+    const refreshSubscription = async () => {
+      try {
+        const nonce = Date.now();
+        const res = await apiFetch(`/api/subscription/status?path=${encodeURIComponent(location.pathname)}&t=${nonce}`);
+        if (!res.ok) return;
+        const data = (await res.json()) as SubscriptionStatusPayload;
+        if (!cancelled) setSubscription(data);
+      } catch {
+        /* ignore subscription transient errors */
+      }
+    };
+    void refreshSubscription();
+    return () => {
+      cancelled = true;
+    };
+  }, [location.pathname]);
+
+  const isExpired = subscription != null && (!subscription.canAccess || subscription.status === 'expired');
+
   return (
     <div className="kovo-app" style={{ display: 'flex', minHeight: '100vh', width: '100%' }}>
       {!mobile ? <SidebarNav mobile={false} /> : null}
@@ -284,7 +309,30 @@ export function AppShell() {
             overflow: 'auto',
           }}
         >
-          <Outlet />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: '100%' }}>
+            <SubscriptionBanner subscription={subscription} />
+            {isExpired ? (
+              <div
+                style={{
+                  flex: 1,
+                  border: `1px solid ${ds.borderCard}`,
+                  borderRadius: 12,
+                  background: ds.bgCard,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  padding: 20,
+                  color: ds.textSecondary,
+                  fontSize: 14,
+                  textAlign: 'center',
+                }}
+              >
+                Tu acceso esta bloqueado hasta activar tu plan Pro.
+              </div>
+            ) : (
+              <Outlet />
+            )}
+          </div>
         </main>
       </div>
       {mobile ? <SidebarNav mobile /> : null}

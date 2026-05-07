@@ -317,3 +317,11 @@ CREATE INDEX IF NOT EXISTS idx_calc_cod_user_product_created ON calculadora_cod_
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'free';
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hotmart_email TEXT;
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan_activated_at TIMESTAMPTZ;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS trial_started_at TIMESTAMPTZ;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS subscription_status TEXT DEFAULT 'trial';
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMPTZ;
+ALTER TABLE organizations ADD COLUMN IF NOT EXISTS last_payment_at TIMESTAMPTZ;
+ALTER TABLE organizations DROP CONSTRAINT IF EXISTS organizations_subscription_status_check;
+ALTER TABLE organizations
+  ADD CONSTRAINT organizations_subscription_status_check
+  CHECK (subscription_status IN ('trial', 'active', 'expired'));
