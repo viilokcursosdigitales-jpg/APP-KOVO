@@ -39,6 +39,7 @@ export default function Login() {
 
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -157,14 +158,37 @@ export default function Login() {
           </label>
           <label style={{ ...labelStyle, marginTop: 16 }}>
             Contraseña
-            <input
-              type="password"
-              autoComplete="current-password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{ ...inputStyle, marginTop: 8 }}
-            />
+            <div style={{ position: 'relative', marginTop: 8 }}>
+              <input
+                type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                style={{ ...inputStyle, marginTop: 0, paddingRight: 44 }}
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                aria-label={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                title={showPassword ? 'Ocultar contraseña' : 'Mostrar contraseña'}
+                style={{
+                  position: 'absolute',
+                  right: 10,
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  border: 'none',
+                  background: 'transparent',
+                  cursor: 'pointer',
+                  fontSize: 16,
+                  color: ds.textMuted,
+                  lineHeight: 1,
+                  padding: 0,
+                }}
+              >
+                👁
+              </button>
+            </div>
           </label>
 
           <button
