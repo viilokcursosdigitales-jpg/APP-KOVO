@@ -123,6 +123,7 @@ const INVITE_DAYS = 7;
 const TRIAL_DAYS = 5;
 const SUBSCRIPTION_DAYS = 30;
 const SUBSCRIPTION_BYPASS_EMAIL = 'cavimo25@gmail.com';
+const ADMIN_USERS_EMAIL = 'cavimo25@gmail.com';
 
 const PLAN_LIMITS = {
   free: { users: 5, metaConnections: 1 },
@@ -708,6 +709,10 @@ function normalizeEmailAddress(email) {
 
 function hasSubscriptionBypass(email) {
   return normalizeEmailAddress(email) === SUBSCRIPTION_BYPASS_EMAIL;
+}
+
+function canAccessRegisteredUsersModule(email) {
+  return normalizeEmailAddress(email) === ADMIN_USERS_EMAIL;
 }
 
 function buildSubscriptionBypassAccess() {
@@ -1881,6 +1886,95 @@ app.put('/api/auth/profile', verifyToken, async (req, res) => {
   } catch (e) {
     console.error(e);
     return res.status(500).json({ error: 'Error al actualizar el perfil' });
+  }
+});
+
+app.get('/api/admin/users', verifyToken, async (req, res) => {
+  try {
+    if (!canAccessRegisteredUsersModule(req.user?.email)) {
+      return res.status(403).json({ error: 'No tienes permisos para ver usuarios registrados' });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT
+         u.id,
+         u.name,
+         u.email,
+         u.created_at,
+         u.organization_id,
+         o.name AS organization_name,
+         o.plan,
+         o.trial_started_at,
+         o.subscription_status,
+         o.subscription_expires_at
+       FROM users u
+       LEFT JOIN organizations o ON o.id = u.organization_id
+       ORDER BY u.created_at DESC, u.id DESC`,
+    );
+
+    const nowMs = Date.now();
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const users = rows.map((r) => {
+      const trialStartedAt = r.trial_started_at ? new Date(r.trial_started_at) : null;
+      const trialEndsAt =
+        trialStartedAt && !Number.isNaN(trialStartedAt.getTime())
+          ? addUtcDays(trialStartedAt, TRIAL_DAYS)
+          : null;
+      const subscriptionExpiresAt = r.subscription_expires_at ? new Date(r.subscription_expires_at) : null;
+      const rawStatus = String(r.subscription_status || '').toLowerCase();
+      const hasActiveSubscription =
+        rawStatus === 'active' &&
+        subscriptionExpiresAt instanceof Date &&
+        !Number.isNaN(subscriptionExpiresAt.getTime()) &&
+        subscriptionExpiresAt.getTime() > nowMs;
+      const hasActiveTrial =
+        trialEndsAt instanceof Date && !Number.isNaN(trialEndsAt.getTime()) && trialEndsAt.getTime() > nowMs;
+
+      let status = 'expired';
+      let daysLeft = 0;
+      if (hasActiveSubscription) {
+        status = 'active';
+        daysLeft = Math.ceil((subscriptionExpiresAt.getTime() - nowMs) / DAY_MS);
+      } else if (hasActiveTrial) {
+        status = 'trial';
+        daysLeft = Math.ceil((trialEndsAt.getTime() - nowMs) / DAY_MS);
+      }
+
+      return {
+        id: r.id,
+        name: r.name,
+        email: r.email,
+        organization_id: r.organization_id,
+        organization_name: r.organization_name,
+        created_at: r.created_at,
+        subscription_status: status,
+        subscription_expires_at:
+          subscriptionExpiresAt instanceof Date && !Number.isNaN(subscriptionExpiresAt.getTime())
+            ? subscriptionExpiresAt.toISOString()
+            : null,
+        trial_started_at:
+          trialStartedAt instanceof Date && !Number.isNaN(trialStartedAt.getTime()) ? trialStartedAt.toISOString() : null,
+        days_left: daysLeft,
+        plan: r.plan === 'pro' ? 'pro' : 'free',
+      };
+    });
+
+    const kpis = users.reduce(
+      (acc, u) => {
+        acc.total_users += 1;
+        if (u.subscription_status === 'trial') acc.total_trial += 1;
+        if (u.subscription_status === 'active') acc.total_active += 1;
+        if (u.subscription_status === 'expired') acc.total_expired += 1;
+        if (u.plan === 'pro') acc.total_pro += 1;
+        return acc;
+      },
+      { total_users: 0, total_trial: 0, total_active: 0, total_expired: 0, total_pro: 0 },
+    );
+
+    return res.json({ users, kpis });
+  } catch (e) {
+    console.error('[admin/users]', e);
+    return res.status(500).json({ error: 'No se pudieron consultar los usuarios registrados' });
   }
 });
 

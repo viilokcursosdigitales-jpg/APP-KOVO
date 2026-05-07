@@ -18,6 +18,7 @@ import {
   IconTruck,
   IconTrendingUp,
   IconUser,
+  IconUsers,
 } from '../design-system/icons';
 
 type NavItem = { to: string; label: string; icon: React.ReactNode; moduleId: string | null };
@@ -43,7 +44,8 @@ function NavGroup({ label, children }: { label: string; children: React.ReactNod
 }
 
 function SidebarNav({ mobile }: { mobile: boolean }) {
-  const { canManageOrg, canAccessModule } = useAuth();
+  const { canManageOrg, canAccessModule, user } = useAuth();
+  const canViewRegisteredUsers = String(user?.email || '').trim().toLowerCase() === 'cavimo25@gmail.com';
 
   const main: NavItem[] = [
     { to: '/inicio', label: 'Inicio', icon: <IconLayout />, moduleId: 'dashboard' },
@@ -95,6 +97,14 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
       to: '/settings',
       label: 'Configuración',
       icon: <IconSettings />,
+      moduleId: null,
+    });
+  }
+  if (canViewRegisteredUsers) {
+    account.push({
+      to: '/admin/users',
+      label: 'Usuarios Registrados',
+      icon: <IconUsers />,
       moduleId: null,
     });
   }

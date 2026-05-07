@@ -27,6 +27,7 @@ const RelacionPagosMoticoPage = lazy(() => import('./pages/RelacionPagosMoticoPa
 const Profile = lazy(() => import('./pages/Profile'));
 const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'));
 const AnalisisProductoPage = lazy(() => import('./pages/AnalisisProductoPage'));
+const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'));
 const AdsFunnelPage = lazy(() => import('./pages/AdsFunnelPage'));
 const EstrategiaCreativaPage = lazy(() => import('./pages/EstrategiaCreativaPage'));
 const FinanzaPage = lazy(() => import('./pages/FinanzaPage'));
@@ -109,6 +110,7 @@ export default function App() {
               </Route>
             </Route>
             <Route path="/profile" element={<Profile />} />
+            <Route path="/admin/users" element={<AdminUsersPage />} />
             <Route element={<AdminRoute />}>
               <Route path="/settings" element={<Settings />} />
             </Route>

@@ -153,6 +153,17 @@ export function IconUser() {
   );
 }
 
+export function IconUsers() {
+  return strokeSvg(
+    <>
+      <circle cx="9" cy="8" r="3" />
+      <path d="M3 19c1.2-3.3 4.4-5 6-5s4.8 1.7 6 5" />
+      <circle cx="17" cy="9" r="2.4" />
+      <path d="M14.5 19c0.7-2 2.4-3.2 4-3.7" />
+    </>,
+  );
+}
+
 export function IconRefresh({ size = 13 }: { size?: number }) {
   return strokeSvg(
     <>
