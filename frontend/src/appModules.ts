@@ -43,6 +43,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/relacion-pagos-motico': 'relacion_pagos_motico',
   '/inventario': 'inventario',
   '/meta-ads': 'meta_ads',
+  '/conexion-meta': 'meta_ads',
   '/ads-funnel': 'ads_funnel',
   '/finanza': 'finanza',
   '/indicadores-marketing': 'indicadores_marketing',

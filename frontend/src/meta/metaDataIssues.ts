@@ -42,4 +42,4 @@ export function resolveMetaDataIssue(
   return null;
 }
 
-export const META_CONEXION_TAB_PATH = '/meta-ads?tab=conexion';
+export const META_CONEXION_TAB_PATH = '/conexion-meta';

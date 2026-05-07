@@ -495,7 +495,7 @@ export default function AdsFunnelPage() {
           }}
         >
           Conecta Meta y elige cuentas publicitarias para ver datos reales.{' '}
-          <Link to="/meta-ads?tab=conexion" style={{ color: ds.warningText, fontWeight: 700 }}>
+          <Link to="/conexion-meta" style={{ color: ds.warningText, fontWeight: 700 }}>
             Ir a conexión con Meta
           </Link>
         </p>

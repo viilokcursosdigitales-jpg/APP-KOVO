@@ -358,7 +358,7 @@ export default function CanalesPage() {
                 : 'Sin cuentas vinculadas'}
           </div>
           <Link
-            to="/meta-ads?tab=conexion"
+            to="/conexion-meta"
             style={{
               display: 'inline-block',
               marginTop: 14,

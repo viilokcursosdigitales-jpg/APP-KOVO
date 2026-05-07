@@ -985,11 +985,11 @@ function metaOAuthPublicBaseUrl() {
 /** @param {Record<string, string | undefined>} params query (meta_oauth, reason, …) */
 function redirectMetaOAuthBrowser(res, params) {
   const q = new URLSearchParams();
-  q.set('tab', 'conexion');
   Object.entries(params).forEach(([k, v]) => {
     if (v != null && String(v).length > 0) q.set(k, String(v));
   });
-  res.redirect(302, `${metaOAuthPublicBaseUrl()}/meta-ads?${q.toString()}`);
+  const qs = q.toString();
+  res.redirect(302, `${metaOAuthPublicBaseUrl()}/conexion-meta${qs ? `?${qs}` : ''}`);
 }
 
 async function fetchMetaGraphUserDisplayName(graphVersion, userAccessToken) {

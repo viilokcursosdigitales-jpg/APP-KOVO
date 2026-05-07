@@ -20,6 +20,7 @@ const ListaMensualPlaneacion = lazy(() => import('./pages/PlaneacionVentas/Lista
 const DetallePlanPlaneacion = lazy(() => import('./pages/PlaneacionVentas/DetallePlan'));
 const ComisionVentasPage = lazy(() => import('./pages/ComisionVentasPage'));
 const MetaAdsPage = lazy(() => import('./pages/MetaAdsPage'));
+const ConexionMetaPage = lazy(() => import('./pages/ConexionMetaPage'));
 const MoticoPage = lazy(() => import('./pages/MoticoPage'));
 const PedidosPage = lazy(() => import('./pages/PedidosPage'));
 const PrivacyPage = lazy(() => import('./pages/PrivacyPage'));
@@ -99,6 +100,7 @@ export default function App() {
               <Route path="/pedidos/orden-manual" element={<MoticoPage />} />
               <Route path="/inventario" element={<InventarioPage />} />
               <Route path="/meta-ads" element={<MetaAdsPage />} />
+              <Route path="/conexion-meta" element={<ConexionMetaPage />} />
               <Route path="/ads-funnel" element={<AdsFunnelPage />} />
               <Route path="/estrategia-creativa" element={<EstrategiaCreativaPage />} />
               <Route path="/finanza" element={<FinanzaPage />} />

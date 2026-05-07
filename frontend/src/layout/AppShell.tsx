@@ -81,6 +81,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   ];
   const integraciones: NavItem[] = [
     { to: '/canales?tab=shopify', label: 'Conexión Shopify', icon: <IconShare />, moduleId: 'canales' },
+    { to: '/conexion-meta', label: 'Conexión con Meta', icon: <IconMegaphone />, moduleId: 'meta_ads' },
   ];
   const configuracion: NavItem[] = [
     { to: '/profile', label: 'Cuenta', icon: <IconUser />, moduleId: null },

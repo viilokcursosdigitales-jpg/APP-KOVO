@@ -1,24 +1,31 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
-import { MetaConnectionPanel, TabCreativo, TabEmbudo } from '../meta/MetaDemoTabs';
+import { TabCreativo, TabEmbudo } from '../meta/MetaDemoTabs';
 import type { PeriodKey, ProductKey } from '../meta/demoMetrics';
 
-type MetaTabId = 'creativo' | 'embudo' | 'conexion';
+type MetaTabId = 'creativo' | 'embudo';
 
 function tabFromSearch(tab: string | null): MetaTabId {
-  if (tab === 'conexion' || tab === 'creativo' || tab === 'embudo') return tab;
+  if (tab === 'creativo' || tab === 'embudo') return tab;
   return 'creativo';
 }
 
 export default function MetaAdsPage() {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [metaTab, setMetaTab] = useState<MetaTabId>(() => tabFromSearch(searchParams.get('tab')));
+  const navigate = useNavigate();
+  const tabParam = searchParams.get('tab');
+  const [metaTab, setMetaTab] = useState<MetaTabId>(() => tabFromSearch(tabParam));
 
   useEffect(() => {
-    setMetaTab(tabFromSearch(searchParams.get('tab')));
-  }, [searchParams]);
+    if (tabParam === 'conexion') {
+      const q = searchParams.toString();
+      navigate(q ? `/conexion-meta?${q}` : '/conexion-meta', { replace: true });
+      return;
+    }
+    setMetaTab(tabFromSearch(tabParam));
+  }, [tabParam, searchParams, navigate]);
 
   const setMetaTabInUrl = useCallback(
     (id: MetaTabId) => {
@@ -32,15 +39,15 @@ export default function MetaAdsPage() {
   const [p2, setP2] = useState<PeriodKey>('hoy');
   const [pr2, setPr2] = useState<ProductKey>('all');
 
+  if (tabParam === 'conexion') {
+    return null;
+  }
+
   return (
     <>
       <PageHeader
-        title="Anuncios Meta"
-        subtitle={
-          metaTab === 'conexion'
-            ? 'Conecta con Meta mediante OAuth (recomendado) o gestiona el acceso a tus anuncios'
-            : 'Análisis de campañas y embudo de conversión'
-        }
+        title="Análisis de creativos"
+        subtitle="Análisis de campañas y embudo de conversión"
       />
 
       <div
@@ -56,7 +63,6 @@ export default function MetaAdsPage() {
           [
             { id: 'creativo' as const, label: 'Análisis de creativo' },
             { id: 'embudo' as const, label: 'Análisis de embudo' },
-            { id: 'conexion' as const, label: 'Conexión con Meta' },
           ] as const
         ).map((t) => (
           <button
@@ -82,10 +88,8 @@ export default function MetaAdsPage() {
 
       {metaTab === 'creativo' ? (
         <TabCreativo period={p1} setPeriod={setP1} product={pr1} setProduct={setPr1} />
-      ) : metaTab === 'embudo' ? (
-        <TabEmbudo period={p2} setPeriod={setP2} product={pr2} setProduct={setPr2} />
       ) : (
-        <MetaConnectionPanel />
+        <TabEmbudo period={p2} setPeriod={setP2} product={pr2} setProduct={setPr2} />
       )}
     </>
   );

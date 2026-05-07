@@ -759,7 +759,7 @@ export default function ConexionMetaADS() {
             conectar con un token nuevo; el resto de KOVO sigue funcionando con normalidad.
           </p>
           <Link
-            to="/meta-ads?tab=conexion"
+            to="/conexion-meta"
             onClick={() => setStep('guide')}
             style={{
               display: 'inline-flex',
