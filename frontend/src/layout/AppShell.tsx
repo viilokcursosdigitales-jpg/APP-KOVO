@@ -7,11 +7,13 @@ import { ds } from '../design-system/ds';
 import {
   IconCalculadora,
   IconCart,
+  IconChevronDown,
   IconFunnel,
   IconLayout,
   IconMegaphone,
   IconPackage,
   IconProduct,
+  IconShield,
   IconSettings,
   IconShare,
   IconTarget,
@@ -22,105 +24,86 @@ import {
 } from '../design-system/icons';
 
 type NavItem = { to: string; label: string; icon: React.ReactNode; moduleId: string | null };
+type CollapsibleGroupId = 'marketing' | 'logistica' | 'finanzas' | 'integraciones' | 'configuracion' | 'kovo';
+type CollapseState = Record<CollapsibleGroupId, boolean>;
+const SIDEBAR_COLLAPSE_KEY = 'kovo_sidebar_collapsed_v1';
+const defaultExpandedState: CollapseState = {
+  marketing: true,
+  logistica: true,
+  finanzas: true,
+  integraciones: true,
+  configuracion: true,
+  kovo: true,
+};
 
-function NavGroup({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div
-        style={{
-          padding: '0 14px 8px',
-          fontSize: 10,
-          textTransform: 'uppercase',
-          letterSpacing: '1px',
-          color: ds.textHint,
-          fontWeight: 500,
-        }}
-      >
-        {label}
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{children}</div>
-    </div>
-  );
+function readCollapseState(): CollapseState {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_COLLAPSE_KEY);
+    if (!raw) return { ...defaultExpandedState };
+    const parsed = JSON.parse(raw) as Partial<CollapseState>;
+    return { ...defaultExpandedState, ...parsed };
+  } catch {
+    return { ...defaultExpandedState };
+  }
 }
 
 function SidebarNav({ mobile }: { mobile: boolean }) {
   const { canManageOrg, canAccessModule, user } = useAuth();
+  const location = useLocation();
   const canViewRegisteredUsers = String(user?.email || '').trim().toLowerCase() === 'cavimo25@gmail.com';
   const canManageHomeContent = canViewRegisteredUsers;
+  const [expanded, setExpanded] = useState<CollapseState>(() =>
+    typeof localStorage !== 'undefined' ? readCollapseState() : { ...defaultExpandedState },
+  );
 
-  const main: NavItem[] = [
-    { to: '/inicio', label: 'Inicio', icon: <IconLayout />, moduleId: 'dashboard' },
-    { to: '/analisis-producto', label: 'Análisis de productos', icon: <IconProduct />, moduleId: 'analisis_producto' },
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_COLLAPSE_KEY, JSON.stringify(expanded));
+    } catch {
+      /* ignore */
+    }
+  }, [expanded]);
+
+  const group1: NavItem[] = [
     { to: '/pedidos', label: 'Pedidos', icon: <IconCart />, moduleId: 'pedidos' },
-    {
-      to: '/relacion-pagos-motico',
-      label: 'Relación Pagos Motico',
-      icon: <IconTruck />,
-      moduleId: 'relacion_pagos_motico',
-    },
     { to: '/inventario', label: 'Inventario', icon: <IconPackage />, moduleId: 'inventario' },
   ];
+
   const marketing: NavItem[] = [
     { to: '/meta-ads', label: 'Anuncios Meta', icon: <IconMegaphone />, moduleId: 'meta_ads' },
-    { to: '/calculadora-cod', label: 'Calculadora COD', icon: <IconCalculadora />, moduleId: 'calculadora_cod' },
+    { to: '/analisis-producto', label: 'Análisis de productos', icon: <IconProduct />, moduleId: 'analisis_producto' },
     { to: '/ads-funnel', label: 'Embudo de anuncios', icon: <IconFunnel />, moduleId: 'ads_funnel' },
-    { to: '/estrategia-creativa', label: 'Estrategia Creativa', icon: <IconTarget />, moduleId: null },
-    { to: '/finanza', label: 'Finanzas', icon: <IconTrendingUp />, moduleId: 'finanza' },
-    {
-      to: '/indicadores-marketing',
-      label: 'Indicadores',
-      icon: <IconTarget />,
-      moduleId: 'indicadores_marketing',
-    },
-    { to: '/canales', label: 'Canales', icon: <IconShare />, moduleId: 'canales' },
-    {
-      to: '/ganancia-diaria',
-      label: 'Ganancia diaria',
-      icon: <IconTrendingUp />,
-      moduleId: 'ganancia_diaria',
-    },
-    {
-      to: '/planeacion-ventas',
-      label: 'Planeación de Ventas',
-      icon: <IconTarget />,
-      moduleId: 'planeacion_ventas',
-    },
-    {
-      to: '/comision-ventas',
-      label: 'Comisión por venta',
-      icon: <IconTrendingUp />,
-      moduleId: 'comision_ventas',
-    },
   ];
-  const account: NavItem[] = [];
-  if (canManageOrg) {
-    account.push({
-      to: '/settings',
-      label: 'Configuración',
-      icon: <IconSettings />,
-      moduleId: null,
-    });
-  }
-  if (canViewRegisteredUsers) {
-    account.push({
-      to: '/admin/users',
-      label: 'Usuarios Registrados',
-      icon: <IconUsers />,
-      moduleId: null,
-    });
-  }
-  if (canManageHomeContent) {
-    account.push({
-      to: '/admin/dashboard-content',
-      label: 'Contenido Inicio',
-      icon: <IconLayout />,
-      moduleId: null,
-    });
-  }
-  account.push({ to: '/profile', label: 'Cuenta', icon: <IconUser />, moduleId: null });
+  const logistica: NavItem[] = [{ to: '/reporte-dropi', label: 'Reporte Dropi', icon: <IconTruck />, moduleId: null }];
+  const finanzas: NavItem[] = [
+    { to: '/ganancia-diaria', label: 'Ganancia diaria', icon: <IconTrendingUp />, moduleId: 'ganancia_diaria' },
+    { to: '/calculadora-cod', label: 'Calculadora COD', icon: <IconCalculadora />, moduleId: 'calculadora_cod' },
+    { to: '/estado-resultado-dropi', label: 'Estado de resultado Dropi', icon: <IconTarget />, moduleId: null },
+  ];
+  const integraciones: NavItem[] = [
+    { to: '/canales?tab=shopify', label: 'Conexión Shopify', icon: <IconShare />, moduleId: 'canales' },
+    { to: '/canales?tab=meta', label: 'Conexión Meta', icon: <IconMegaphone />, moduleId: 'canales' },
+  ];
+  const configuracion: NavItem[] = [
+    { to: '/profile', label: 'Cuenta', icon: <IconUser />, moduleId: null },
+    { to: '/settings', label: 'Configuración', icon: <IconSettings />, moduleId: canManageOrg ? null : null },
+  ];
+  const kovoItems: NavItem[] = [
+    { to: '/admin/users', label: 'Usuarios registrados', icon: <IconUsers />, moduleId: null },
+    { to: '/admin/dashboard-content', label: 'Contenido inicio', icon: <IconLayout />, moduleId: null },
+  ];
 
-  const mainVisible = main.filter((it) => it.moduleId === null || canAccessModule(it.moduleId));
-  const marketingVisible = marketing.filter((it) => it.moduleId === null || canAccessModule(it.moduleId));
+  const visibleByAccess = (items: NavItem[]) => items.filter((it) => it.moduleId === null || canAccessModule(it.moduleId));
+  const group1Visible = visibleByAccess(group1);
+  const marketingVisible = visibleByAccess(marketing);
+  const finanzasVisible = visibleByAccess(finanzas);
+  const integracionesVisible = visibleByAccess(integraciones);
+  const configuracionVisible = visibleByAccess(configuracion);
+
+  if (!canManageOrg) {
+    const idx = configuracionVisible.findIndex((x) => x.to === '/settings');
+    if (idx >= 0) configuracionVisible.splice(idx, 1);
+  }
 
   const linkStyle = (isActive: boolean): React.CSSProperties => ({
     display: 'flex',
@@ -139,27 +122,111 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
     color: isActive ? ds.brand : ds.textMuted,
   });
 
-  const renderItem = (item: NavItem) => (
-    <NavLink
-      key={item.to}
-      to={item.to}
-      className="kovo-sidebar-link"
-      end={item.to === '/inicio'}
-      style={({ isActive }) => linkStyle(isActive)}
-    >
-      <span style={{ color: 'inherit', display: 'flex' }}>{item.icon}</span>
-      {item.label}
-    </NavLink>
+  const divider = (
+    <hr
+      style={{
+        border: 'none',
+        borderTop: `0.5px solid ${ds.borderSide}`,
+        margin: '12px 12px 10px',
+        opacity: 0.75,
+      }}
+    />
   );
 
+  const toggleGroup = (id: CollapsibleGroupId) => {
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
+  const renderItem = (item: NavItem) => {
+    const [targetPath, targetSearch = ''] = item.to.split('?');
+    const currentSearch = String(location.search || '').replace(/^\?/, '');
+    const isPathActive = location.pathname === targetPath;
+    const isActive = targetSearch ? isPathActive && currentSearch === targetSearch : isPathActive;
+    return (
+      <NavLink
+        key={item.to}
+        to={item.to}
+        className="kovo-sidebar-link"
+        end
+        style={linkStyle(isActive)}
+      >
+        <span style={{ color: 'inherit', display: 'flex' }}>{item.icon}</span>
+        {item.label}
+      </NavLink>
+    );
+  };
+
+  const renderCollapsibleGroup = (
+    id: CollapsibleGroupId,
+    label: string,
+    icon: React.ReactNode,
+    items: NavItem[],
+    opts?: { adminBadge?: boolean },
+  ) => {
+    if (!items.length) return null;
+    return (
+      <div key={id} style={{ marginTop: 2 }}>
+        <button
+          type="button"
+          onClick={() => toggleGroup(id)}
+          style={{
+            width: 'calc(100% - 20px)',
+            margin: '0 10px',
+            border: 'none',
+            borderRadius: 8,
+            background: 'transparent',
+            color: ds.textSecondary,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            padding: '9px 10px',
+            cursor: 'pointer',
+            fontSize: 13,
+            fontWeight: 600,
+          }}
+        >
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+            <span style={{ display: 'inline-flex' }}>{icon}</span>
+            {label}
+            {opts?.adminBadge ? (
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: ds.brand,
+                  background: ds.brandBg,
+                  borderRadius: 999,
+                  padding: '2px 7px',
+                  letterSpacing: 0.2,
+                  textTransform: 'lowercase',
+                }}
+              >
+                admin
+              </span>
+            ) : null}
+          </span>
+          <span
+            style={{
+              display: 'inline-flex',
+              transform: expanded[id] ? 'rotate(0deg)' : 'rotate(-90deg)',
+              transition: 'transform 160ms ease',
+            }}
+          >
+            <IconChevronDown size={14} />
+          </span>
+        </button>
+        {expanded[id] ? <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>{items.map(renderItem)}</div> : null}
+      </div>
+    );
+  };
+
   if (mobile) {
-    const mktMobile = [marketingVisible[0], marketingVisible[1]].filter(Boolean) as NavItem[];
     const mobileNav: NavItem[] = [
-      mainVisible[0],
-      mainVisible[1],
-      mainVisible[2],
-      ...mktMobile,
-      account[account.length - 1],
+      group1Visible[0],
+      group1Visible[1],
+      marketingVisible[0],
+      finanzasVisible[0],
+      { to: '/profile', label: 'Cuenta', icon: <IconUser />, moduleId: null },
     ].filter((it): it is NavItem => Boolean(it));
     return (
       <nav
@@ -238,11 +305,25 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
         <span style={{ fontSize: 14, fontWeight: 600, color: ds.textPrimary }}>KOVO</span>
       </NavLink>
 
-      {mainVisible.length > 0 ? <NavGroup label="Principal">{mainVisible.map(renderItem)}</NavGroup> : null}
-      {marketingVisible.length > 0 ? (
-        <NavGroup label="Marketing">{marketingVisible.map(renderItem)}</NavGroup>
-      ) : null}
-      <NavGroup label="Cuenta">{account.map(renderItem)}</NavGroup>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+        {group1Visible.map(renderItem)}
+        {divider}
+        {renderCollapsibleGroup('marketing', 'Marketing', <IconMegaphone />, marketingVisible)}
+        {divider}
+        {renderCollapsibleGroup('logistica', 'Logística', <IconTruck />, logistica)}
+        {divider}
+        {renderCollapsibleGroup('finanzas', 'Finanzas', <IconTrendingUp />, finanzasVisible)}
+        {divider}
+        {renderCollapsibleGroup('integraciones', 'Integraciones', <IconShare />, integracionesVisible)}
+        {divider}
+        {renderCollapsibleGroup('configuracion', 'Configuración', <IconSettings />, configuracionVisible)}
+        {canManageHomeContent ? (
+          <>
+            {divider}
+            {renderCollapsibleGroup('kovo', 'KOVO', <IconShield />, kovoItems, { adminBadge: true })}
+          </>
+        ) : null}
+      </div>
     </aside>
   );
 }
