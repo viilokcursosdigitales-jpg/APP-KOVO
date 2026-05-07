@@ -110,6 +110,30 @@ async function initDb(pool) {
     console.error('[initDb] organizations subscription columns:', e && e.message);
   }
 
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS dashboard_content (
+        id SERIAL PRIMARY KEY,
+        type VARCHAR(20) NOT NULL CHECK (type IN ('banner', 'alert', 'news')),
+        title TEXT NOT NULL,
+        description TEXT NOT NULL,
+        image_url TEXT,
+        link_url TEXT,
+        link_text TEXT,
+        color VARCHAR(20) NOT NULL DEFAULT 'blue' CHECK (color IN ('green', 'yellow', 'red', 'blue')),
+        active BOOLEAN NOT NULL DEFAULT true,
+        order_index INTEGER NOT NULL DEFAULT 0,
+        created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+        updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+      )
+    `);
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_dashboard_content_active_order ON dashboard_content (active, order_index, id)`,
+    );
+  } catch (e) {
+    console.error('[initDb] dashboard_content table:', e && e.message);
+  }
+
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shopify_connections (
       id SERIAL PRIMARY KEY,

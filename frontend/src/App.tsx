@@ -9,7 +9,7 @@ import PedidosOrderEditPage from './pages/PedidosOrderEditPage';
 const CanalesPage = lazy(() => import('./pages/CanalesPage'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
 const Home = lazy(() => import('./pages/Home'));
-const InicioPage = lazy(() => import('./pages/InicioPage'));
+const InicioPage = lazy(() => import('./pages/InicioEditorialPage'));
 const InventarioPage = lazy(() => import('./pages/InventarioPage'));
 const Login = lazy(() => import('./pages/Login'));
 const MarketingIndicatorsPage = lazy(() => import('./pages/MarketingIndicatorsPage'));
@@ -28,6 +28,7 @@ const Profile = lazy(() => import('./pages/Profile'));
 const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'));
 const AnalisisProductoPage = lazy(() => import('./pages/AnalisisProductoPage'));
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'));
+const AdminDashboardContentPage = lazy(() => import('./pages/AdminDashboardContentPage'));
 const AdsFunnelPage = lazy(() => import('./pages/AdsFunnelPage'));
 const EstrategiaCreativaPage = lazy(() => import('./pages/EstrategiaCreativaPage'));
 const FinanzaPage = lazy(() => import('./pages/FinanzaPage'));
@@ -111,6 +112,7 @@ export default function App() {
             </Route>
             <Route path="/profile" element={<Profile />} />
             <Route path="/admin/users" element={<AdminUsersPage />} />
+            <Route path="/admin/dashboard-content" element={<AdminDashboardContentPage />} />
             <Route element={<AdminRoute />}>
               <Route path="/settings" element={<Settings />} />
             </Route>

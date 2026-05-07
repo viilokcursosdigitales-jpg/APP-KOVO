@@ -124,6 +124,8 @@ const TRIAL_DAYS = 5;
 const SUBSCRIPTION_DAYS = 30;
 const SUBSCRIPTION_BYPASS_EMAIL = 'cavimo25@gmail.com';
 const ADMIN_USERS_EMAIL = 'cavimo25@gmail.com';
+const DASHBOARD_CONTENT_TYPES = new Set(['banner', 'alert', 'news']);
+const DASHBOARD_ALERT_COLORS = new Set(['green', 'yellow', 'red', 'blue']);
 
 const PLAN_LIMITS = {
   free: { users: 5, metaConnections: 1 },
@@ -713,6 +715,38 @@ function hasSubscriptionBypass(email) {
 
 function canAccessRegisteredUsersModule(email) {
   return normalizeEmailAddress(email) === ADMIN_USERS_EMAIL;
+}
+
+function canManageDashboardContent(email) {
+  return normalizeEmailAddress(email) === ADMIN_USERS_EMAIL;
+}
+
+function sanitizeDashboardContentPayload(body) {
+  const type = String(body?.type || '')
+    .trim()
+    .toLowerCase();
+  if (!DASHBOARD_CONTENT_TYPES.has(type)) {
+    return { ok: false, error: 'Tipo inválido. Usa banner, alert o news.' };
+  }
+  const title = String(body?.title || '').trim();
+  const description = String(body?.description || '').trim();
+  const image_url = String(body?.image_url || '').trim();
+  const link_url = String(body?.link_url || '').trim();
+  const link_text = String(body?.link_text || '').trim();
+  const colorRaw = String(body?.color || '').trim().toLowerCase();
+  const color = DASHBOARD_ALERT_COLORS.has(colorRaw) ? colorRaw : 'blue';
+  const active = body?.active == null ? true : Boolean(body.active);
+  const order_index = Number.isFinite(Number(body?.order_index)) ? Math.trunc(Number(body.order_index)) : 0;
+
+  if (title.length < 2) return { ok: false, error: 'El título debe tener al menos 2 caracteres.' };
+  if (description.length < 2) return { ok: false, error: 'La descripción debe tener al menos 2 caracteres.' };
+  if (type === 'alert' && !DASHBOARD_ALERT_COLORS.has(colorRaw)) {
+    return { ok: false, error: 'Color inválido para alerta. Usa green, yellow, red o blue.' };
+  }
+  return {
+    ok: true,
+    value: { type, title, description, image_url: image_url || null, link_url: link_url || null, link_text: link_text || null, color, active, order_index },
+  };
 }
 
 function buildSubscriptionBypassAccess() {
@@ -1859,6 +1893,32 @@ app.get('/api/subscription/status', verifyToken, async (req, res) => {
   }
 });
 
+app.get('/api/dashboard-content', verifyToken, async (req, res) => {
+  try {
+    const { rows } = await pool.query(
+      `SELECT id, type, title, description, image_url, link_url, link_text, color, active, order_index, created_at, updated_at
+       FROM dashboard_content
+       WHERE active = true
+       ORDER BY order_index ASC, id ASC`,
+    );
+    const banners = [];
+    const alerts = [];
+    const news = [];
+    for (const row of rows) {
+      if (row.type === 'banner') banners.push(row);
+      else if (row.type === 'alert') alerts.push(row);
+      else if (row.type === 'news') news.push(row);
+    }
+    return res.json({ banners, alerts, news });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.json({ banners: [], alerts: [], news: [] });
+    }
+    console.error('[dashboard-content]', e);
+    return res.status(500).json({ error: 'No se pudo consultar el contenido de Inicio' });
+  }
+});
+
 app.put('/api/auth/profile', verifyToken, async (req, res) => {
   try {
     const name = String(req.body?.name || '').trim();
@@ -1975,6 +2035,139 @@ app.get('/api/admin/users', verifyToken, async (req, res) => {
   } catch (e) {
     console.error('[admin/users]', e);
     return res.status(500).json({ error: 'No se pudieron consultar los usuarios registrados' });
+  }
+});
+
+app.post('/api/admin/dashboard-content', verifyToken, async (req, res) => {
+  try {
+    if (!canManageDashboardContent(req.user?.email)) {
+      return res.status(403).json({ error: 'No tienes permisos para administrar contenido' });
+    }
+    const parsed = sanitizeDashboardContentPayload(req.body);
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    const v = parsed.value;
+    const ins = await pool.query(
+      `INSERT INTO dashboard_content (type, title, description, image_url, link_url, link_text, color, active, order_index, updated_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,now())
+       RETURNING *`,
+      [v.type, v.title, v.description, v.image_url, v.link_url, v.link_text, v.color, v.active, v.order_index],
+    );
+    return res.status(201).json(ins.rows[0]);
+  } catch (e) {
+    console.error('[admin/dashboard-content][create]', e);
+    return res.status(500).json({ error: 'No se pudo crear el contenido' });
+  }
+});
+
+app.get('/api/admin/dashboard-content', verifyToken, async (req, res) => {
+  try {
+    if (!canManageDashboardContent(req.user?.email)) {
+      return res.status(403).json({ error: 'No tienes permisos para administrar contenido' });
+    }
+    const { rows } = await pool.query(
+      `SELECT id, type, title, description, image_url, link_url, link_text, color, active, order_index, created_at, updated_at
+       FROM dashboard_content
+       ORDER BY type ASC, order_index ASC, id ASC`,
+    );
+    return res.json({ items: rows });
+  } catch (e) {
+    console.error('[admin/dashboard-content][list]', e);
+    return res.status(500).json({ error: 'No se pudo cargar el contenido editable' });
+  }
+});
+
+app.put('/api/admin/dashboard-content/:id', verifyToken, async (req, res) => {
+  try {
+    if (!canManageDashboardContent(req.user?.email)) {
+      return res.status(403).json({ error: 'No tienes permisos para administrar contenido' });
+    }
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'ID inválido' });
+    const parsed = sanitizeDashboardContentPayload(req.body);
+    if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+    const v = parsed.value;
+    const upd = await pool.query(
+      `UPDATE dashboard_content
+       SET type = $2, title = $3, description = $4, image_url = $5, link_url = $6, link_text = $7, color = $8, active = $9, order_index = $10, updated_at = now()
+       WHERE id = $1
+       RETURNING *`,
+      [id, v.type, v.title, v.description, v.image_url, v.link_url, v.link_text, v.color, v.active, v.order_index],
+    );
+    if (!upd.rows[0]) return res.status(404).json({ error: 'Contenido no encontrado' });
+    return res.json(upd.rows[0]);
+  } catch (e) {
+    console.error('[admin/dashboard-content][update]', e);
+    return res.status(500).json({ error: 'No se pudo editar el contenido' });
+  }
+});
+
+app.delete('/api/admin/dashboard-content/:id', verifyToken, async (req, res) => {
+  try {
+    if (!canManageDashboardContent(req.user?.email)) {
+      return res.status(403).json({ error: 'No tienes permisos para administrar contenido' });
+    }
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'ID inválido' });
+    const del = await pool.query(`DELETE FROM dashboard_content WHERE id = $1 RETURNING id`, [id]);
+    if (!del.rows[0]) return res.status(404).json({ error: 'Contenido no encontrado' });
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[admin/dashboard-content][delete]', e);
+    return res.status(500).json({ error: 'No se pudo eliminar el contenido' });
+  }
+});
+
+app.patch('/api/admin/dashboard-content/:id/toggle', verifyToken, async (req, res) => {
+  try {
+    if (!canManageDashboardContent(req.user?.email)) {
+      return res.status(403).json({ error: 'No tienes permisos para administrar contenido' });
+    }
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return res.status(400).json({ error: 'ID inválido' });
+    const active = Boolean(req.body?.active);
+    const upd = await pool.query(`UPDATE dashboard_content SET active = $2, updated_at = now() WHERE id = $1 RETURNING *`, [id, active]);
+    if (!upd.rows[0]) return res.status(404).json({ error: 'Contenido no encontrado' });
+    return res.json(upd.rows[0]);
+  } catch (e) {
+    console.error('[admin/dashboard-content][toggle]', e);
+    return res.status(500).json({ error: 'No se pudo cambiar el estado' });
+  }
+});
+
+app.patch('/api/admin/dashboard-content/reorder', verifyToken, async (req, res) => {
+  try {
+    if (!canManageDashboardContent(req.user?.email)) {
+      return res.status(403).json({ error: 'No tienes permisos para administrar contenido' });
+    }
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
+    const valid = items
+      .map((x) => ({ id: Number(x?.id), order_index: Number(x?.order_index) }))
+      .filter((x) => Number.isFinite(x.id) && x.id > 0 && Number.isFinite(x.order_index));
+    if (!valid.length) return res.status(400).json({ error: 'Debes enviar items válidos para reordenar' });
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      for (const item of valid) {
+        await client.query(`UPDATE dashboard_content SET order_index = $2, updated_at = now() WHERE id = $1`, [
+          item.id,
+          Math.trunc(item.order_index),
+        ]);
+      }
+      await client.query('COMMIT');
+    } catch (e) {
+      try {
+        await client.query('ROLLBACK');
+      } catch {
+        /* ignore */
+      }
+      throw e;
+    } finally {
+      client.release();
+    }
+    return res.json({ ok: true });
+  } catch (e) {
+    console.error('[admin/dashboard-content][reorder]', e);
+    return res.status(500).json({ error: 'No se pudo reordenar el contenido' });
   }
 });
 

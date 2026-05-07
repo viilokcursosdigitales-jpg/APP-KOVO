@@ -46,6 +46,7 @@ function NavGroup({ label, children }: { label: string; children: React.ReactNod
 function SidebarNav({ mobile }: { mobile: boolean }) {
   const { canManageOrg, canAccessModule, user } = useAuth();
   const canViewRegisteredUsers = String(user?.email || '').trim().toLowerCase() === 'cavimo25@gmail.com';
+  const canManageHomeContent = canViewRegisteredUsers;
 
   const main: NavItem[] = [
     { to: '/inicio', label: 'Inicio', icon: <IconLayout />, moduleId: 'dashboard' },
@@ -105,6 +106,14 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
       to: '/admin/users',
       label: 'Usuarios Registrados',
       icon: <IconUsers />,
+      moduleId: null,
+    });
+  }
+  if (canManageHomeContent) {
+    account.push({
+      to: '/admin/dashboard-content',
+      label: 'Contenido Inicio',
+      icon: <IconLayout />,
       moduleId: null,
     });
   }

@@ -313,6 +313,23 @@ CREATE TABLE IF NOT EXISTS calculadora_cod_calculos (
 CREATE INDEX IF NOT EXISTS idx_calc_cod_user_product ON calculadora_cod_calculos (user_id, product_name);
 CREATE INDEX IF NOT EXISTS idx_calc_cod_user_product_created ON calculadora_cod_calculos (user_id, product_name, created_at DESC);
 
+CREATE TABLE IF NOT EXISTS dashboard_content (
+  id SERIAL PRIMARY KEY,
+  type VARCHAR(20) NOT NULL CHECK (type IN ('banner', 'alert', 'news')),
+  title TEXT NOT NULL,
+  description TEXT NOT NULL,
+  image_url TEXT,
+  link_url TEXT,
+  link_text TEXT,
+  color VARCHAR(20) NOT NULL DEFAULT 'blue' CHECK (color IN ('green', 'yellow', 'red', 'blue')),
+  active BOOLEAN NOT NULL DEFAULT true,
+  order_index INTEGER NOT NULL DEFAULT 0,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_dashboard_content_active_order ON dashboard_content (active, order_index, id);
+
 -- Hotmart webhook: optional organization columns (keep no semicolons inside -- lines: initDb splits on ;)
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS plan TEXT DEFAULT 'free';
 ALTER TABLE organizations ADD COLUMN IF NOT EXISTS hotmart_email TEXT;
