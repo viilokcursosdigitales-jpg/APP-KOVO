@@ -131,7 +131,7 @@ export default function InicioEditorialPage() {
   }
 
   return (
-    <div style={{ maxWidth: 1100, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ width: '100%', display: 'flex', flexDirection: 'column', gap: 16 }}>
       {currentBanner ? (
         <section
           style={{
@@ -147,7 +147,7 @@ export default function InicioEditorialPage() {
             alignItems: 'flex-end',
           }}
         >
-          <div style={{ padding: '22px 22px 18px', width: '100%' }}>
+          <div style={{ padding: 'clamp(16px, 2.2vw, 24px)', width: '100%' }}>
             <h2 style={{ margin: '0 0 8px', fontSize: 28, lineHeight: 1.1 }}>{currentBanner.title}</h2>
             <p style={{ margin: '0 0 12px', fontSize: 14, maxWidth: 760, opacity: 0.95 }}>{currentBanner.description}</p>
             {currentBanner.link_url ? (
@@ -193,7 +193,14 @@ export default function InicioEditorialPage() {
       ) : null}
 
       {alerts.length > 0 ? (
-        <section style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 14, padding: 14 }}>
+        <section
+          style={{
+            background: ds.bgCard,
+            border: `1px solid ${ds.borderCard}`,
+            borderRadius: 14,
+            padding: 'clamp(16px, 2vw, 24px)',
+          }}
+        >
           <h3 style={{ margin: '0 0 10px', color: ds.textPrimary, fontSize: 16 }}>Alertas</h3>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
             {alerts.map((item) => {
@@ -212,7 +219,14 @@ export default function InicioEditorialPage() {
         </section>
       ) : null}
 
-      <section style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 14, padding: 14 }}>
+      <section
+        style={{
+          background: ds.bgCard,
+          border: `1px solid ${ds.borderCard}`,
+          borderRadius: 14,
+          padding: 'clamp(16px, 2vw, 24px)',
+        }}
+      >
         <h3 style={{ margin: '0 0 10px', color: ds.textPrimary, fontSize: 16 }}>Novedades y actualizaciones</h3>
         {news.length === 0 ? (
           <div style={{ padding: 12, borderRadius: 10, background: ds.bgApp, color: ds.textSecondary, fontSize: 13 }}>
