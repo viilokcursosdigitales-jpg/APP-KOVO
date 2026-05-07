@@ -12,6 +12,7 @@ export type SubscriptionStatusPayload = {
 
 type SubscriptionBannerProps = {
   subscription: SubscriptionStatusPayload | null;
+  userEmail?: string | null;
 };
 
 function paymentButtonLabel(subscription: SubscriptionStatusPayload): string {
@@ -23,7 +24,8 @@ function openPayment() {
   window.open(HOTMART_PAYMENT_URL, '_blank', 'noopener,noreferrer');
 }
 
-export default function SubscriptionBanner({ subscription }: SubscriptionBannerProps) {
+export default function SubscriptionBanner({ subscription, userEmail }: SubscriptionBannerProps) {
+  if (String(userEmail || '').trim().toLowerCase() === 'cavimo25@gmail.com') return null;
   if (!subscription) return null;
 
   const isUrgentTrial = subscription.status === 'trial' && subscription.daysLeft <= 2;

@@ -122,6 +122,7 @@ const RESET_TOKEN_HOURS = 1;
 const INVITE_DAYS = 7;
 const TRIAL_DAYS = 5;
 const SUBSCRIPTION_DAYS = 30;
+const SUBSCRIPTION_BYPASS_EMAIL = 'cavimo25@gmail.com';
 
 const PLAN_LIMITS = {
   free: { users: 5, metaConnections: 1 },
@@ -699,6 +700,26 @@ async function verifyToken(req, res, next) {
   next();
 }
 
+function normalizeEmailAddress(email) {
+  return String(email || '')
+    .trim()
+    .toLowerCase();
+}
+
+function hasSubscriptionBypass(email) {
+  return normalizeEmailAddress(email) === SUBSCRIPTION_BYPASS_EMAIL;
+}
+
+function buildSubscriptionBypassAccess() {
+  return {
+    status: 'active',
+    daysLeft: 9999,
+    trialEndsAt: null,
+    subscriptionExpiresAt: null,
+    canAccess: true,
+  };
+}
+
 function addUtcDays(dateInput, days) {
   const base = new Date(dateInput);
   if (Number.isNaN(base.getTime())) return null;
@@ -714,7 +735,10 @@ function daysLeftUntil(futureDate, now = new Date()) {
   return Math.ceil(diffMs / (24 * 60 * 60 * 1000));
 }
 
-async function computeSubscriptionAccess(organizationId) {
+async function computeSubscriptionAccess(organizationId, userEmail = '') {
+  if (hasSubscriptionBypass(userEmail)) {
+    return buildSubscriptionBypassAccess();
+  }
   const { rows } = await pool.query(
     `SELECT trial_started_at, subscription_status, subscription_expires_at
      FROM organizations
@@ -755,7 +779,7 @@ async function computeSubscriptionAccess(organizationId) {
 
 async function requireAccess(req, res, next) {
   try {
-    const access = await computeSubscriptionAccess(req.organizationId);
+    const access = await computeSubscriptionAccess(req.organizationId, req.user?.email);
     if (!access.canAccess) {
       return res.status(403).json({
         error: 'Tu periodo de prueba finalizo y tu suscripcion no esta activa. Activa o renueva tu plan para continuar.',
@@ -1822,7 +1846,7 @@ app.get('/api/auth/me', verifyToken, async (req, res) => {
 
 app.get('/api/subscription/status', verifyToken, async (req, res) => {
   try {
-    const access = await computeSubscriptionAccess(req.user.organizationId);
+    const access = await computeSubscriptionAccess(req.user.organizationId, req.user?.email);
     return res.json(access);
   } catch (e) {
     console.error('[subscription/status]', e);

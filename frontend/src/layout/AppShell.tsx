@@ -232,6 +232,8 @@ export function AppShell() {
   const [mobile, setMobile] = useState(false);
   const [subscription, setSubscription] = useState<SubscriptionStatusPayload | null>(null);
   const location = useLocation();
+  const { user } = useAuth();
+  const isBypassUser = String(user?.email || '').trim().toLowerCase() === 'cavimo25@gmail.com';
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 767px)');
@@ -287,7 +289,8 @@ export function AppShell() {
     };
   }, [location.pathname]);
 
-  const isExpired = subscription != null && (!subscription.canAccess || subscription.status === 'expired');
+  const isExpired =
+    !isBypassUser && subscription != null && (!subscription.canAccess || subscription.status === 'expired');
 
   return (
     <div className="kovo-app" style={{ display: 'flex', minHeight: '100vh', width: '100%' }}>
@@ -310,7 +313,7 @@ export function AppShell() {
           }}
         >
           <div style={{ display: 'flex', flexDirection: 'column', gap: 12, minHeight: '100%' }}>
-            <SubscriptionBanner subscription={subscription} />
+            <SubscriptionBanner subscription={subscription} userEmail={user?.email} />
             {isExpired ? (
               <div
                 style={{
