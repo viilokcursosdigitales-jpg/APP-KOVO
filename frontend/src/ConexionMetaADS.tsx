@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import {
+  IconAdjustmentsHorizontal,
+  IconChartLine,
+  IconReportMoney,
+  IconSparkles,
+} from '@tabler/icons-react';
 import { apiFetch, apiUrl, getStoredToken } from './auth/api';
 import { useAuth } from './auth/AuthContext';
 import { alpha, ds } from './design-system/ds';
@@ -92,6 +98,13 @@ function metaOAuthErrorHint(reason: string): string {
   };
   return m[reason] || `No se pudo completar la conexión (${reason || 'desconocido'}).`;
 }
+
+const META_BENEFITS: { label: string; Icon: typeof IconChartLine }[] = [
+  { label: 'Ver métricas de campañas en tiempo real', Icon: IconChartLine },
+  { label: 'Analizar gasto vs ventas y ROAS', Icon: IconReportMoney },
+  { label: 'Optimizar presupuesto desde un solo lugar', Icon: IconAdjustmentsHorizontal },
+  { label: 'Acceder al análisis de creativos y audiencias', Icon: IconSparkles },
+];
 
 export default function ConexionMetaADS() {
   const { refreshUser } = useAuth();
@@ -331,6 +344,67 @@ export default function ConexionMetaADS() {
       <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12, marginBottom: 20 }}>
         <StatusBadge status={badgeStatus} />
       </div>
+      <p
+        style={{
+          margin: '0 0 20px',
+          fontSize: 14,
+          color: ds.textSecondary,
+          lineHeight: 1.55,
+          maxWidth: 520,
+        }}
+      >
+        Conecta tu cuenta de Meta Ads para ver el rendimiento de tus campañas, gasto publicitario y ROAS directamente en
+        KOVO.
+      </p>
+      <ul
+        style={{
+          margin: '0 0 28px',
+          padding: 0,
+          listStyle: 'none',
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 14,
+          maxWidth: 520,
+        }}
+      >
+        {META_BENEFITS.map(({ label, Icon }) => (
+          <li
+            key={label}
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 12,
+            }}
+          >
+            <span
+              style={{
+                flexShrink: 0,
+                width: 38,
+                height: 38,
+                borderRadius: 10,
+                background: alpha.brand18,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                color: ds.brand,
+              }}
+              aria-hidden
+            >
+              <Icon size={20} stroke={1.5} color="currentColor" />
+            </span>
+            <span
+              style={{
+                fontSize: 14,
+                color: ds.textPrimary,
+                lineHeight: 1.45,
+                fontWeight: 500,
+              }}
+            >
+              {label}
+            </span>
+          </li>
+        ))}
+      </ul>
       <div style={{ width: '100%', maxWidth: 360 }}>
         <button
           type="button"
