@@ -35,4 +35,14 @@ body {
   background: var(--color-bg-app);
 }
 
+/* Landing login / registro (ancho completo, sin centrar card única) */
+.kovo-auth-landing {
+  min-height: 100vh;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  background: #ffffff;
+}
+
 /* Pedidos: filtro de ciudades (dropdown); el panel se posiciona en el componente */
