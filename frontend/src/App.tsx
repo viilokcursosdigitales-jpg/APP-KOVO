@@ -1,6 +1,7 @@
 import { Component, Suspense, lazy, type ErrorInfo, type ReactNode } from 'react';
 import { Navigate, Route, Routes } from 'react-router-dom';
 import { AdminRoute } from './auth/AdminRoute';
+import { useAuth } from './auth/AuthContext';
 import { ModuleGuard } from './auth/ModuleGuard';
 import { PrivateRoute } from './auth/PrivateRoute';
 import { AppShell } from './layout/AppShell';
@@ -8,10 +9,9 @@ import PedidosOrderEditPage from './pages/PedidosOrderEditPage';
 
 const CanalesPage = lazy(() => import('./pages/CanalesPage'));
 const ForgotPassword = lazy(() => import('./pages/ForgotPassword'));
-const Home = lazy(() => import('./pages/Home'));
 const InicioPage = lazy(() => import('./pages/InicioEditorialPage'));
 const InventarioPage = lazy(() => import('./pages/InventarioPage'));
-const Login = lazy(() => import('./pages/Login'));
+const AuthLandingPage = lazy(() => import('./pages/AuthLandingPage'));
 const MarketingIndicatorsPage = lazy(() => import('./pages/MarketingIndicatorsPage'));
 const GananciaDiariaPage = lazy(() => import('./pages/GananciaDiariaPage'));
 const CalculadoraCodPage = lazy(() => import('./calculadora-cod/CalculadoraCodPage'));
@@ -34,9 +34,15 @@ const ReporteDropiPage = lazy(() => import('./pages/ReporteDropiPage'));
 const AdsFunnelPage = lazy(() => import('./pages/AdsFunnelPage'));
 const EstrategiaCreativaPage = lazy(() => import('./pages/EstrategiaCreativaPage'));
 const FinanzaPage = lazy(() => import('./pages/FinanzaPage'));
-const Register = lazy(() => import('./pages/Register'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Settings = lazy(() => import('./pages/Settings'));
+
+function RootLandingRoute() {
+  const { isAuthenticated, isLoading } = useAuth();
+  if (isLoading) return <div style={{ padding: 20 }}>Cargando…</div>;
+  if (isAuthenticated) return <Navigate to="/inicio" replace />;
+  return <AuthLandingPage />;
+}
 
 class RouteErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   constructor(props: { children: ReactNode }) {
@@ -72,9 +78,9 @@ export default function App() {
   return (
     <Suspense fallback={<div style={{ padding: 20 }}>Cargando…</div>}>
       <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/login" element={<Login />} />
-        <Route path="/register" element={<Register />} />
+        <Route path="/" element={<RootLandingRoute />} />
+        <Route path="/login" element={<AuthLandingPage />} />
+        <Route path="/register" element={<AuthLandingPage />} />
         <Route path="/aceptar-invitacion" element={<AcceptInvitation />} />
         <Route path="/forgot-password" element={<ForgotPassword />} />
         <Route path="/reset-password" element={<ResetPassword />} />
