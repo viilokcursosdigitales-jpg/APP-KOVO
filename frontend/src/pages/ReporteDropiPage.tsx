@@ -401,6 +401,7 @@ export default function ReporteDropiPage() {
   const [rawRows, setRawRows] = useState<DropiRow[]>([]);
   const [fileName, setFileName] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [isDragActive, setIsDragActive] = useState(false);
   const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
@@ -641,10 +642,7 @@ export default function ReporteDropiPage() {
     [],
   );
 
-  const onFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-    const f = e.target.files?.[0];
-    e.target.value = '';
-    if (!f) return;
+  const processFile = useCallback((f: File) => {
     if (!f.name.toLowerCase().endsWith('.xlsx')) {
       setError('Usa un archivo .xlsx exportado desde Dropi.');
       return;
@@ -669,6 +667,37 @@ export default function ReporteDropiPage() {
     };
     reader.readAsArrayBuffer(f);
   }, []);
+
+  const onFile = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const f = e.target.files?.[0];
+      e.target.value = '';
+      if (!f) return;
+      processFile(f);
+    },
+    [processFile],
+  );
+
+  const onDropZoneDragOver = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragActive(true);
+  }, []);
+
+  const onDropZoneDragLeave = useCallback((e: React.DragEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    setIsDragActive(false);
+  }, []);
+
+  const onDropZoneDrop = useCallback(
+    (e: React.DragEvent<HTMLDivElement>) => {
+      e.preventDefault();
+      setIsDragActive(false);
+      const f = e.dataTransfer.files?.[0];
+      if (!f) return;
+      processFile(f);
+    },
+    [processFile],
+  );
 
 
   const selectAllProducts = useCallback(() => setSelectedProducts([]), []);
@@ -1043,12 +1072,16 @@ export default function ReporteDropiPage() {
           </div>
         ) : null}
         <div
+          onDragOver={onDropZoneDragOver}
+          onDragLeave={onDropZoneDragLeave}
+          onDrop={onDropZoneDrop}
           style={{
-            border: `0.5px solid ${ds.borderCard}`,
+            border: isDragActive ? `1.5px dashed ${ds.brand}` : `0.5px solid ${ds.borderCard}`,
             borderRadius: 14,
-            background: ds.bgCard,
+            background: isDragActive ? ds.bgSubtle : ds.bgCard,
             padding: '48px 32px',
             textAlign: 'center',
+            transition: 'all 0.15s ease',
           }}
         >
           <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16, color: C.carrier2 }}>
@@ -1056,7 +1089,7 @@ export default function ReporteDropiPage() {
           </div>
           <div style={{ fontSize: 18, fontWeight: 700, color: ds.textPrimary, marginBottom: 8 }}>Carga tu reporte de Dropi para comenzar</div>
           <div style={{ fontSize: 13, color: ds.textSecondary, maxWidth: 420, margin: '0 auto 24px', lineHeight: 1.5 }}>
-            Descarga el archivo desde Dropi: Mis órdenes → Exportar → .xlsx
+            Arrastra y suelta aquí tu archivo o descárgalo desde Dropi: Mis órdenes → Exportar → .xlsx
           </div>
           <button
             type="button"
@@ -1080,7 +1113,12 @@ export default function ReporteDropiPage() {
   }
 
   return (
-    <div style={{ maxWidth: 1100 }}>
+    <div
+      style={{ maxWidth: 1100 }}
+      onDragOver={onDropZoneDragOver}
+      onDragLeave={onDropZoneDragLeave}
+      onDrop={onDropZoneDrop}
+    >
       <input
         ref={fileRef}
         type="file"
@@ -1089,6 +1127,23 @@ export default function ReporteDropiPage() {
         onChange={onFile}
       />
       <PageHeader title="Reporte Dropi" subtitle="Procesamiento local: el archivo no se envía al servidor." />
+      {isDragActive ? (
+        <div
+          style={{
+            marginBottom: 14,
+            padding: 14,
+            borderRadius: 10,
+            border: `1.5px dashed ${ds.brand}`,
+            background: ds.bgSubtle,
+            color: ds.brand,
+            fontSize: 13,
+            fontWeight: 700,
+            textAlign: 'center',
+          }}
+        >
+          Suelta el archivo .xlsx para reemplazar el reporte actual
+        </div>
+      ) : null}
       {error ? (
         <div style={{ marginBottom: 14, padding: 12, borderRadius: 10, background: ds.warningBg, color: ds.warningText, fontSize: 13 }}>{error}</div>
       ) : null}
