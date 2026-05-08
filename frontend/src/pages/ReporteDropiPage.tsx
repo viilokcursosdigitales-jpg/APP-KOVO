@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import * as XLSX from 'xlsx';
 import {
   ArcElement,
@@ -13,7 +13,7 @@ import {
 import { Bar, Doughnut } from 'react-chartjs-2';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import { IconUpload } from '@tabler/icons-react';
+import { IconChevronDown, IconUpload } from '@tabler/icons-react';
 import { PageHeader } from '../design-system/PageHeader';
 import { ds } from '../design-system/ds';
 
@@ -406,14 +406,40 @@ export default function ReporteDropiPage() {
   const [dateEnd, setDateEnd] = useState('');
   const [carrier, setCarrier] = useState('');
   const [pdfLoading, setPdfLoading] = useState(false);
+  const [productMenuOpen, setProductMenuOpen] = useState(false);
+  const [productSearch, setProductSearch] = useState('');
   const fileRef = useRef<HTMLInputElement>(null);
   const exportRef = useRef<HTMLDivElement>(null);
+  const productMenuRef = useRef<HTMLDivElement>(null);
 
   const productOptions = useMemo(() => {
     const s = new Set<string>();
     for (const r of rawRows) s.add(r.producto);
     return Array.from(s).sort((a, b) => a.localeCompare(b, 'es'));
   }, [rawRows]);
+
+  const filteredProductOptions = useMemo(() => {
+    const q = productSearch.trim().toLowerCase();
+    if (!q) return productOptions;
+    return productOptions.filter((p) => p.toLowerCase().includes(q));
+  }, [productOptions, productSearch]);
+
+  useEffect(() => {
+    if (!productMenuOpen) return;
+    const onDoc = (e: MouseEvent) => {
+      const el = productMenuRef.current;
+      if (el && !el.contains(e.target as Node)) setProductMenuOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setProductMenuOpen(false);
+    };
+    document.addEventListener('mousedown', onDoc);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', onDoc);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [productMenuOpen]);
 
   const carrierOptions = useMemo(() => {
     const s = new Set<string>();
@@ -635,6 +661,8 @@ export default function ReporteDropiPage() {
         setDateStart('');
         setDateEnd('');
         setCarrier('');
+        setProductMenuOpen(false);
+        setProductSearch('');
       } catch {
         setError('No se pudo leer el Excel. Revisa que sea el export estándar de Dropi.');
       }
@@ -678,7 +706,7 @@ export default function ReporteDropiPage() {
 
   const hasData = rawRows.length > 0;
 
-  const efectividadTotalPct = kpi.totalPedidos > 0 ? (kpi.entregados / kpi.totalPedidos) * 100 : 0;
+  const efectividadTotalPct = kpi.efectividad;
 
   const kpiItems: Array<{
     label: string;
@@ -696,7 +724,7 @@ export default function ReporteDropiPage() {
     {
       label: 'Efectividad total',
       value: formatPct(efectividadTotalPct),
-      sub: 'entregados / total pedidos',
+      sub: 'entregados / pedidos con guía',
       highlight: true,
       valueColor: C.kpiEfectividadBorder,
     },
@@ -759,6 +787,13 @@ export default function ReporteDropiPage() {
     </div>
   );
 
+  const productFilterSummary =
+    selectedProducts.length === 0
+      ? 'Todos los productos'
+      : selectedProducts.length === 1
+        ? selectedProducts[0]
+        : `${selectedProducts.length} productos`;
+
   const filtersPanel = (
     <div
       style={{
@@ -794,48 +829,151 @@ export default function ReporteDropiPage() {
           <strong>{fileName}</strong> · {rawRows.length} filas
         </span>
       ) : null}
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 200, flex: '1 1 180px' }}>
-        <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Productos (vacío = todos)</label>
-        <select
-          multiple
-          size={5}
-          value={selectedProducts}
-          onChange={(e) => {
-            const opts = Array.from(e.target.selectedOptions).map((o) => o.value);
-            setSelectedProducts(opts);
-          }}
-          style={{
-            width: '100%',
-            fontSize: 12,
-            padding: 8,
-            borderRadius: 8,
-            border: `1px solid ${ds.borderCard}`,
-            background: ds.bgCard,
-            color: ds.textPrimary,
-          }}
-        >
-          {productOptions.map((p) => (
-            <option key={p} value={p}>
-              {p}
-            </option>
-          ))}
-        </select>
+      <div
+        ref={productMenuRef}
+        style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 220, flex: '1 1 200px', position: 'relative' }}
+      >
+        <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Productos</label>
         <button
           type="button"
-          onClick={selectAllProducts}
+        onClick={() => {
+          setProductMenuOpen((o) => !o);
+        }}
+        aria-expanded={productMenuOpen}
+        aria-haspopup="true"
           style={{
-            fontSize: 11,
-            background: 'none',
-            border: `0.5px solid ${ds.borderCard}`,
-            borderRadius: 8,
-            padding: '4px 8px',
+            ...inputStyle(),
+            width: '100%',
+            boxSizing: 'border-box',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 8,
             cursor: 'pointer',
-            color: ds.brand,
-            fontWeight: 600,
+            textAlign: 'left',
           }}
         >
-          Limpiar filtro de productos
+          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
+            {productFilterSummary}
+          </span>
+          <IconChevronDown
+            size={18}
+            stroke={1.5}
+            style={{
+              flexShrink: 0,
+              color: ds.textMuted,
+              transform: productMenuOpen ? 'rotate(180deg)' : undefined,
+              transition: 'transform 0.15s ease',
+            }}
+          />
         </button>
+        {productMenuOpen ? (
+          <div
+            style={{
+              position: 'absolute',
+              left: 0,
+              right: 0,
+              top: '100%',
+              marginTop: 4,
+              background: ds.bgCard,
+              border: `1px solid ${ds.borderCard}`,
+              borderRadius: 10,
+              boxShadow: '0 10px 28px rgba(0,0,0,0.14)',
+              zIndex: 60,
+              display: 'flex',
+              flexDirection: 'column',
+              maxHeight: 320,
+            }}
+          >
+            <div style={{ padding: 8, borderBottom: `0.5px solid ${ds.borderCard}` }}>
+              <input
+                type="search"
+                placeholder="Buscar producto…"
+                value={productSearch}
+                onChange={(e) => setProductSearch(e.target.value)}
+                style={{ ...inputStyle(), width: '100%', boxSizing: 'border-box' }}
+                autoFocus
+              />
+            </div>
+            <div style={{ overflowY: 'auto', maxHeight: 220, padding: '4px 6px' }}>
+              {filteredProductOptions.length === 0 ? (
+                <div style={{ padding: 12, fontSize: 12, color: ds.textMuted }}>Sin coincidencias</div>
+              ) : (
+                filteredProductOptions.map((p) => (
+                  <label
+                    key={p}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 8,
+                      padding: '7px 8px',
+                      borderRadius: 8,
+                      cursor: 'pointer',
+                      fontSize: 12,
+                      color: ds.textPrimary,
+                    }}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedProducts.includes(p)}
+                      onChange={() => {
+                        setSelectedProducts((prev) =>
+                          prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p],
+                        );
+                      }}
+                    />
+                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p}</span>
+                  </label>
+                ))
+              )}
+            </div>
+            <div
+              style={{
+                display: 'flex',
+                flexWrap: 'wrap',
+                gap: 8,
+                padding: 8,
+                borderTop: `0.5px solid ${ds.borderCard}`,
+              }}
+            >
+              <button
+                type="button"
+                onClick={() => setSelectedProducts([...productOptions])}
+                style={{
+                  fontSize: 11,
+                  background: ds.bgSubtle,
+                  border: `0.5px solid ${ds.borderCard}`,
+                  borderRadius: 8,
+                  padding: '6px 10px',
+                  cursor: 'pointer',
+                  color: ds.textPrimary,
+                  fontWeight: 600,
+                }}
+              >
+                Marcar todos
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  selectAllProducts();
+                  setProductSearch('');
+                }}
+                style={{
+                  fontSize: 11,
+                  background: 'none',
+                  border: `0.5px solid ${ds.borderCard}`,
+                  borderRadius: 8,
+                  padding: '6px 10px',
+                  cursor: 'pointer',
+                  color: ds.brand,
+                  fontWeight: 600,
+                }}
+              >
+                Limpiar selección
+              </button>
+            </div>
+          </div>
+        ) : null}
       </div>
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
         <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
