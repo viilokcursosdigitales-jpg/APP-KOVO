@@ -46,7 +46,7 @@ export default function MetaAdsPage() {
   return (
     <>
       <PageHeader
-        title="Análisis de creativos"
+        title="Campañas Meta"
         subtitle="Análisis de campañas y embudo de conversión"
       />
 

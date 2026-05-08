@@ -128,7 +128,7 @@ type MetaInsightsCacheStore = Record<string, MetaInsightsCacheEntry>;
 const META_INSIGHTS_CACHE_KEY = 'kovo_meta_insights_cache_v1';
 const META_INSIGHTS_CACHE_TTL_MS = 1000 * 60 * 10;
 
-/** Fila campaña sin producto Shopify vinculado (Anuncios Meta → Campañas). */
+/** Fila campaña sin producto Shopify vinculado (Campañas Meta → lista Campañas). */
 const CAMPAIGN_ROW_MISSING_PRODUCT_BG = 'rgba(58, 12, 16, 0.42)';
 
 type ShopifyOrderAttribution = {

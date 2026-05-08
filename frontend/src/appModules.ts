@@ -24,7 +24,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'pedidos', label: 'Pedidos', group: 'Principal' },
   { id: 'relacion_pagos_motico', label: 'Relación de Pagos Motico', group: 'Principal' },
   { id: 'inventario', label: 'Inventario', group: 'Principal' },
-  { id: 'meta_ads', label: 'Anuncios Meta', group: 'Marketing' },
+  { id: 'meta_ads', label: 'Campañas Meta', group: 'Marketing' },
   { id: 'ads_funnel', label: 'Embudo de anuncios', group: 'Marketing' },
   { id: 'finanza', label: 'Finanzas', group: 'Marketing' },
   { id: 'indicadores_marketing', label: 'Indicadores', group: 'Marketing' },

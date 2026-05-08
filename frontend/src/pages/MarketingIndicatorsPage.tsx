@@ -161,7 +161,7 @@ export default function MarketingIndicatorsPage() {
     <>
       <PageHeader
         title="Indicadores de marketing"
-        subtitle="Define objetivos por producto Shopify. En Análisis de creativo (Anuncios Meta) se comparan con el rendimiento de cada campaña vinculada."
+        subtitle="Define objetivos por producto Shopify. En Campañas Meta se comparan con el rendimiento de cada campaña vinculada."
       />
 
       {!shopifyOk && !loading ? (
@@ -203,7 +203,7 @@ export default function MarketingIndicatorsPage() {
         Valores sin decimales. Deja vacío lo que no quieras
         usar.{' '}
         <Link to="/meta-ads" style={{ color: ds.brand, fontWeight: 600 }}>
-          Ir a Anuncios Meta
+          Ir a Campañas Meta
         </Link>
       </p>
 

@@ -103,7 +103,7 @@ const META_BENEFITS: { label: string; Icon: typeof IconChartLine }[] = [
   { label: 'Ver métricas de campañas en tiempo real', Icon: IconChartLine },
   { label: 'Analizar gasto vs ventas y ROAS', Icon: IconReportMoney },
   { label: 'Optimizar presupuesto desde un solo lugar', Icon: IconAdjustmentsHorizontal },
-  { label: 'Acceder al análisis de creativos y audiencias', Icon: IconSparkles },
+  { label: 'Acceder a campañas Meta y audiencias', Icon: IconSparkles },
 ];
 
 export default function ConexionMetaADS() {
