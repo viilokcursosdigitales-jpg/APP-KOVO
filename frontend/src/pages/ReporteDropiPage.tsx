@@ -1,22 +1,1148 @@
+import { useCallback, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import * as XLSX from 'xlsx';
+import {
+  ArcElement,
+  BarElement,
+  CategoryScale,
+  Chart as ChartJS,
+  Legend,
+  LinearScale,
+  Tooltip,
+  type ChartData,
+} from 'chart.js';
+import { Bar, Doughnut } from 'react-chartjs-2';
+import html2canvas from 'html2canvas';
+import { jsPDF } from 'jspdf';
+import { IconUpload } from '@tabler/icons-react';
 import { PageHeader } from '../design-system/PageHeader';
 import { ds } from '../design-system/ds';
 
-export default function ReporteDropiPage() {
+ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
+
+/** Paleta especificación Reporte Dropi */
+const C = {
+  green: '#1D9E75',
+  red: '#E24B4A',
+  amber: '#EF9F27',
+  blue: '#378ADD',
+  purple: '#7F77DD',
+  gray: '#888780',
+  badgeGreenBg: '#EAF3DE',
+  badgeGreenText: '#3B6D11',
+  badgeRedBg: '#FCEBEB',
+  badgeRedText: '#A32D2D',
+  badgeAmberBg: '#FAEEDA',
+  badgeAmberText: '#854F0B',
+  badgeBlueBg: '#E6F1FB',
+  badgeBlueText: '#185FA5',
+} as const;
+
+const COL = {
+  fechaReporte: 0,
+  fechaPedido: 3,
+  numeroGuia: 9,
+  estatus: 10,
+  departamento: 12,
+  ciudad: 13,
+  transportadora: 16,
+  totalOrden: 17,
+  ganancia: 18,
+  precioFlete: 19,
+  costoDevolucionFlete: 20,
+  costoProducto: 24,
+  producto: 28,
+  cantidad: 30,
+} as const;
+
+type DropiRow = {
+  fechaReporte: Date | null;
+  fechaPedido: Date | null;
+  numeroGuia: string;
+  estatusNorm: string;
+  departamento: string;
+  ciudad: string;
+  transportadora: string;
+  totalOrden: number;
+  ganancia: number;
+  precioFlete: number;
+  costoDevolucionFlete: number;
+  costoProducto: number;
+  producto: string;
+  cantidad: number;
+};
+
+function cell(r: unknown[], i: number): unknown {
+  return i < r.length ? r[i] : undefined;
+}
+
+function normStatus(raw: unknown): string {
+  const s = String(raw ?? '')
+    .trim()
+    .toUpperCase()
+    .normalize('NFD')
+    .replace(/\p{M}/gu, '');
+  return s;
+}
+
+function parseNumber(v: unknown): number {
+  if (v == null || v === '') return 0;
+  if (typeof v === 'number' && Number.isFinite(v)) return v;
+  if (typeof v === 'string') {
+    const t = v.trim().replace(/[$\s]/g, '');
+    if (!t) return 0;
+    if (t.includes(',') && t.includes('.')) {
+      const lastDot = t.lastIndexOf('.');
+      const lastComma = t.lastIndexOf(',');
+      if (lastComma > lastDot) {
+        return parseFloat(t.replace(/\./g, '').replace(',', '.')) || 0;
+      }
+      return parseFloat(t.replace(/,/g, '')) || 0;
+    }
+    if (t.includes(',')) return parseFloat(t.replace(/\./g, '').replace(',', '.')) || 0;
+    return parseFloat(t.replace(/,/g, '.')) || 0;
+  }
+  return 0;
+}
+
+function parseDate(v: unknown): Date | null {
+  if (v == null || v === '') return null;
+  if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
+  if (typeof v === 'number' && Number.isFinite(v)) {
+    try {
+      const d = XLSX.SSF.parse_date_code(v);
+      if (d) return new Date(Date.UTC(d.y, d.m - 1, d.d));
+    } catch {
+      /* ignore */
+    }
+  }
+  if (typeof v === 'string') {
+    const d = new Date(v);
+    if (!Number.isNaN(d.getTime())) return d;
+  }
+  return null;
+}
+
+function strCell(v: unknown): string {
+  return String(v ?? '').trim();
+}
+
+function parseRow(arr: unknown[]): DropiRow | null {
+  const producto = strCell(cell(arr, COL.producto));
+  const guia = strCell(cell(arr, COL.numeroGuia));
+  const total = parseNumber(cell(arr, COL.totalOrden));
+  const fechaP = parseDate(cell(arr, COL.fechaPedido));
+  if (!producto && !guia && total === 0 && !fechaP) return null;
+  return {
+    fechaReporte: parseDate(cell(arr, COL.fechaReporte)),
+    fechaPedido: fechaP,
+    numeroGuia: guia,
+    estatusNorm: normStatus(cell(arr, COL.estatus)),
+    departamento: strCell(cell(arr, COL.departamento)),
+    ciudad: strCell(cell(arr, COL.ciudad)),
+    transportadora: strCell(cell(arr, COL.transportadora)),
+    totalOrden: total,
+    ganancia: parseNumber(cell(arr, COL.ganancia)),
+    precioFlete: parseNumber(cell(arr, COL.precioFlete)),
+    costoDevolucionFlete: parseNumber(cell(arr, COL.costoDevolucionFlete)),
+    costoProducto: parseNumber(cell(arr, COL.costoProducto)),
+    producto: producto || 'Sin producto',
+    cantidad: parseNumber(cell(arr, COL.cantidad)),
+  };
+}
+
+function readDropiExcel(buf: ArrayBuffer): DropiRow[] {
+  const wb = XLSX.read(buf, { type: 'array', cellDates: true });
+  const name = wb.SheetNames[0];
+  if (!name) return [];
+  const sheet = wb.Sheets[name];
+  const matrix = XLSX.utils.sheet_to_json(sheet, {
+    header: 1,
+    defval: '',
+    raw: true,
+  }) as unknown[][];
+  const out: DropiRow[] = [];
+  for (let i = 1; i < matrix.length; i++) {
+    const row = matrix[i];
+    if (!Array.isArray(row)) continue;
+    const parsed = parseRow(row);
+    if (parsed) out.push(parsed);
+  }
+  return out;
+}
+
+function startOfDay(d: Date): Date {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+
+function rowInDateRange(r: DropiRow, start: string, end: string): boolean {
+  if (!start && !end) return true;
+  const fd = r.fechaPedido;
+  if (!fd) return false;
+  const t = startOfDay(fd).getTime();
+  if (start) {
+    if (t < startOfDay(new Date(start + 'T12:00:00')).getTime()) return false;
+  }
+  if (end) {
+    const e = new Date(end + 'T23:59:59.999');
+    if (fd > e) return false;
+  }
+  return true;
+}
+
+function formatCOP(n: number): string {
+  if (!Number.isFinite(n)) return '—';
+  const abs = Math.abs(n);
+  if (abs >= 1_000_000 && abs < 1_000_000_000) {
+    return `$${(n / 1_000_000).toFixed(1)}M`;
+  }
+  return new Intl.NumberFormat('es-CO', {
+    style: 'currency',
+    currency: 'COP',
+    maximumFractionDigits: 0,
+  }).format(n);
+}
+
+function formatPct(n: number, digits = 1): string {
+  if (!Number.isFinite(n)) return '—';
+  return `${n.toFixed(digits)}%`;
+}
+
+const STATUS_COLORS: Record<string, string> = {
+  ENTREGADO: C.green,
+  CANCELADO: C.red,
+  DEVOLUCION: C.red,
+  NOVEDAD: C.amber,
+  'RECLAME EN OFICINA': C.amber,
+  'INTENTO DE ENTREGA': C.amber,
+  'EN REPARTO': C.blue,
+  'EN REEXPEDICION': C.blue,
+  DESPACHADA: C.purple,
+};
+
+function colorForStatus(s: string): string {
+  return STATUS_COLORS[s] ?? C.gray;
+}
+
+function effBadgeStyle(pct: number): { bg: string; color: string } {
+  if (pct >= 80) return { bg: C.badgeGreenBg, color: C.badgeGreenText };
+  if (pct >= 60) return { bg: C.badgeAmberBg, color: C.badgeAmberText };
+  return { bg: C.badgeRedBg, color: C.badgeRedText };
+}
+
+function marginBadgeStyle(pct: number): { bg: string; color: string } {
+  if (pct >= 25) return { bg: C.badgeGreenBg, color: C.badgeGreenText };
+  if (pct >= 10) return { bg: C.badgeAmberBg, color: C.badgeAmberText };
+  return { bg: C.badgeRedBg, color: C.badgeRedText };
+}
+
+function Badge({ children, bg, color }: { children: ReactNode; bg: string; color: string }) {
   return (
-    <div style={{ maxWidth: 980 }}>
-      <PageHeader title="Reporte Dropi" subtitle="Próximamente" />
-      <div
+    <span
+      style={{
+        display: 'inline-block',
+        padding: '2px 8px',
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 700,
+        background: bg,
+        color,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function MiniBar({ pct, color }: { pct: number; color: string }) {
+  const w = Math.min(100, Math.max(0, pct));
+  return (
+    <div
+      style={{
+        height: 6,
+        borderRadius: 4,
+        background: `${C.gray}33`,
+        minWidth: 72,
+        overflow: 'hidden',
+      }}
+    >
+      <div style={{ width: `${w}%`, height: '100%', borderRadius: 4, background: color }} />
+    </div>
+  );
+}
+
+function tableWrapStyle(): CSSProperties {
+  return {
+    border: `0.5px solid ${ds.borderCard}`,
+    borderRadius: 14,
+    overflow: 'auto',
+    background: ds.bgCard,
+  };
+}
+
+function thStyle(): CSSProperties {
+  return {
+    textAlign: 'left' as const,
+    padding: '10px 12px',
+    fontSize: 11,
+    fontWeight: 700,
+    color: ds.textMuted,
+    textTransform: 'uppercase' as const,
+    letterSpacing: '0.02em',
+    borderBottom: `0.5px solid ${ds.borderCard}`,
+    background: ds.bgSubtle,
+    whiteSpace: 'nowrap' as const,
+  };
+}
+
+function tdStyle(): CSSProperties {
+  return {
+    padding: '8px 12px',
+    fontSize: 12,
+    color: ds.textPrimary,
+    borderBottom: `0.5px solid ${ds.borderRow}`,
+    verticalAlign: 'middle',
+  };
+}
+
+type KpiPack = {
+  totalPedidos: number;
+  conGuia: number;
+  entregados: number;
+  devueltos: number;
+  pendientes: number;
+  cancelados: number;
+  efectividad: number;
+  totalVentas: number;
+  gananciaNeta: number;
+  margenPct: number;
+  fletePromGeneral: number;
+  fleteDevPromGeneral: number;
+  ticketProm: number;
+};
+
+function computeKpis(rows: DropiRow[]): KpiPack {
+  const n = rows.length;
+  let conGuia = 0;
+  let entregados = 0;
+  let devueltos = 0;
+  let cancelados = 0;
+  let sumVentas = 0;
+  let sumGanancia = 0;
+  let sumFlete = 0;
+  let sumDevFlete = 0;
+  for (const r of rows) {
+    if (r.numeroGuia) conGuia++;
+    if (r.estatusNorm === 'ENTREGADO') entregados++;
+    if (r.estatusNorm === 'DEVOLUCION') devueltos++;
+    if (r.estatusNorm === 'CANCELADO') cancelados++;
+    sumVentas += r.totalOrden;
+    sumGanancia += r.ganancia;
+    sumFlete += r.precioFlete;
+    sumDevFlete += r.costoDevolucionFlete;
+  }
+  const pendientes = Math.max(0, conGuia - entregados - devueltos);
+  const efectividad = conGuia > 0 ? (entregados / conGuia) * 100 : 0;
+  const margenPct = sumVentas > 0 ? (sumGanancia / sumVentas) * 100 : 0;
+  const fletePromGeneral = n > 0 ? sumFlete / n : 0;
+  const fleteDevPromGeneral = n > 0 ? sumDevFlete / n : 0;
+  const ticketProm = n > 0 ? sumVentas / n : 0;
+  return {
+    totalPedidos: n,
+    conGuia,
+    entregados,
+    devueltos,
+    pendientes,
+    cancelados,
+    efectividad,
+    totalVentas: sumVentas,
+    gananciaNeta: sumGanancia,
+    margenPct,
+    fletePromGeneral,
+    fleteDevPromGeneral,
+    ticketProm,
+  };
+}
+
+export default function ReporteDropiPage() {
+  const [rawRows, setRawRows] = useState<DropiRow[]>([]);
+  const [fileName, setFileName] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [selectedProducts, setSelectedProducts] = useState<string[]>([]);
+  const [dateStart, setDateStart] = useState('');
+  const [dateEnd, setDateEnd] = useState('');
+  const [carrier, setCarrier] = useState('');
+  const [pdfLoading, setPdfLoading] = useState(false);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const exportRef = useRef<HTMLDivElement>(null);
+
+  const productOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of rawRows) s.add(r.producto);
+    return Array.from(s).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [rawRows]);
+
+  const carrierOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of rawRows) {
+      if (r.transportadora) s.add(r.transportadora);
+    }
+    return Array.from(s).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [rawRows]);
+
+  const filteredRows = useMemo(() => {
+    return rawRows.filter((r) => {
+      if (selectedProducts.length > 0 && !selectedProducts.includes(r.producto)) return false;
+      if (!rowInDateRange(r, dateStart, dateEnd)) return false;
+      if (carrier && r.transportadora !== carrier) return false;
+      return true;
+    });
+  }, [rawRows, selectedProducts, dateStart, dateEnd, carrier]);
+
+  const kpi = useMemo(() => computeKpis(filteredRows), [filteredRows]);
+
+  const productEffectiveness = useMemo(() => {
+    const map = new Map<
+      string,
+      { pedidos: number; conG: number; ent: number; dev: number; gan: number }
+    >();
+    for (const r of filteredRows) {
+      const k = r.producto;
+      if (!map.has(k)) map.set(k, { pedidos: 0, conG: 0, ent: 0, dev: 0, gan: 0 });
+      const a = map.get(k)!;
+      a.pedidos++;
+      if (r.numeroGuia) a.conG++;
+      if (r.estatusNorm === 'ENTREGADO') a.ent++;
+      if (r.estatusNorm === 'DEVOLUCION') a.dev++;
+      a.gan += r.ganancia;
+    }
+    const rows = Array.from(map.entries()).map(([producto, v]) => {
+      const pend = Math.max(0, v.conG - v.ent - v.dev);
+      const eff = v.conG > 0 ? (v.ent / v.conG) * 100 : 0;
+      return { producto, ...v, pend, eff };
+    });
+    rows.sort((a, b) => b.eff - a.eff);
+    return rows;
+  }, [filteredRows]);
+
+  const productFlete = useMemo(() => {
+    const map = new Map<string, { n: number; sv: number; sf: number; sd: number }>();
+    for (const r of filteredRows) {
+      const k = r.producto;
+      if (!map.has(k)) map.set(k, { n: 0, sv: 0, sf: 0, sd: 0 });
+      const a = map.get(k)!;
+      a.n++;
+      a.sv += r.totalOrden;
+      a.sf += r.precioFlete;
+      a.sd += r.costoDevolucionFlete;
+    }
+    return Array.from(map.entries())
+      .map(([producto, v]) => {
+        const ticketProm = v.n > 0 ? v.sv / v.n : 0;
+        const fleteProm = v.n > 0 ? v.sf / v.n : 0;
+        const devProm = v.n > 0 ? v.sd / v.n : 0;
+        const ftPct = v.sv > 0 ? (v.sf / v.sv) * 100 : 0;
+        return { producto, ...v, ticketProm, fleteProm, devProm, ftPct };
+      })
+      .sort((a, b) => b.sv - a.sv);
+  }, [filteredRows]);
+
+  const productPnl = useMemo(() => {
+    const map = new Map<string, { ventas: number; cp: number; cf: number; fd: number; gan: number }>();
+    for (const r of filteredRows) {
+      const k = r.producto;
+      if (!map.has(k)) map.set(k, { ventas: 0, cp: 0, cf: 0, fd: 0, gan: 0 });
+      const a = map.get(k)!;
+      a.ventas += r.totalOrden;
+      a.cp += r.costoProducto;
+      a.cf += r.precioFlete;
+      a.fd += r.costoDevolucionFlete;
+      a.gan += r.ganancia;
+    }
+    const rows = Array.from(map.entries()).map(([producto, v]) => {
+      const margen = v.ventas > 0 ? (v.gan / v.ventas) * 100 : 0;
+      return { producto, ...v, margen };
+    });
+    rows.sort((a, b) => b.gan - a.gan);
+    const totals = rows.reduce(
+      (acc, r) => {
+        acc.ventas += r.ventas;
+        acc.cp += r.cp;
+        acc.cf += r.cf;
+        acc.fd += r.fd;
+        acc.gan += r.gan;
+        return acc;
+      },
+      { ventas: 0, cp: 0, cf: 0, fd: 0, gan: 0 },
+    );
+    const margenTotal = totals.ventas > 0 ? (totals.gan / totals.ventas) * 100 : 0;
+    return { rows, totals: { ...totals, margen: margenTotal } };
+  }, [filteredRows]);
+
+  const statusCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of filteredRows) {
+      const k = r.estatusNorm || '—';
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+  }, [filteredRows]);
+
+  const carrierCounts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of filteredRows) {
+      const k = r.transportadora || 'Sin transportadora';
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
+  }, [filteredRows]);
+
+  const topDepts = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of filteredRows) {
+      const k = r.departamento || 'Sin departamento';
+      m.set(k, (m.get(k) ?? 0) + 1);
+    }
+    return Array.from(m.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 7);
+  }, [filteredRows]);
+
+  const donutEstados: ChartData<'doughnut'> = useMemo(() => {
+    const labels = statusCounts.map(([s]) => s);
+    const data = statusCounts.map(([, n]) => n);
+    const colors = labels.map((s) => colorForStatus(s));
+    return {
+      labels,
+      datasets: [{ data, backgroundColor: colors, borderWidth: 1, borderColor: ds.bgCard }],
+    };
+  }, [statusCounts]);
+
+  const donutCarrier: ChartData<'doughnut'> = useMemo(() => {
+    const labels = carrierCounts.map(([s]) => s);
+    const data = carrierCounts.map(([, n]) => n);
+    const palette = [C.purple, C.blue, C.green, C.amber, C.red, C.gray, '#5BA3D9', '#C78FE9'];
+    const colors = labels.map((_, i) => palette[i % palette.length]);
+    return {
+      labels,
+      datasets: [{ data, backgroundColor: colors, borderWidth: 1, borderColor: ds.bgCard }],
+    };
+  }, [carrierCounts]);
+
+  const barDept: ChartData<'bar'> = useMemo(() => {
+    const labels = topDepts.map(([d]) => d);
+    const data = topDepts.map(([, n]) => n);
+    return {
+      labels,
+      datasets: [
+        {
+          label: 'Pedidos',
+          data,
+          backgroundColor: C.purple,
+          borderRadius: 6,
+          borderSkipped: false,
+        },
+      ],
+    };
+  }, [topDepts]);
+
+  const chartOpts = useMemo(
+    () => ({
+      responsive: true,
+      maintainAspectRatio: false as const,
+      plugins: { legend: { display: false } },
+      cutout: '62%',
+    }),
+    [],
+  );
+
+  const barHorizOpts = useMemo(
+    () => ({
+      indexAxis: 'y' as const,
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { grid: { color: `${C.gray}22` }, ticks: { font: { size: 11 } } },
+        y: { grid: { display: false }, ticks: { font: { size: 11 } } },
+      },
+    }),
+    [],
+  );
+
+  const onFile = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    if (!f.name.toLowerCase().endsWith('.xlsx')) {
+      setError('Usa un archivo .xlsx exportado desde Dropi.');
+      return;
+    }
+    setError(null);
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const buf = reader.result as ArrayBuffer;
+        const rows = readDropiExcel(buf);
+        setRawRows(rows);
+        setFileName(f.name);
+        setSelectedProducts([]);
+        setDateStart('');
+        setDateEnd('');
+        setCarrier('');
+      } catch {
+        setError('No se pudo leer el Excel. Revisa que sea el export estándar de Dropi.');
+      }
+    };
+    reader.readAsArrayBuffer(f);
+  }, []);
+
+
+  const selectAllProducts = useCallback(() => setSelectedProducts([]), []);
+
+  const downloadPdf = useCallback(async () => {
+    const el = exportRef.current;
+    if (!el || filteredRows.length === 0) return;
+    setPdfLoading(true);
+    try {
+      const canvas = await html2canvas(el, {
+        scale: 1.25,
+        useCORS: true,
+        logging: false,
+        backgroundColor: getComputedStyle(document.body).backgroundColor || '#ffffff',
+      });
+      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+      const pdf = new jsPDF({ orientation: 'p', unit: 'mm', format: 'a4' });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const imgW = pageW;
+      const imgH = (canvas.height * pageW) / canvas.width;
+      let y = 0;
+      while (y < imgH) {
+        pdf.addImage(imgData, 'JPEG', 0, -y, imgW, imgH);
+        y += pageH;
+        if (y < imgH) pdf.addPage();
+      }
+      pdf.save('reporte-dropi-kovo.pdf');
+    } catch {
+      window.alert('No se pudo generar el PDF.');
+    } finally {
+      setPdfLoading(false);
+    }
+  }, [filteredRows.length]);
+
+  const hasData = rawRows.length > 0;
+
+  const kpiGrid = (
+    <div
+      style={{
+        display: 'grid',
+        gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
+        gap: 12,
+      }}
+    >
+      {[
+        {
+          label: 'Total pedidos',
+          value: String(kpi.totalPedidos),
+          sub: '100% del filtro',
+        },
+        {
+          label: 'Con guía',
+          value: String(kpi.conGuia),
+          sub: formatPct(kpi.totalPedidos > 0 ? (kpi.conGuia / kpi.totalPedidos) * 100 : 0) + ' del total',
+        },
+        {
+          label: 'Entregados',
+          value: String(kpi.entregados),
+          sub: formatPct(kpi.conGuia > 0 ? (kpi.entregados / kpi.conGuia) * 100 : 0) + ' sobre con guía',
+        },
+        {
+          label: 'Devueltos',
+          value: String(kpi.devueltos),
+          sub: formatPct(kpi.conGuia > 0 ? (kpi.devueltos / kpi.conGuia) * 100 : 0) + ' sobre con guía',
+        },
+        {
+          label: 'Pendientes',
+          value: String(kpi.pendientes),
+          sub: formatPct(kpi.conGuia > 0 ? (kpi.pendientes / kpi.conGuia) * 100 : 0) + ' sobre con guía',
+        },
+        {
+          label: 'Cancelados',
+          value: String(kpi.cancelados),
+          sub: formatPct(kpi.totalPedidos > 0 ? (kpi.cancelados / kpi.totalPedidos) * 100 : 0) + ' del total',
+        },
+        {
+          label: 'Total ventas',
+          value: formatCOP(kpi.totalVentas),
+          sub: 'COP',
+        },
+        {
+          label: 'Ganancia neta',
+          value: formatCOP(kpi.gananciaNeta),
+          sub: `Margen ${formatPct(kpi.margenPct)}`,
+        },
+      ].map((c) => (
+        <div
+          key={c.label}
+          style={{
+            background: ds.bgCard,
+            border: `0.5px solid ${ds.borderCard}`,
+            borderRadius: 14,
+            padding: '14px 16px',
+          }}
+        >
+          <div style={{ fontSize: 11, color: ds.textMuted, fontWeight: 600, marginBottom: 6 }}>{c.label}</div>
+          <div style={{ fontSize: 20, fontWeight: 800, color: ds.textPrimary, lineHeight: 1.2 }}>{c.value}</div>
+          <div style={{ fontSize: 11, color: ds.textHint, marginTop: 6 }}>{c.sub}</div>
+        </div>
+      ))}
+    </div>
+  );
+
+  const filtersPanel = (
+    <div
+      style={{
+        display: 'flex',
+        flexWrap: 'wrap',
+        gap: 14,
+        alignItems: 'flex-end',
+        padding: 16,
+        border: `0.5px solid ${ds.borderCard}`,
+        borderRadius: 14,
+        background: ds.bgCard,
+        marginBottom: 16,
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => fileRef.current?.click()}
         style={{
-          border: `1px solid ${ds.borderCard}`,
-          borderRadius: 12,
-          background: ds.bgCard,
-          padding: 18,
-          color: ds.textSecondary,
+          padding: '10px 18px',
+          borderRadius: 10,
+          border: 'none',
+          background: ds.brand,
+          color: '#fff',
+          fontWeight: 700,
           fontSize: 13,
+          cursor: 'pointer',
         }}
       >
-        Este módulo estará disponible próximamente.
+        Cargar archivo
+      </button>
+      {fileName ? (
+        <span style={{ fontSize: 12, color: ds.textSecondary }}>
+          <strong>{fileName}</strong> · {rawRows.length} filas
+        </span>
+      ) : null}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 200, flex: '1 1 180px' }}>
+        <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Productos (vacío = todos)</label>
+        <select
+          multiple
+          size={5}
+          value={selectedProducts}
+          onChange={(e) => {
+            const opts = Array.from(e.target.selectedOptions).map((o) => o.value);
+            setSelectedProducts(opts);
+          }}
+          style={{
+            width: '100%',
+            fontSize: 12,
+            padding: 8,
+            borderRadius: 8,
+            border: `1px solid ${ds.borderCard}`,
+            background: ds.bgCard,
+            color: ds.textPrimary,
+          }}
+        >
+          {productOptions.map((p) => (
+            <option key={p} value={p}>
+              {p}
+            </option>
+          ))}
+        </select>
+        <button
+          type="button"
+          onClick={selectAllProducts}
+          style={{
+            fontSize: 11,
+            background: 'none',
+            border: `0.5px solid ${ds.borderCard}`,
+            borderRadius: 8,
+            padding: '4px 8px',
+            cursor: 'pointer',
+            color: ds.brand,
+            fontWeight: 600,
+          }}
+        >
+          Limpiar filtro de productos
+        </button>
+      </div>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Desde (FECHA pedido)</label>
+          <input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} style={inputStyle()} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Hasta</label>
+          <input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} style={inputStyle()} />
+        </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 160 }}>
+          <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Transportadora</label>
+          <select value={carrier} onChange={(e) => setCarrier(e.target.value)} style={selectStyle()}>
+            <option value="">Todas</option>
+            {carrierOptions.map((c) => (
+              <option key={c} value={c}>
+                {c}
+              </option>
+            ))}
+          </select>
+        </div>
+      </div>
+      <button
+        type="button"
+        disabled={!hasData || pdfLoading}
+        onClick={() => void downloadPdf()}
+        style={{
+          padding: '10px 18px',
+          borderRadius: 10,
+          border: `0.5px solid ${ds.borderCard}`,
+          background: hasData ? ds.bgSubtle : ds.bgSubtle,
+          color: ds.textPrimary,
+          fontWeight: 700,
+          fontSize: 13,
+          cursor: hasData && !pdfLoading ? 'pointer' : 'not-allowed',
+          opacity: hasData ? 1 : 0.5,
+        }}
+      >
+        {pdfLoading ? 'Generando PDF…' : 'Descargar PDF'}
+      </button>
+    </div>
+  );
+
+  if (!hasData) {
+    return (
+      <div style={{ maxWidth: 980 }}>
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+          style={{ display: 'none' }}
+          onChange={onFile}
+        />
+        <PageHeader title="Reporte Dropi" subtitle="Analiza exportaciones .xlsx sin subirlas al servidor." />
+        {error ? (
+          <div
+            style={{
+              marginBottom: 14,
+              padding: 12,
+              borderRadius: 10,
+              background: ds.dangerBg,
+              color: ds.dangerText,
+              fontSize: 13,
+            }}
+          >
+            {error}
+          </div>
+        ) : null}
+        <div
+          style={{
+            border: `0.5px solid ${ds.borderCard}`,
+            borderRadius: 14,
+            background: ds.bgCard,
+            padding: '48px 32px',
+            textAlign: 'center',
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16, color: C.purple }}>
+            <IconUpload size={56} stroke={1.25} />
+          </div>
+          <div style={{ fontSize: 18, fontWeight: 700, color: ds.textPrimary, marginBottom: 8 }}>Carga tu reporte de Dropi para comenzar</div>
+          <div style={{ fontSize: 13, color: ds.textSecondary, maxWidth: 420, margin: '0 auto 24px', lineHeight: 1.5 }}>
+            Descarga el archivo desde Dropi: Mis órdenes → Exportar → .xlsx
+          </div>
+          <button
+            type="button"
+            onClick={() => fileRef.current?.click()}
+            style={{
+              padding: '12px 28px',
+              borderRadius: 10,
+              border: 'none',
+              background: ds.brand,
+              color: '#fff',
+              fontWeight: 700,
+              fontSize: 14,
+              cursor: 'pointer',
+            }}
+          >
+            Cargar archivo
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{ maxWidth: 1100 }}>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+        style={{ display: 'none' }}
+        onChange={onFile}
+      />
+      <PageHeader title="Reporte Dropi" subtitle="Procesamiento local: el archivo no se envía al servidor." />
+      {error ? (
+        <div style={{ marginBottom: 14, padding: 12, borderRadius: 10, background: ds.warningBg, color: ds.warningText, fontSize: 13 }}>{error}</div>
+      ) : null}
+      {filtersPanel}
+      <div
+        ref={exportRef}
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          gap: 20,
+          background: ds.bgApp,
+          padding: 8,
+          borderRadius: 8,
+        }}
+      >
+        <section>
+          <h3 style={{ fontSize: 14, fontWeight: 700, color: ds.textPrimary, margin: '0 0 12px' }}>KPIs principales</h3>
+          {kpiGrid}
+        </section>
+        <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
+          <div>
+            <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 8px' }}>Distribución por estado</h3>
+            <div style={{ height: 260, position: 'relative' }}>
+              <Doughnut data={donutEstados} options={chartOpts} />
+            </div>
+            <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, fontSize: 12, color: ds.textSecondary }}>
+              {statusCounts.map(([s, n]) => (
+                <li key={s} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                  <span style={{ width: 10, height: 10, borderRadius: 2, background: colorForStatus(s) }} />
+                  {s}: <strong>{n}</strong>
+                </li>
+              ))}
+            </ul>
+          </div>
+          <div>
+            <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 8px' }}>Pedidos por transportadora</h3>
+            <div style={{ height: 260, position: 'relative' }}>
+              <Doughnut data={donutCarrier} options={chartOpts} />
+            </div>
+            <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, fontSize: 12, color: ds.textSecondary }}>
+              {carrierCounts.slice(0, 12).map(([s, n], i) => {
+                const palette = [C.purple, C.blue, C.green, C.amber, C.red, C.gray, '#5BA3D9', '#C78FE9'];
+                const col = palette[i % palette.length];
+                return (
+                  <li key={s} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
+                    <span style={{ width: 10, height: 10, borderRadius: 2, background: col }} />
+                    {s}: <strong>{n}</strong>
+                  </li>
+                );
+              })}
+            </ul>
+          </div>
+        </section>
+        <section>
+          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Efectividad por producto</h3>
+          <div style={tableWrapStyle()}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Producto', 'Pedidos', 'Entregados', 'Devueltos', 'Pendientes', 'Efectividad', 'Ganancia', ''].map((h) => (
+                    <th key={h || 'bar'} style={thStyle()}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {productEffectiveness.map((r) => {
+                  const st = effBadgeStyle(r.eff);
+                  return (
+                    <tr key={r.producto}>
+                      <td style={tdStyle()}>{r.producto}</td>
+                      <td style={tdStyle()}>{r.pedidos}</td>
+                      <td style={tdStyle()}>
+                        <Badge bg={C.badgeGreenBg} color={C.badgeGreenText}>
+                          {r.ent}
+                        </Badge>
+                      </td>
+                      <td style={tdStyle()}>
+                        <Badge bg={C.badgeRedBg} color={C.badgeRedText}>
+                          {r.dev}
+                        </Badge>
+                      </td>
+                      <td style={tdStyle()}>
+                        <Badge bg={C.badgeAmberBg} color={C.badgeAmberText}>
+                          {r.pend}
+                        </Badge>
+                      </td>
+                      <td style={tdStyle()}>
+                        <Badge bg={st.bg} color={st.color}>
+                          {formatPct(r.eff)}
+                        </Badge>
+                      </td>
+                      <td style={tdStyle()}>{formatCOP(r.gan)}</td>
+                      <td style={tdStyle()} width={100}>
+                        <MiniBar pct={r.eff} color={st.color} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section>
+          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Flete por producto</h3>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
+            <span style={pillStyle()}>
+              Flete prom. general: <strong>{formatCOP(kpi.fletePromGeneral)}</strong>
+            </span>
+            <span style={pillStyle()}>
+              Flete dev. prom.: <strong>{formatCOP(kpi.fleteDevPromGeneral)}</strong>
+            </span>
+            <span style={pillStyle()}>
+              Ticket prom.: <strong>{formatCOP(kpi.ticketProm)}</strong>
+            </span>
+          </div>
+          <div style={tableWrapStyle()}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Producto', 'Pedidos', 'Ticket prom.', 'Flete prom. envío', 'Flete prom. devol.', 'Flete / ticket', 'Impacto'].map((h) => (
+                    <th key={h} style={thStyle()}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {productFlete.map((r) => {
+                  const st = r.ftPct <= 15 ? effBadgeStyle(85) : r.ftPct <= 25 ? effBadgeStyle(70) : effBadgeStyle(55);
+                  return (
+                    <tr key={r.producto}>
+                      <td style={tdStyle()}>{r.producto}</td>
+                      <td style={tdStyle()}>{r.n}</td>
+                      <td style={tdStyle()}>{formatCOP(r.ticketProm)}</td>
+                      <td style={tdStyle()}>{formatCOP(r.fleteProm)}</td>
+                      <td style={tdStyle()}>{formatCOP(r.devProm)}</td>
+                      <td style={tdStyle()}>
+                        <Badge bg={st.bg} color={st.color}>
+                          {formatPct(r.ftPct)}
+                        </Badge>
+                      </td>
+                      <td style={tdStyle()}>
+                        <MiniBar pct={Math.min(100, r.ftPct * 2)} color={C.blue} />
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section>
+          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Estado de resultados por producto</h3>
+          <div style={tableWrapStyle()}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Producto', 'Ventas brutas', 'Costo producto', 'Costo flete', 'Flete devolución', 'Ganancia neta', 'Margen', 'Rentabilidad'].map((h) => (
+                    <th key={h} style={thStyle()}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {productPnl.rows.map((r) => {
+                  const st = marginBadgeStyle(r.margen);
+                  return (
+                    <tr key={r.producto}>
+                      <td style={tdStyle()}>{r.producto}</td>
+                      <td style={tdStyle()}>{formatCOP(r.ventas)}</td>
+                      <td style={{ ...tdStyle(), color: C.red, fontWeight: 600 }}>-{formatCOP(r.cp)}</td>
+                      <td style={{ ...tdStyle(), color: C.red, fontWeight: 600 }}>-{formatCOP(r.cf)}</td>
+                      <td style={{ ...tdStyle(), color: C.red, fontWeight: 600 }}>-{formatCOP(r.fd)}</td>
+                      <td style={{ ...tdStyle(), color: C.green, fontWeight: 700 }}>{formatCOP(r.gan)}</td>
+                      <td style={tdStyle()}>
+                        <Badge bg={st.bg} color={st.color}>
+                          {formatPct(r.margen)}
+                        </Badge>
+                      </td>
+                      <td style={tdStyle()}>
+                        <MiniBar pct={Math.min(100, Math.max(0, r.margen))} color={st.color} />
+                      </td>
+                    </tr>
+                  );
+                })}
+                <tr
+                  style={{
+                    background: ds.brandPale || ds.bgSubtle,
+                    fontWeight: 800,
+                  }}
+                >
+                  <td style={{ ...tdStyle(), fontWeight: 800 }}>TOTAL GENERAL</td>
+                  <td style={tdStyle()}>{formatCOP(productPnl.totals.ventas)}</td>
+                  <td style={{ ...tdStyle(), color: C.red }}>-{formatCOP(productPnl.totals.cp)}</td>
+                  <td style={{ ...tdStyle(), color: C.red }}>-{formatCOP(productPnl.totals.cf)}</td>
+                  <td style={{ ...tdStyle(), color: C.red }}>-{formatCOP(productPnl.totals.fd)}</td>
+                  <td style={{ ...tdStyle(), color: C.green }}>{formatCOP(productPnl.totals.gan)}</td>
+                  <td style={tdStyle()}>
+                    <Badge bg={marginBadgeStyle(productPnl.totals.margen).bg} color={marginBadgeStyle(productPnl.totals.margen).color}>
+                      {formatPct(productPnl.totals.margen)}
+                    </Badge>
+                  </td>
+                  <td style={tdStyle()} />
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section>
+          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Top departamentos (por volumen)</h3>
+          <div style={{ height: 280, position: 'relative', ...tableWrapStyle(), padding: 12 }}>
+            <Bar data={barDept} options={barHorizOpts} />
+          </div>
+        </section>
       </div>
     </div>
   );
+}
+
+function inputStyle(): CSSProperties {
+  return {
+    padding: '8px 10px',
+    borderRadius: 8,
+    border: `1px solid ${ds.borderCard}`,
+    fontSize: 13,
+    background: ds.bgCard,
+    color: ds.textPrimary,
+  };
+}
+
+function selectStyle(): CSSProperties {
+  return {
+    ...inputStyle(),
+    width: '100%',
+  };
+}
+
+function pillStyle(): CSSProperties {
+  return {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: 6,
+    padding: '8px 14px',
+    borderRadius: 999,
+    fontSize: 12,
+    background: C.badgeBlueBg,
+    color: C.badgeBlueText,
+    border: `0.5px solid ${C.blue}44`,
+  };
 }
