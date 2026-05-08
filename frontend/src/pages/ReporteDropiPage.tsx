@@ -19,22 +19,34 @@ import { ds } from '../design-system/ds';
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
-/** Paleta especificación Reporte Dropi */
+/** Paleta reporte Dropi (gráficos, badges, barras) */
 const C = {
-  green: '#1D9E75',
-  red: '#E24B4A',
-  amber: '#EF9F27',
-  blue: '#378ADD',
-  purple: '#7F77DD',
-  gray: '#888780',
+  estadoEntregado: '#1D9E75',
+  estadoCancelado: '#B4B2A9',
+  estadoDevuelto: '#D85A30',
+  estadoPendiente: '#BA7517',
+  estadoOtros: '#5F5E5A',
+  carrier1: '#185FA5',
+  carrier2: '#534AB7',
+  carrier3: '#1D9E75',
+  carrierRest: '#B4B2A9',
+  margenHigh: '#1D9E75',
+  margenMid: '#BA7517',
+  margenLow: '#D85A30',
+  efectividadHigh: '#1D9E75',
+  efectividadMid: '#BA7517',
+  efectividadLow: '#D85A30',
   badgeGreenBg: '#EAF3DE',
   badgeGreenText: '#3B6D11',
-  badgeRedBg: '#FCEBEB',
-  badgeRedText: '#A32D2D',
   badgeAmberBg: '#FAEEDA',
   badgeAmberText: '#854F0B',
+  badgeCoralBg: '#FAECE7',
+  badgeCoralText: '#993C1D',
   badgeBlueBg: '#E6F1FB',
   badgeBlueText: '#185FA5',
+  costText: '#993C1D',
+  gainText: '#0F6E56',
+  kpiEfectividadBorder: '#0F6E56',
 } as const;
 
 const COL = {
@@ -209,32 +221,52 @@ function formatPct(n: number, digits = 1): string {
   return `${n.toFixed(digits)}%`;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  ENTREGADO: C.green,
-  CANCELADO: C.red,
-  DEVOLUCION: C.red,
-  NOVEDAD: C.amber,
-  'RECLAME EN OFICINA': C.amber,
-  'INTENTO DE ENTREGA': C.amber,
-  'EN REPARTO': C.blue,
-  'EN REEXPEDICION': C.blue,
-  DESPACHADA: C.purple,
-};
+const PENDIENTE_ESTATUS = new Set([
+  'NOVEDAD',
+  'RECLAME EN OFICINA',
+  'INTENTO DE ENTREGA',
+  'EN REPARTO',
+  'EN REEXPEDICION',
+  'DESPACHADA',
+]);
 
 function colorForStatus(s: string): string {
-  return STATUS_COLORS[s] ?? C.gray;
+  if (s === 'ENTREGADO') return C.estadoEntregado;
+  if (s === 'CANCELADO') return C.estadoCancelado;
+  if (s === 'DEVOLUCION') return C.estadoDevuelto;
+  if (PENDIENTE_ESTATUS.has(s)) return C.estadoPendiente;
+  return C.estadoOtros;
+}
+
+function colorForCarrierIndex(i: number): string {
+  if (i === 0) return C.carrier1;
+  if (i === 1) return C.carrier2;
+  if (i === 2) return C.carrier3;
+  return C.carrierRest;
+}
+
+function marginBarColor(pct: number): string {
+  if (pct >= 22) return C.margenHigh;
+  if (pct >= 15) return C.margenMid;
+  return C.margenLow;
+}
+
+function effBarColor(pct: number): string {
+  if (pct >= 80) return C.efectividadHigh;
+  if (pct >= 60) return C.efectividadMid;
+  return C.efectividadLow;
 }
 
 function effBadgeStyle(pct: number): { bg: string; color: string } {
   if (pct >= 80) return { bg: C.badgeGreenBg, color: C.badgeGreenText };
   if (pct >= 60) return { bg: C.badgeAmberBg, color: C.badgeAmberText };
-  return { bg: C.badgeRedBg, color: C.badgeRedText };
+  return { bg: C.badgeCoralBg, color: C.badgeCoralText };
 }
 
 function marginBadgeStyle(pct: number): { bg: string; color: string } {
-  if (pct >= 25) return { bg: C.badgeGreenBg, color: C.badgeGreenText };
-  if (pct >= 10) return { bg: C.badgeAmberBg, color: C.badgeAmberText };
-  return { bg: C.badgeRedBg, color: C.badgeRedText };
+  if (pct >= 22) return { bg: C.badgeGreenBg, color: C.badgeGreenText };
+  if (pct >= 15) return { bg: C.badgeAmberBg, color: C.badgeAmberText };
+  return { bg: C.badgeCoralBg, color: C.badgeCoralText };
 }
 
 function Badge({ children, bg, color }: { children: ReactNode; bg: string; color: string }) {
@@ -262,7 +294,7 @@ function MiniBar({ pct, color }: { pct: number; color: string }) {
       style={{
         height: 6,
         borderRadius: 4,
-        background: `${C.gray}33`,
+        background: `${C.estadoOtros}33`,
         minWidth: 72,
         overflow: 'hidden',
       }}
@@ -498,16 +530,11 @@ export default function ReporteDropiPage() {
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [filteredRows]);
 
-  const topDepts = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const r of filteredRows) {
-      const k = r.departamento || 'Sin departamento';
-      m.set(k, (m.get(k) ?? 0) + 1);
-    }
-    return Array.from(m.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 7);
-  }, [filteredRows]);
+  const doughnutCardBorder = useMemo(() => {
+    if (typeof document === 'undefined') return '#ffffff';
+    const v = getComputedStyle(document.documentElement).getPropertyValue('--color-bg-card').trim();
+    return v || '#ffffff';
+  }, []);
 
   const donutEstados: ChartData<'doughnut'> = useMemo(() => {
     const labels = statusCounts.map(([s]) => s);
@@ -515,44 +542,61 @@ export default function ReporteDropiPage() {
     const colors = labels.map((s) => colorForStatus(s));
     return {
       labels,
-      datasets: [{ data, backgroundColor: colors, borderWidth: 1, borderColor: ds.bgCard }],
+      datasets: [
+        {
+          data,
+          backgroundColor: colors,
+          borderWidth: 2,
+          borderColor: doughnutCardBorder,
+          hoverOffset: 4,
+        },
+      ],
     };
-  }, [statusCounts]);
+  }, [statusCounts, doughnutCardBorder]);
 
   const donutCarrier: ChartData<'doughnut'> = useMemo(() => {
     const labels = carrierCounts.map(([s]) => s);
     const data = carrierCounts.map(([, n]) => n);
-    const palette = [C.purple, C.blue, C.green, C.amber, C.red, C.gray, '#5BA3D9', '#C78FE9'];
-    const colors = labels.map((_, i) => palette[i % palette.length]);
-    return {
-      labels,
-      datasets: [{ data, backgroundColor: colors, borderWidth: 1, borderColor: ds.bgCard }],
-    };
-  }, [carrierCounts]);
-
-  const barDept: ChartData<'bar'> = useMemo(() => {
-    const labels = topDepts.map(([d]) => d);
-    const data = topDepts.map(([, n]) => n);
+    const colors = labels.map((_, i) => colorForCarrierIndex(i));
     return {
       labels,
       datasets: [
         {
-          label: 'Pedidos',
           data,
-          backgroundColor: C.purple,
+          backgroundColor: colors,
+          borderWidth: 2,
+          borderColor: doughnutCardBorder,
+          hoverOffset: 4,
+        },
+      ],
+    };
+  }, [carrierCounts, doughnutCardBorder]);
+
+  const barProductGanancia: ChartData<'bar'> = useMemo(() => {
+    const slice = productPnl.rows.slice(0, 7);
+    const labels = slice.map((r) => r.producto);
+    const data = slice.map((r) => r.gan);
+    const backgroundColor = slice.map((r) => marginBarColor(r.margen));
+    return {
+      labels,
+      datasets: [
+        {
+          label: 'Ganancia',
+          data,
+          backgroundColor,
           borderRadius: 6,
           borderSkipped: false,
         },
       ],
     };
-  }, [topDepts]);
+  }, [productPnl.rows]);
 
   const chartOpts = useMemo(
     () => ({
       responsive: true,
       maintainAspectRatio: false as const,
       plugins: { legend: { display: false } },
-      cutout: '62%',
+      cutout: '68%',
     }),
     [],
   );
@@ -564,7 +608,7 @@ export default function ReporteDropiPage() {
       maintainAspectRatio: false,
       plugins: { legend: { display: false } },
       scales: {
-        x: { grid: { color: `${C.gray}22` }, ticks: { font: { size: 11 } } },
+        x: { grid: { color: `${C.estadoOtros}22` }, ticks: { font: { size: 11 } } },
         y: { grid: { display: false }, ticks: { font: { size: 11 } } },
       },
     }),
@@ -634,6 +678,52 @@ export default function ReporteDropiPage() {
 
   const hasData = rawRows.length > 0;
 
+  const efectividadTotalPct = kpi.totalPedidos > 0 ? (kpi.entregados / kpi.totalPedidos) * 100 : 0;
+
+  const kpiItems: Array<{
+    label: string;
+    value: string;
+    sub: string;
+    highlight?: boolean;
+    valueColor?: string;
+  }> = [
+    { label: 'Total pedidos', value: String(kpi.totalPedidos), sub: '100% del filtro' },
+    {
+      label: 'Con guía',
+      value: String(kpi.conGuia),
+      sub: formatPct(kpi.totalPedidos > 0 ? (kpi.conGuia / kpi.totalPedidos) * 100 : 0) + ' del total',
+    },
+    {
+      label: 'Efectividad total',
+      value: formatPct(efectividadTotalPct),
+      sub: 'entregados / total pedidos',
+      highlight: true,
+      valueColor: C.kpiEfectividadBorder,
+    },
+    {
+      label: 'Entregados',
+      value: String(kpi.entregados),
+      sub: formatPct(kpi.conGuia > 0 ? (kpi.entregados / kpi.conGuia) * 100 : 0) + ' sobre con guía',
+    },
+    {
+      label: 'Devueltos',
+      value: String(kpi.devueltos),
+      sub: formatPct(kpi.conGuia > 0 ? (kpi.devueltos / kpi.conGuia) * 100 : 0) + ' sobre con guía',
+    },
+    {
+      label: 'Pendientes',
+      value: String(kpi.pendientes),
+      sub: formatPct(kpi.conGuia > 0 ? (kpi.pendientes / kpi.conGuia) * 100 : 0) + ' sobre con guía',
+    },
+    {
+      label: 'Cancelados',
+      value: String(kpi.cancelados),
+      sub: formatPct(kpi.totalPedidos > 0 ? (kpi.cancelados / kpi.totalPedidos) * 100 : 0) + ' del total',
+    },
+    { label: 'Total ventas', value: formatCOP(kpi.totalVentas), sub: 'COP' },
+    { label: 'Ganancia neta', value: formatCOP(kpi.gananciaNeta), sub: `Margen ${formatPct(kpi.margenPct)}` },
+  ];
+
   const kpiGrid = (
     <div
       style={{
@@ -642,59 +732,27 @@ export default function ReporteDropiPage() {
         gap: 12,
       }}
     >
-      {[
-        {
-          label: 'Total pedidos',
-          value: String(kpi.totalPedidos),
-          sub: '100% del filtro',
-        },
-        {
-          label: 'Con guía',
-          value: String(kpi.conGuia),
-          sub: formatPct(kpi.totalPedidos > 0 ? (kpi.conGuia / kpi.totalPedidos) * 100 : 0) + ' del total',
-        },
-        {
-          label: 'Entregados',
-          value: String(kpi.entregados),
-          sub: formatPct(kpi.conGuia > 0 ? (kpi.entregados / kpi.conGuia) * 100 : 0) + ' sobre con guía',
-        },
-        {
-          label: 'Devueltos',
-          value: String(kpi.devueltos),
-          sub: formatPct(kpi.conGuia > 0 ? (kpi.devueltos / kpi.conGuia) * 100 : 0) + ' sobre con guía',
-        },
-        {
-          label: 'Pendientes',
-          value: String(kpi.pendientes),
-          sub: formatPct(kpi.conGuia > 0 ? (kpi.pendientes / kpi.conGuia) * 100 : 0) + ' sobre con guía',
-        },
-        {
-          label: 'Cancelados',
-          value: String(kpi.cancelados),
-          sub: formatPct(kpi.totalPedidos > 0 ? (kpi.cancelados / kpi.totalPedidos) * 100 : 0) + ' del total',
-        },
-        {
-          label: 'Total ventas',
-          value: formatCOP(kpi.totalVentas),
-          sub: 'COP',
-        },
-        {
-          label: 'Ganancia neta',
-          value: formatCOP(kpi.gananciaNeta),
-          sub: `Margen ${formatPct(kpi.margenPct)}`,
-        },
-      ].map((c) => (
+      {kpiItems.map((c) => (
         <div
           key={c.label}
           style={{
             background: ds.bgCard,
-            border: `0.5px solid ${ds.borderCard}`,
+            border: c.highlight ? `1.5px solid ${C.kpiEfectividadBorder}` : `0.5px solid ${ds.borderCard}`,
             borderRadius: 14,
             padding: '14px 16px',
           }}
         >
           <div style={{ fontSize: 11, color: ds.textMuted, fontWeight: 600, marginBottom: 6 }}>{c.label}</div>
-          <div style={{ fontSize: 20, fontWeight: 800, color: ds.textPrimary, lineHeight: 1.2 }}>{c.value}</div>
+          <div
+            style={{
+              fontSize: 20,
+              fontWeight: 800,
+              color: c.valueColor ?? ds.textPrimary,
+              lineHeight: 1.2,
+            }}
+          >
+            {c.value}
+          </div>
           <div style={{ fontSize: 11, color: ds.textHint, marginTop: 6 }}>{c.sub}</div>
         </div>
       ))}
@@ -855,7 +913,7 @@ export default function ReporteDropiPage() {
             textAlign: 'center',
           }}
         >
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16, color: C.purple }}>
+          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16, color: C.carrier2 }}>
             <IconUpload size={56} stroke={1.25} />
           </div>
           <div style={{ fontSize: 18, fontWeight: 700, color: ds.textPrimary, marginBottom: 8 }}>Carga tu reporte de Dropi para comenzar</div>
@@ -934,8 +992,7 @@ export default function ReporteDropiPage() {
             </div>
             <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, fontSize: 12, color: ds.textSecondary }}>
               {carrierCounts.slice(0, 12).map(([s, n], i) => {
-                const palette = [C.purple, C.blue, C.green, C.amber, C.red, C.gray, '#5BA3D9', '#C78FE9'];
-                const col = palette[i % palette.length];
+                const col = colorForCarrierIndex(i);
                 return (
                   <li key={s} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
                     <span style={{ width: 10, height: 10, borderRadius: 2, background: col }} />
@@ -972,7 +1029,7 @@ export default function ReporteDropiPage() {
                         </Badge>
                       </td>
                       <td style={tdStyle()}>
-                        <Badge bg={C.badgeRedBg} color={C.badgeRedText}>
+                        <Badge bg={C.badgeCoralBg} color={C.badgeCoralText}>
                           {r.dev}
                         </Badge>
                       </td>
@@ -988,7 +1045,7 @@ export default function ReporteDropiPage() {
                       </td>
                       <td style={tdStyle()}>{formatCOP(r.gan)}</td>
                       <td style={tdStyle()} width={100}>
-                        <MiniBar pct={r.eff} color={st.color} />
+                        <MiniBar pct={r.eff} color={effBarColor(r.eff)} />
                       </td>
                     </tr>
                   );
@@ -1037,7 +1094,7 @@ export default function ReporteDropiPage() {
                         </Badge>
                       </td>
                       <td style={tdStyle()}>
-                        <MiniBar pct={Math.min(100, r.ftPct * 2)} color={C.blue} />
+                        <MiniBar pct={Math.min(100, r.ftPct * 2)} color={C.carrier1} />
                       </td>
                     </tr>
                   );
@@ -1066,48 +1123,50 @@ export default function ReporteDropiPage() {
                     <tr key={r.producto}>
                       <td style={tdStyle()}>{r.producto}</td>
                       <td style={tdStyle()}>{formatCOP(r.ventas)}</td>
-                      <td style={{ ...tdStyle(), color: C.red, fontWeight: 600 }}>-{formatCOP(r.cp)}</td>
-                      <td style={{ ...tdStyle(), color: C.red, fontWeight: 600 }}>-{formatCOP(r.cf)}</td>
-                      <td style={{ ...tdStyle(), color: C.red, fontWeight: 600 }}>-{formatCOP(r.fd)}</td>
-                      <td style={{ ...tdStyle(), color: C.green, fontWeight: 700 }}>{formatCOP(r.gan)}</td>
+                      <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>-{formatCOP(r.cp)}</td>
+                      <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>-{formatCOP(r.cf)}</td>
+                      <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>-{formatCOP(r.fd)}</td>
+                      <td style={{ ...tdStyle(), color: C.gainText, fontWeight: 700 }}>{formatCOP(r.gan)}</td>
                       <td style={tdStyle()}>
                         <Badge bg={st.bg} color={st.color}>
                           {formatPct(r.margen)}
                         </Badge>
                       </td>
                       <td style={tdStyle()}>
-                        <MiniBar pct={Math.min(100, Math.max(0, r.margen))} color={st.color} />
+                        <MiniBar pct={Math.min(100, Math.max(0, r.margen))} color={marginBarColor(r.margen)} />
                       </td>
                     </tr>
                   );
                 })}
                 <tr
                   style={{
-                    background: ds.brandPale || ds.bgSubtle,
+                    background: 'var(--color-background-secondary)',
                     fontWeight: 800,
                   }}
                 >
                   <td style={{ ...tdStyle(), fontWeight: 800 }}>TOTAL GENERAL</td>
                   <td style={tdStyle()}>{formatCOP(productPnl.totals.ventas)}</td>
-                  <td style={{ ...tdStyle(), color: C.red }}>-{formatCOP(productPnl.totals.cp)}</td>
-                  <td style={{ ...tdStyle(), color: C.red }}>-{formatCOP(productPnl.totals.cf)}</td>
-                  <td style={{ ...tdStyle(), color: C.red }}>-{formatCOP(productPnl.totals.fd)}</td>
-                  <td style={{ ...tdStyle(), color: C.green }}>{formatCOP(productPnl.totals.gan)}</td>
+                  <td style={{ ...tdStyle(), color: C.costText }}>-{formatCOP(productPnl.totals.cp)}</td>
+                  <td style={{ ...tdStyle(), color: C.costText }}>-{formatCOP(productPnl.totals.cf)}</td>
+                  <td style={{ ...tdStyle(), color: C.costText }}>-{formatCOP(productPnl.totals.fd)}</td>
+                  <td style={{ ...tdStyle(), color: C.gainText }}>{formatCOP(productPnl.totals.gan)}</td>
                   <td style={tdStyle()}>
                     <Badge bg={marginBadgeStyle(productPnl.totals.margen).bg} color={marginBadgeStyle(productPnl.totals.margen).color}>
                       {formatPct(productPnl.totals.margen)}
                     </Badge>
                   </td>
-                  <td style={tdStyle()} />
+                  <td style={tdStyle()}>
+                    <MiniBar pct={Math.min(100, Math.max(0, productPnl.totals.margen))} color={marginBarColor(productPnl.totals.margen)} />
+                  </td>
                 </tr>
               </tbody>
             </table>
           </div>
         </section>
         <section>
-          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Top departamentos (por volumen)</h3>
+          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Ganancia por producto (color = margen %)</h3>
           <div style={{ height: 280, position: 'relative', ...tableWrapStyle(), padding: 12 }}>
-            <Bar data={barDept} options={barHorizOpts} />
+            <Bar data={barProductGanancia} options={barHorizOpts} />
           </div>
         </section>
       </div>
@@ -1143,6 +1202,6 @@ function pillStyle(): CSSProperties {
     fontSize: 12,
     background: C.badgeBlueBg,
     color: C.badgeBlueText,
-    border: `0.5px solid ${C.blue}44`,
+    border: `0.5px solid ${C.carrier1}44`,
   };
 }
