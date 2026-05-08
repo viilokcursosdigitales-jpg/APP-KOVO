@@ -311,6 +311,35 @@ const inputStyle: CSSProperties = {
   color: ds.textPrimary,
 };
 
+/** Encabezado tabla Top productos (morado KOVO) */
+const TOP_PRODUCTOS_HEADER_BG = '#534AB7';
+
+const topProductosThStyle: CSSProperties = {
+  background: TOP_PRODUCTOS_HEADER_BG,
+  color: '#FFFFFF',
+  fontWeight: 500,
+  whiteSpace: 'nowrap',
+  minWidth: 'fit-content',
+  padding: '8px 10px',
+  textTransform: 'none',
+  letterSpacing: 'normal',
+  fontSize: 12,
+  borderBottom: 'none',
+};
+
+const topProductosTdStyle: CSSProperties = {
+  whiteSpace: 'nowrap',
+  minWidth: 'fit-content',
+  padding: '8px 10px',
+};
+
+const topProductosTableStyle: CSSProperties = {
+  ...tableBase,
+  tableLayout: 'auto',
+  width: 'max-content',
+  maxWidth: '100%',
+};
+
 function KpiCard({ title, value, delta }: { title: string; value: string; delta: string }) {
   return (
     <div
@@ -798,15 +827,6 @@ export default function AnalisisProductoPage() {
           <h1 style={{ margin: 0, color: ds.textPrimary, fontSize: 30, fontWeight: 700 }}>Análisis de productos</h1>
         </div>
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          <input
-            value={adminPercentInput}
-            onChange={(e) => setAdminPercentInput(e.target.value)}
-            inputMode="decimal"
-            aria-label="Porcentaje administrativo"
-            title="Porcentaje administrativo"
-            style={{ ...inputStyle, width: 90 }}
-          />
-          <span style={{ alignSelf: 'center', fontSize: 12, color: ds.textMuted }}>Admin %</span>
           <select
             style={inputStyle}
             value={filter}
@@ -820,16 +840,6 @@ export default function AnalisisProductoPage() {
             <option value="30d">Últimos 30 días</option>
             <option value="custom">Custom</option>
           </select>
-          <button type="button" style={{ ...inputStyle, width: 'auto', cursor: 'pointer', fontWeight: 600 }}>
-            Filtro
-          </button>
-          <button
-            type="button"
-            onClick={() => void load()}
-            style={{ ...inputStyle, width: 'auto', cursor: loading ? 'wait' : 'pointer', fontWeight: 600 }}
-          >
-            {loading ? 'Actualizando…' : 'Actualizar'}
-          </button>
         </div>
       </header>
 
@@ -948,36 +958,33 @@ export default function AnalisisProductoPage() {
             </div>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px,1fr) auto', gap: 8, marginBottom: 12 }}>
+          <div style={{ marginBottom: 12 }}>
             <input
               style={inputStyle}
               placeholder="Buscar producto top"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
-            <button type="button" style={{ ...inputStyle, width: 'auto', cursor: 'pointer', fontWeight: 600 }}>
-              Filtro
-            </button>
           </div>
 
           <DataTable title="Top productos">
-            <table style={tableBase}>
+            <table style={topProductosTableStyle}>
               <thead>
                 <tr>
-                  <Th style={{ width: '22%' }}>Producto</Th>
-                  <Th>Pedidos</Th>
-                  <Th>Gasto publicitario</Th>
-                  <Th>CPA Meta</Th>
-                  <Th>Ventas Totales</Th>
-                  <Th>Roas meta</Th>
-                  <Th>Ventas</Th>
-                  <Th>Unidades</Th>
-                  <Th>1 unidad (cant/ventas)</Th>
-                  <Th>2 unidades (cant/ventas)</Th>
-                  <Th>3 unidades (cant/ventas)</Th>
-                  <Th>% despachado</Th>
-                  <Th>Upsell</Th>
-                  <Th>Downsell</Th>
+                  <Th style={topProductosThStyle}>Producto</Th>
+                  <Th style={topProductosThStyle}>Pedidos</Th>
+                  <Th style={topProductosThStyle}>Gasto publicitario</Th>
+                  <Th style={topProductosThStyle}>CPA Meta</Th>
+                  <Th style={topProductosThStyle}>Ventas Totales</Th>
+                  <Th style={topProductosThStyle}>Roas meta</Th>
+                  <Th style={topProductosThStyle}>Ventas</Th>
+                  <Th style={topProductosThStyle}>Unidades</Th>
+                  <Th style={topProductosThStyle}>1 unidad (cant/ventas)</Th>
+                  <Th style={topProductosThStyle}>2 unidades (cant/ventas)</Th>
+                  <Th style={topProductosThStyle}>3 unidades (cant/ventas)</Th>
+                  <Th style={topProductosThStyle}>% despachado</Th>
+                  <Th style={topProductosThStyle}>Upsell</Th>
+                  <Th style={topProductosThStyle}>Downsell</Th>
                 </tr>
               </thead>
               <tbody>
@@ -991,28 +998,42 @@ export default function AnalisisProductoPage() {
                   const roasMeta = gastoPub > 0 ? p.ventasTotales / gastoPub : 0;
                   return (
                     <tr key={p.key}>
-                      <Td isLast={isLast} style={{ fontWeight: 600, color: ds.textPrimary }}>{p.nombre}</Td>
-                      <Td isLast={isLast}>{p.pedidos}</Td>
-                      <Td isLast={isLast}>{money(gastoPub)}</Td>
-                      <Td isLast={isLast}>{money(cpaMeta)}</Td>
-                      <Td isLast={isLast}>{money(p.ventasTotales)}</Td>
-                      <Td isLast={isLast}>{`${roasMeta.toFixed(2)}x`}</Td>
-                      <Td isLast={isLast}>{money(p.ventas)}</Td>
-                      <Td isLast={isLast}>{p.unidades}</Td>
-                      <Td isLast={isLast}>{`${p.qty1Count} / ${money(p.qty1Ventas)}`}</Td>
-                      <Td isLast={isLast}>{`${p.qty2Count} / ${money(p.qty2Ventas)}`}</Td>
-                      <Td isLast={isLast}>{`${p.qty3Count} / ${money(p.qty3Ventas)}`}</Td>
-                      <Td isLast={isLast}>
+                      <Td isLast={isLast} style={{ ...topProductosTdStyle, fontWeight: 600, color: ds.textPrimary }}>
+                        {p.nombre}
+                      </Td>
+                      <Td isLast={isLast} style={topProductosTdStyle}>
+                        {p.pedidos}
+                      </Td>
+                      <Td isLast={isLast} style={topProductosTdStyle}>
+                        {money(gastoPub)}
+                      </Td>
+                      <Td isLast={isLast} style={topProductosTdStyle}>
+                        {money(cpaMeta)}
+                      </Td>
+                      <Td isLast={isLast} style={topProductosTdStyle}>
+                        {money(p.ventasTotales)}
+                      </Td>
+                      <Td isLast={isLast} style={topProductosTdStyle}>{`${roasMeta.toFixed(2)}x`}</Td>
+                      <Td isLast={isLast} style={topProductosTdStyle}>
+                        {money(p.ventas)}
+                      </Td>
+                      <Td isLast={isLast} style={topProductosTdStyle}>
+                        {p.unidades}
+                      </Td>
+                      <Td isLast={isLast} style={topProductosTdStyle}>{`${p.qty1Count} / ${money(p.qty1Ventas)}`}</Td>
+                      <Td isLast={isLast} style={topProductosTdStyle}>{`${p.qty2Count} / ${money(p.qty2Ventas)}`}</Td>
+                      <Td isLast={isLast} style={topProductosTdStyle}>{`${p.qty3Count} / ${money(p.qty3Ventas)}`}</Td>
+                      <Td isLast={isLast} style={topProductosTdStyle}>
                         <span style={{ color: pctColor(pctValue(p.pedidosDespachados, p.pedidos)), fontWeight: 700 }}>
                           {pctPlain(p.pedidosDespachados, p.pedidos)}
                         </span>
                       </Td>
-                      <Td isLast={isLast}>
+                      <Td isLast={isLast} style={topProductosTdStyle}>
                         <StatusBadge variant={p.upsellOrders > 0 ? 'success' : 'paused'}>
                           {p.upsellOrders > 0 ? `Sí (${p.upsellOrders})` : 'No'}
                         </StatusBadge>
                       </Td>
-                      <Td isLast={isLast}>
+                      <Td isLast={isLast} style={topProductosTdStyle}>
                         <StatusBadge variant={p.downsellOrders > 0 ? 'warning' : 'paused'}>
                           {p.downsellOrders > 0 ? `Sí (${p.downsellOrders})` : 'No'}
                         </StatusBadge>
@@ -1024,7 +1045,13 @@ export default function AnalisisProductoPage() {
                   <tr>
                     <td
                       colSpan={14}
-                      style={{ padding: '12px 16px', fontSize: 12, color: ds.textMuted, borderBottom: 'none' }}
+                      style={{
+                        padding: '8px 10px',
+                        fontSize: 12,
+                        color: ds.textMuted,
+                        borderBottom: 'none',
+                        whiteSpace: 'normal',
+                      }}
                     >
                       {loading ? 'Cargando productos top…' : 'No hay datos para los filtros seleccionados.'}
                     </td>
@@ -1059,23 +1086,13 @@ export default function AnalisisProductoPage() {
       ) : (
       <div className="analisis-producto-grid" style={{ display: 'grid', gridTemplateColumns: '1.7fr 1fr', gap: 16 }}>
         <section style={{ minWidth: 0 }}>
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'minmax(200px,1fr) auto',
-              gap: 8,
-              marginBottom: 12,
-            }}
-          >
+          <div style={{ marginBottom: 12 }}>
             <input
               style={inputStyle}
               placeholder="Buscar producto"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
             />
-            <button type="button" style={{ ...inputStyle, width: 'auto', cursor: 'pointer', fontWeight: 600 }}>
-              Filtro
-            </button>
           </div>
 
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,minmax(150px,1fr))', gap: 10, marginBottom: 12 }}>
