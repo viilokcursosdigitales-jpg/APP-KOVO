@@ -27,6 +27,8 @@ type SeriesPayload = {
   meta_partial_errors?: { adAccountId: string; error: string }[];
   available_months?: string[];
   months_applied?: string[];
+  /** 7 cuando el servidor acotó a últimos 7 días (sin months ni meta_period). */
+  implicit_window_days?: number | null;
   product_options?: { key: string; label: string; product_id: number | null }[];
   product_id_applied?: number | null;
   product_spend_allocation?: string | null;
@@ -292,8 +294,6 @@ export default function GananciaDiariaPage() {
   const [rangeEndIdx, setRangeEndIdx] = useState(0);
   const [draggingRangeThumb, setDraggingRangeThumb] = useState<'start' | 'end' | null>(null);
   const hasHydratedFromCache = useRef(false);
-  const skipSeriesEffectOnce = useRef(false);
-  const appliedDefaultMonthsOnce = useRef(false);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
   const rangeSliderTrackRef = useRef<HTMLDivElement>(null);
 
@@ -328,9 +328,8 @@ export default function GananciaDiariaPage() {
   }, []);
 
   const loadSeries = useCallback(async () => {
-    const useServerDefault = !appliedDefaultMonthsOnce.current && selectedMonths.length === 0;
     const qs = new URLSearchParams();
-    if (!useServerDefault && selectedMonths.length > 0) {
+    if (selectedMonths.length > 0) {
       qs.set('months', selectedMonths.join(','));
     }
     if (selectedProductId) {
@@ -344,11 +343,6 @@ export default function GananciaDiariaPage() {
       setSeriesData(cached);
       if (cached.available_months?.length) setMonthOptions(cached.available_months);
       if (Array.isArray(cached.product_options)) setProductOptions(cached.product_options);
-      if (selectedMonths.length === 0 && cached.months_applied?.length) {
-        appliedDefaultMonthsOnce.current = true;
-        skipSeriesEffectOnce.current = true;
-        setSelectedMonths(cached.months_applied);
-      }
       setSeriesLoading(false);
     } else {
       setSeriesLoading(true);
@@ -366,11 +360,6 @@ export default function GananciaDiariaPage() {
       if (body.available_months?.length) setMonthOptions(body.available_months);
       if (Array.isArray(body.product_options)) setProductOptions(body.product_options);
       writeSeriesCache(cacheKey, body);
-      if (!appliedDefaultMonthsOnce.current && selectedMonths.length === 0 && body.months_applied?.length) {
-        appliedDefaultMonthsOnce.current = true;
-        skipSeriesEffectOnce.current = true;
-        setSelectedMonths(body.months_applied);
-      }
     } catch {
       if (!cached) {
         setSeriesData(null);
@@ -382,12 +371,8 @@ export default function GananciaDiariaPage() {
   }, [selectedMonths, selectedProductId, readSeriesCache, writeSeriesCache]);
 
   useEffect(() => {
-    if (skipSeriesEffectOnce.current) {
-      skipSeriesEffectOnce.current = false;
-      return;
-    }
     void loadSeries();
-  }, [selectedMonths, selectedProductId, loadSeries]);
+  }, [loadSeries]);
 
   useEffect(() => {
     try {
@@ -413,11 +398,19 @@ export default function GananciaDiariaPage() {
     return seriesData.meta_partial_errors.map((e) => `${e.adAccountId}: ${e.error}`).join(' · ');
   }, [seriesData]);
 
+  const appliedPeriodLabel = useMemo(() => {
+    if (selectedMonths.length > 0) return selectedMonths.map(formatMonthLabel).join(', ');
+    if (seriesData?.implicit_window_days === 7) return 'Últimos 7 días';
+    const m = seriesData?.months_applied;
+    if (m?.length) return m.map(formatMonthLabel).join(', ');
+    return 'Predeterminado';
+  }, [selectedMonths, seriesData?.implicit_window_days, seriesData?.months_applied]);
+
   const availableMonths = monthOptions.length > 0 ? monthOptions : seriesData?.available_months ?? [];
   const availableProducts = productOptions.length > 0 ? productOptions : seriesData?.product_options ?? [];
 
   const openMonthsPanel = () => {
-    setPendingMonths(selectedMonths.length > 0 ? [...selectedMonths] : [...(seriesData?.months_applied ?? [])]);
+    setPendingMonths(selectedMonths.length > 0 ? [...selectedMonths] : []);
     setMonthsPanelOpen(true);
   };
 
@@ -578,18 +571,15 @@ export default function GananciaDiariaPage() {
         <>
           <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted }}>
             Período aplicado:{' '}
-            <strong style={{ color: ds.textSecondary }}>
-              {(seriesData?.months_applied || selectedMonths).length
-                ? (seriesData?.months_applied || selectedMonths).map(formatMonthLabel).join(', ')
-                : 'Mes actual'}
-            </strong>
+            <strong style={{ color: ds.textSecondary }}>{appliedPeriodLabel}</strong>
             {seriesData?.shop_calendar_timezone ? (
               <>
                 {' '}
                 · Zona tienda: <code style={{ fontSize: 11 }}>{seriesData.shop_calendar_timezone}</code>
               </>
             ) : null}
-            . Los KPI y la tabla usan el/los mes(es) seleccionados; el rango de fechas acota los días mostrados.
+            . Sin meses en el filtro se cargan los últimos 7 días; con meses seleccionados se cargan todos los días de
+            esos meses. El deslizador solo acota qué días ves en pantalla.
           </p>
           {dayKeys.length > 0 && daysInRange.length !== days.length ? (
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textHint }}>
@@ -833,10 +823,7 @@ export default function GananciaDiariaPage() {
                   opacity: !availableMonths.length ? 0.55 : 1,
                 }}
               >
-                Meses:{' '}
-                {selectedMonths.length > 0
-                  ? selectedMonths.map(formatMonthLabel).join(', ')
-                  : seriesData?.months_applied?.map(formatMonthLabel).join(', ') || '…'}
+                Meses: {appliedPeriodLabel}
                 <span style={{ float: 'right', opacity: 0.6 }}>{monthsPanelOpen ? '▲' : '▼'}</span>
               </button>
               {monthsPanelOpen ? (

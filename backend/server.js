@@ -7084,7 +7084,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
   }
 });
 
-/** Detalle por día (tabla). ?months=2026-04,2026-03 opcional; por defecto el mes calendario actual en la tienda. */
+/** Detalle por día (tabla). ?months=2026-04,2026-03 opcional; sin months ni meta_period: últimos 7 días (calendario tienda). */
 app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const cacheKey = cacheKeyForRequest(req, 'ganancia_diaria_series');
@@ -7116,15 +7116,16 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     const available_months = gananciaDiariaSelectableMonthKeys(todayYmd);
     const allowed = new Set(available_months);
     const metaPeriodRaw = typeof req.query.meta_period === 'string' ? req.query.meta_period.trim().toLowerCase() : '';
+    let usedImplicitLast7d = false;
 
     let requested = gananciaDiariaParseMonthsQuery(req.query.months);
     requested = [...new Set(requested)].filter((k) => allowed.has(k));
-    if (requested.length === 0) {
-      requested = [
-        `${String(todayYmd.y).padStart(4, '0')}-${String(todayYmd.m).padStart(2, '0')}`,
-      ];
+    const explicitMonthsSelected = requested.length > 0;
+    if (!explicitMonthsSelected) {
+      requested = [];
+    } else {
+      requested.sort();
     }
-    requested.sort();
 
     let sortedAsc = [];
     if (metaPeriodRaw) {
@@ -7141,7 +7142,28 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       }
     }
     if (!sortedAsc.length) {
-      sortedAsc = gananciaDiariaExpandMonthKeysToDayStrings(requested, jan1Ymd, todayYmd);
+      if (explicitMonthsSelected) {
+        sortedAsc = gananciaDiariaExpandMonthKeysToDayStrings(requested, jan1Ymd, todayYmd);
+      } else {
+        const win7 = gananciaDiariaWindowFromMetaPeriod('7d', todayYmd);
+        if (win7) {
+          let since = win7.since;
+          const jan1 = gananciaDiariaYmdKey(jan1Ymd);
+          const today = gananciaDiariaYmdKey(todayYmd);
+          if (since < jan1) since = jan1;
+          if (since > today) since = today;
+          sortedAsc = gananciaDiariaExpandYmdRange(since, today);
+          const monthSet = new Set(sortedAsc.map((d) => String(d).slice(0, 7)).filter((m) => allowed.has(m)));
+          if (monthSet.size) requested = [...monthSet].sort();
+          if (sortedAsc.length) usedImplicitLast7d = true;
+        }
+        if (!sortedAsc.length) {
+          requested = [
+            `${String(todayYmd.y).padStart(4, '0')}-${String(todayYmd.m).padStart(2, '0')}`,
+          ];
+          sortedAsc = gananciaDiariaExpandMonthKeysToDayStrings(requested, jan1Ymd, todayYmd);
+        }
+      }
     }
     if (sortedAsc.length === 0) {
       return sendCached({
@@ -7153,6 +7175,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         meta_partial_errors: [],
         available_months,
         months_applied: requested,
+        implicit_window_days: null,
         days: [],
         product_options: [],
       });
@@ -7473,6 +7496,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       meta_partial_errors: metaPartialErrors,
       available_months,
       months_applied: requested,
+      implicit_window_days: usedImplicitLast7d ? 7 : null,
       days: filteredDays,
       product_options,
       product_id_applied: hasProductFilter ? productIdFilterNum : null,
