@@ -95,6 +95,22 @@ function parsePercentInput(raw: string): number {
   return n;
 }
 
+/** Encabezados de tabla: una línea por elemento, sin partir palabras al ancho de columna. */
+function GananciaThStack({ parts }: { parts: readonly string[] }) {
+  return (
+    <>
+      {parts.map((line, i) => (
+        <span
+          key={`${i}-${line}`}
+          style={{ display: 'block', whiteSpace: 'nowrap', textAlign: 'inherit' }}
+        >
+          {line}
+        </span>
+      ))}
+    </>
+  );
+}
+
 /** Misma utilidad que muestra la tabla por día: API − % admin sobre ventas entregadas. */
 function utilidadMostradaPorDia(
   row: SeriesDayRow,
@@ -148,19 +164,19 @@ const thTdColSizing: CSSProperties = {
 const thColLeft: CSSProperties = { ...thStyle, ...thTdColSizing };
 const thColRight: CSSProperties = { ...thRight, ...thTdColSizing };
 
-/** Encabezados: texto completo o varias líneas; sin nowrap para poder partir palabras con <br />. */
+/** Encabezados: líneas controladas; sin partir palabras (evita PRODUC|TO). */
 const thHeadPad: CSSProperties = {
   paddingTop: 8,
   paddingBottom: 8,
   paddingLeft: 20,
   paddingRight: 20,
   boxSizing: 'border-box',
-  width: '1%',
-  minWidth: 0,
+  width: 'max-content',
+  wordBreak: 'normal',
+  overflowWrap: 'normal',
+  hyphens: 'manual',
   whiteSpace: 'normal',
-  wordBreak: 'break-word',
   lineHeight: 1.25,
-  hyphens: 'auto',
   verticalAlign: 'bottom',
 };
 
@@ -176,14 +192,14 @@ const thColHeadPedidos: CSSProperties = {
   paddingRight: 20,
   boxSizing: 'border-box',
   whiteSpace: 'nowrap',
-  width: '1%',
+  width: 'max-content',
   verticalAlign: 'bottom',
   lineHeight: 1.25,
   wordBreak: 'normal',
   hyphens: 'manual',
 };
 
-/** Ventas despachadas: ancho al texto más largo (encabezado o celdas) + 20px lateral. */
+/** Ventas despachadas: ancho según contenido del encabezado (líneas nowrap). */
 const thColHeadVentasDespachadas: CSSProperties = {
   ...thRight,
   paddingTop: 8,
@@ -191,7 +207,7 @@ const thColHeadVentasDespachadas: CSSProperties = {
   paddingLeft: 20,
   paddingRight: 20,
   boxSizing: 'border-box',
-  width: '1%',
+  width: 'max-content',
   verticalAlign: 'bottom',
   lineHeight: 1.25,
   whiteSpace: 'normal',
@@ -199,7 +215,7 @@ const thColHeadVentasDespachadas: CSSProperties = {
   hyphens: 'manual',
 };
 
-/** Cantidad / producto: ancho = palabra más larga del encabezado + 20px lateral. */
+/** Cantidad / producto */
 const thColHeadCantidad: CSSProperties = {
   ...thRight,
   paddingTop: 8,
@@ -207,7 +223,7 @@ const thColHeadCantidad: CSSProperties = {
   paddingLeft: 20,
   paddingRight: 20,
   boxSizing: 'border-box',
-  width: '1%',
+  width: 'max-content',
   verticalAlign: 'bottom',
   lineHeight: 1.25,
   whiteSpace: 'normal',
@@ -965,65 +981,57 @@ export default function GananciaDiariaPage() {
                 <table style={tableStyle}>
                   <thead>
                     <tr style={{ background: '#6c47ff' }}>
-                      <th style={thColHeadLeft}>Día</th>
+                      <th style={thColHeadLeft}>
+                        <span style={{ whiteSpace: 'nowrap' }}>Día</span>
+                      </th>
                       <th style={thColHeadVentasDespachadas}>
-                        <span style={{ display: 'block', whiteSpace: 'nowrap' }}>Ventas</span>
-                        <span style={{ display: 'block', whiteSpace: 'nowrap' }}>despachadas</span>
+                        <GananciaThStack parts={['Ventas', 'despachadas']} />
                       </th>
                       <th style={thColHeadRight}>
-                        Ventas
-                        <br />
-                        entregadas
+                        <GananciaThStack parts={['Ventas', 'entregadas']} />
                       </th>
-                      <th style={thColHeadPedidos}>Pedidos</th>
+                      <th style={thColHeadPedidos}>
+                        <span style={{ whiteSpace: 'nowrap' }}>Pedidos</span>
+                      </th>
                       <th style={thColHeadCantidad}>
-                        <span style={{ display: 'block', whiteSpace: 'nowrap' }}>Cantidad</span>
-                        <span style={{ display: 'block', whiteSpace: 'nowrap' }}>producto</span>
+                        <GananciaThStack parts={['Cantidad', 'producto']} />
                       </th>
                       <th style={thColHeadRight}>
-                        Gasto
-                        <br />
-                        admon
+                        <GananciaThStack parts={['Gasto', 'admon']} />
                       </th>
                       <th style={thColHeadRight}>
-                        Costo
-                        <br />
-                        producto
+                        <GananciaThStack parts={['Costo', 'producto']} />
                       </th>
                       <th style={thColHeadRight}>
-                        Costo
-                        <br />
-                        entregado
+                        <GananciaThStack parts={['Costo', 'entregado']} />
                       </th>
                       <th style={thColHeadRight}>
-                        % Costo
-                        <br />
-                        del producto
+                        <GananciaThStack parts={['% Costo', 'del producto']} />
                       </th>
                       <th style={thColHeadRight}>
-                        Flete
-                        <br />
-                        promedio
+                        <GananciaThStack parts={['Flete', 'promedio']} />
                       </th>
                       <th style={thColHeadRight}>
-                        %
-                        <br />
-                        Flete
+                        <GananciaThStack parts={['%', 'Flete']} />
                       </th>
                       <th style={thColHeadRight}>
-                        Gasto
-                        <br />
-                        Meta
+                        <GananciaThStack parts={['Gasto', 'Meta']} />
                       </th>
                       <th style={thColHeadRight}>
-                        %
-                        <br />
-                        Publicidad
+                        <GananciaThStack parts={['%', 'Publicidad']} />
                       </th>
-                      <th style={thColHeadRight}>Utilidad</th>
-                      <th style={thColHeadRight}>ROAS</th>
-                      <th style={thColHeadRight}>ROAS Real</th>
-                      <th style={thColHeadRight}>ROAS Equilibrio</th>
+                      <th style={thColHeadRight}>
+                        <span style={{ whiteSpace: 'nowrap' }}>Utilidad</span>
+                      </th>
+                      <th style={thColHeadRight}>
+                        <span style={{ whiteSpace: 'nowrap' }}>ROAS</span>
+                      </th>
+                      <th style={thColHeadRight}>
+                        <GananciaThStack parts={['ROAS', 'Real']} />
+                      </th>
+                      <th style={thColHeadRight}>
+                        <GananciaThStack parts={['ROAS', 'Equilibrio']} />
+                      </th>
                     </tr>
                   </thead>
                   <tbody>

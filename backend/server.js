@@ -5600,7 +5600,26 @@ function collectOrderLineProductIdsForPricing(orders, lineTitleToProductIdMap) {
   return pids;
 }
 
-function calculateOrderManualCosts(order, pricingMap, titleToProductIdMap) {
+/** Mensajero en `shopify_order_local_fields` o en pedido manual (`mapMoticoManualOrderRowFromDb`). */
+function gananciaOrderMensajeroForFreight(order, lf) {
+  const fromLf = lf && lf.mensajero != null ? String(lf.mensajero).trim() : '';
+  if (fromLf) return fromLf;
+  const fromOrder = order && order.mensajero != null ? String(order.mensajero).trim() : '';
+  return fromOrder || '';
+}
+
+function gananciaLocalFieldsForFreight(order, lf) {
+  const m = gananciaOrderMensajeroForFreight(order, lf);
+  return m ? { mensajero: m } : null;
+}
+
+/**
+ * Costos de inventario por pedido (ganancia diaria, comisiones, etc.).
+ * Flete: **manual** (`manual_avg_freight_price`) salvo si el mensajero es Motico (módulo Pedidos), entonces **Motico**
+ * (`manual_avg_freight_price_motico`) con respaldo al manual si falta Motico — misma regla que la tabla de Pedidos.
+ * @param {object|null|undefined} orderLocalFields preferentemente fila `shopify_order_local_fields` o `{ mensajero }`.
+ */
+function calculateOrderManualCosts(order, pricingMap, titleToProductIdMap, orderLocalFields) {
   const detail = Array.isArray(order?.lineItemsDetail) ? order.lineItemsDetail : [];
   let productCost = 0;
   let productDeliveredCost = 0;
@@ -5642,10 +5661,25 @@ function calculateOrderManualCosts(order, pricingMap, titleToProductIdMap) {
     deliveryEffectivenessQty += qty;
   }
   let avgFreightCost = 0;
-  if (freightByProduct.size > 0) {
+  const manualAvgFreightFromLines = () => {
+    if (freightByProduct.size === 0) return 0;
     let freightSum = 0;
     for (const value of freightByProduct.values()) freightSum += value;
-    avgFreightCost = freightSum / freightByProduct.size;
+    return freightSum / freightByProduct.size;
+  };
+  const useMoticoCourier =
+    String(orderLocalFields?.mensajero ?? '')
+      .trim()
+      .toLowerCase() === 'motico';
+  if (useMoticoCourier) {
+    const moticoFl = calculateOrderMoticoFreightCost(order, pricingMap, titleToProductIdMap);
+    if (moticoFl != null && Number.isFinite(moticoFl)) {
+      avgFreightCost = moticoFl;
+    } else {
+      avgFreightCost = manualAvgFreightFromLines();
+    }
+  } else {
+    avgFreightCost = manualAvgFreightFromLines();
   }
   const deliveryEffectivenessPct =
     deliveryEffectivenessQty > 0 ? deliveryEffectivenessWeight / deliveryEffectivenessQty : 100;
@@ -5790,10 +5824,10 @@ function calculateOrderMoticoFreightCost(order, pricingMap, titleToProductIdMap)
  * Reparte ventas, costos y flete del pedido entre productos (líneas) por participación en ingreso de líneas.
  * Devuelve Map productKey -> acumulados para agregar por día.
  */
-function gananciaProductContributionsForOrder(order, pricingMap, titleToProductIdMap) {
+function gananciaProductContributionsForOrder(order, pricingMap, titleToProductIdMap, orderLocalFields) {
   const amt = parseFloat(String(order?.total || '0').replace(',', '.'));
   if (!Number.isFinite(amt) || amt < 0) return null;
-  const costs = calculateOrderManualCosts(order, pricingMap, titleToProductIdMap);
+  const costs = calculateOrderManualCosts(order, pricingMap, titleToProductIdMap, orderLocalFields);
   const effPct = Number.isFinite(costs.deliveryEffectivenessPct) ? costs.deliveryEffectivenessPct : 100;
   const orderVentasEntregadas = amt * (effPct / 100);
   const detail = Array.isArray(order?.lineItemsDetail) ? order.lineItemsDetail : [];
@@ -6637,7 +6671,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
         }
       }
       orders = orders.map((o) => {
-        const costs = calculateOrderManualCosts(o, pricingMap, lineTitleToProductIdMap);
+        const costs = calculateOrderManualCosts(o, pricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, null));
         return {
           ...o,
           product_cost: costs.productCost,
@@ -6971,7 +7005,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasTotal += amt;
       ventasPedidos += 1;
-      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap);
+      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, lf));
       ventasEntregadasTotal += amt * ((costs.deliveryEffectivenessPct ?? 100) / 100);
       costoProductoTotal += costs.productCost;
       costoProductoEntregadoTotal += costs.productDeliveredCost;
@@ -6992,7 +7026,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       if (!Number.isFinite(amt) || amt < 0) continue;
       ventasTotal += amt;
       ventasPedidos += 1;
-      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap);
+      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, null));
       ventasEntregadasTotal += amt * ((costs.deliveryEffectivenessPct ?? 100) / 100);
       costoProductoTotal += costs.productCost;
       costoProductoEntregadoTotal += costs.productDeliveredCost;
@@ -7231,7 +7265,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       pedidosByDay.set(key, (pedidosByDay.get(key) || 0) + 1);
       const qtyOrder = effectiveOrderProductQuantityForGanancia(o, lf);
       qtyByDay.set(key, (qtyByDay.get(key) || 0) + qtyOrder);
-      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap);
+      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, lf));
       ventasEntregadasByDay.set(
         key,
         (ventasEntregadasByDay.get(key) || 0) + amt * ((costs.deliveryEffectivenessPct ?? 100) / 100),
@@ -7245,7 +7279,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         key,
         (costoFletePromedioByDay.get(key) || 0) + costs.avgFreightCost,
       );
-      const pack = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap);
+      const pack = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, lf));
       if (pack) gananciaMergeProductDay(touchDayProducts(key), pack.contrib);
     }
     for (const o of manualRows) {
@@ -7266,7 +7300,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       pedidosByDay.set(key, (pedidosByDay.get(key) || 0) + 1);
       const qtyOrder = effectiveOrderProductQuantityForGanancia(o, null);
       qtyByDay.set(key, (qtyByDay.get(key) || 0) + qtyOrder);
-      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap);
+      const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, null));
       ventasEntregadasByDay.set(
         key,
         (ventasEntregadasByDay.get(key) || 0) + amt * ((costs.deliveryEffectivenessPct ?? 100) / 100),
@@ -7280,7 +7314,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         key,
         (costoFletePromedioByDay.get(key) || 0) + costs.avgFreightCost,
       );
-      const packM = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap);
+      const packM = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, null));
       if (packM) gananciaMergeProductDay(touchDayProducts(key), packM.contrib);
     }
 
