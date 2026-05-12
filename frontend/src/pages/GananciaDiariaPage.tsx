@@ -442,6 +442,8 @@ export default function GananciaDiariaPage() {
     return [...s].filter(Boolean).sort();
   }, [days]);
 
+  const dayKeysSig = useMemo(() => dayKeys.join('|'), [dayKeys]);
+
   useEffect(() => {
     if (dayKeys.length === 0) {
       setRangeStartIdx(0);
@@ -449,9 +451,9 @@ export default function GananciaDiariaPage() {
       return;
     }
     const last = dayKeys.length - 1;
-    setRangeStartIdx((prev) => Math.max(0, Math.min(prev, last)));
-    setRangeEndIdx((prev) => Math.max(0, Math.min(prev, last)));
-  }, [dayKeys]);
+    setRangeStartIdx(0);
+    setRangeEndIdx(last);
+  }, [dayKeysSig]);
 
   const effectiveRangeIdx = useMemo(() => {
     if (dayKeys.length === 0) return { start: 0, end: 0 };
