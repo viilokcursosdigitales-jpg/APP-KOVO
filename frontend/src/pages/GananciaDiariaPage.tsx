@@ -554,7 +554,7 @@ export default function GananciaDiariaPage() {
 
   return (
     <div style={{ width: '100%', maxWidth: 1440 }}>
-      <PageHeader title="GANANCIA DIARIA ESTIMADA" />
+      <PageHeader title="GANANCIA DIARIA ESTIMADA" titleFitLongestWord />
 
       {!seriesError ? (
         <>

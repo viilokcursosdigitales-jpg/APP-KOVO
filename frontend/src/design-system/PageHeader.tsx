@@ -10,15 +10,22 @@ function formatHeaderDate() {
   }).format(new Date());
 }
 
+const TITLE_FIT_LONGEST_PAD_X = 10;
+
 export function PageHeader({
   title,
   subtitle,
   right,
+  titleFitLongestWord,
 }: {
   title: string;
   subtitle?: string;
   right?: ReactNode;
+  /** Ancho del título = palabra más ancha + padding horizontal (p. ej. tres palabras en columna). */
+  titleFitLongestWord?: boolean;
 }) {
+  const titleWords = title.trim().split(/\s+/).filter(Boolean);
+
   return (
     <header
       style={{
@@ -49,9 +56,35 @@ export function PageHeader({
             fontWeight: 700,
             color: ds.textPrimary,
             lineHeight: 1.2,
+            ...(titleFitLongestWord ? { display: 'inline-block', maxWidth: '100%' } : {}),
           }}
         >
-          {title}
+          {titleFitLongestWord && titleWords.length > 1 ? (
+            <span
+              style={{
+                display: 'inline-block',
+                paddingLeft: TITLE_FIT_LONGEST_PAD_X,
+                paddingRight: TITLE_FIT_LONGEST_PAD_X,
+                boxSizing: 'border-box',
+              }}
+            >
+              {titleWords.map((word, i) => (
+                <span
+                  key={`${i}-${word}`}
+                  style={{
+                    display: 'block',
+                    whiteSpace: 'nowrap',
+                    textAlign: 'center',
+                    lineHeight: 1.15,
+                  }}
+                >
+                  {word}
+                </span>
+              ))}
+            </span>
+          ) : (
+            title
+          )}
         </h1>
         {subtitle ? (
           <p style={{ margin: '8px 0 0', fontSize: 13, color: ds.textSecondary, maxWidth: 560 }}>{subtitle}</p>
