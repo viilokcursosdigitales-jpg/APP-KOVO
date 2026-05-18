@@ -507,36 +507,57 @@ export default function ReporteDropiPage() {
       .sort((a, b) => b.sv - a.sv);
   }, [filteredRows]);
 
-  const productPnl = useMemo(() => {
-    const map = new Map<string, { ventas: number; cp: number; cf: number; fd: number; gan: number }>();
+  const estadoResultadosEntregados = useMemo(() => {
+    let ventas = 0;
+    let costoProducto = 0;
+    let costoFlete = 0;
+    let costoFleteDevolucion = 0;
     for (const r of filteredRows) {
+      if (r.estatusNorm !== 'ENTREGADO') continue;
+      ventas += r.totalOrden;
+      costoProducto += r.costoProducto;
+      costoFlete += r.precioFlete;
+      costoFleteDevolucion += r.costoDevolucionFlete;
+    }
+    const gananciaBruta = ventas - costoProducto - costoFlete - costoFleteDevolucion;
+    const margenBruto = ventas > 0 ? (gananciaBruta / ventas) * 100 : 0;
+    return { ventas, costoProducto, costoFlete, costoFleteDevolucion, gananciaBruta, margenBruto };
+  }, [filteredRows]);
+
+  const productPnl = useMemo(() => {
+    const map = new Map<string, { ventas: number; cp: number; cf: number; fd: number }>();
+    for (const r of filteredRows) {
+      if (r.estatusNorm !== 'ENTREGADO') continue;
       const k = r.producto;
-      if (!map.has(k)) map.set(k, { ventas: 0, cp: 0, cf: 0, fd: 0, gan: 0 });
+      if (!map.has(k)) map.set(k, { ventas: 0, cp: 0, cf: 0, fd: 0 });
       const a = map.get(k)!;
       a.ventas += r.totalOrden;
       a.cp += r.costoProducto;
       a.cf += r.precioFlete;
       a.fd += r.costoDevolucionFlete;
-      a.gan += r.ganancia;
     }
     const rows = Array.from(map.entries()).map(([producto, v]) => {
-      const margen = v.ventas > 0 ? (v.gan / v.ventas) * 100 : 0;
-      return { producto, ...v, margen };
+      const gananciaBruta = v.ventas - v.cp - v.cf - v.fd;
+      const margenBruto = v.ventas > 0 ? (gananciaBruta / v.ventas) * 100 : 0;
+      return { producto, ...v, gananciaBruta, margenBruto };
     });
-    rows.sort((a, b) => b.gan - a.gan);
+    rows.sort((a, b) => b.gananciaBruta - a.gananciaBruta);
     const totals = rows.reduce(
       (acc, r) => {
         acc.ventas += r.ventas;
         acc.cp += r.cp;
         acc.cf += r.cf;
         acc.fd += r.fd;
-        acc.gan += r.gan;
         return acc;
       },
-      { ventas: 0, cp: 0, cf: 0, fd: 0, gan: 0 },
+      { ventas: 0, cp: 0, cf: 0, fd: 0 },
     );
-    const margenTotal = totals.ventas > 0 ? (totals.gan / totals.ventas) * 100 : 0;
-    return { rows, totals: { ...totals, margen: margenTotal } };
+    const gananciaBrutaTotal = totals.ventas - totals.cp - totals.cf - totals.fd;
+    const margenBrutoTotal = totals.ventas > 0 ? (gananciaBrutaTotal / totals.ventas) * 100 : 0;
+    return {
+      rows,
+      totals: { ...totals, gananciaBruta: gananciaBrutaTotal, margenBruto: margenBrutoTotal },
+    };
   }, [filteredRows]);
 
   const statusCounts = useMemo(() => {
@@ -602,8 +623,8 @@ export default function ReporteDropiPage() {
   const barProductGanancia: ChartData<'bar'> = useMemo(() => {
     const slice = productPnl.rows.slice(0, 7);
     const labels = slice.map((r) => r.producto);
-    const data = slice.map((r) => r.gan);
-    const backgroundColor = slice.map((r) => marginBarColor(r.margen));
+    const data = slice.map((r) => r.gananciaBruta);
+    const backgroundColor = slice.map((r) => marginBarColor(r.margenBruto));
     return {
       labels,
       datasets: [
@@ -1297,12 +1318,72 @@ export default function ReporteDropiPage() {
           </div>
         </section>
         <section>
-          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Estado de resultados por producto</h3>
+          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Estado de resultados (entregados)</h3>
+          <p style={{ fontSize: 12, color: ds.textSecondary, margin: '0 0 12px', lineHeight: 1.5 }}>
+            Solo pedidos con estatus ENTREGADO. Ganancia bruta = ventas − costo producto − costo flete − costo flete devolución.
+          </p>
           <div style={tableWrapStyle()}>
             <table style={{ width: '100%', borderCollapse: 'collapse' }}>
               <thead>
                 <tr>
-                  {['Producto', 'Ventas brutas', 'Costo producto', 'Costo flete', 'Flete devolución', 'Ganancia neta', 'Margen', 'Rentabilidad'].map((h) => (
+                  {[
+                    'Ventas entregados',
+                    'Costo producto entregados',
+                    'Costo de flete',
+                    'Costo flete devolución',
+                    'Ganancia bruta',
+                    'Margen bruto',
+                  ].map((h) => (
+                    <th key={h} style={thStyle()}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style={{ ...tdStyle(), fontWeight: 700 }}>{formatCOP(estadoResultadosEntregados.ventas)}</td>
+                  <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>
+                    -{formatCOP(estadoResultadosEntregados.costoProducto)}
+                  </td>
+                  <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>
+                    -{formatCOP(estadoResultadosEntregados.costoFlete)}
+                  </td>
+                  <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>
+                    -{formatCOP(estadoResultadosEntregados.costoFleteDevolucion)}
+                  </td>
+                  <td style={{ ...tdStyle(), color: C.gainText, fontWeight: 800 }}>
+                    {formatCOP(estadoResultadosEntregados.gananciaBruta)}
+                  </td>
+                  <td style={tdStyle()}>
+                    <Badge
+                      bg={marginBadgeStyle(estadoResultadosEntregados.margenBruto).bg}
+                      color={marginBadgeStyle(estadoResultadosEntregados.margenBruto).color}
+                    >
+                      {formatPct(estadoResultadosEntregados.margenBruto)}
+                    </Badge>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section>
+          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Estado de resultados por producto (entregados)</h3>
+          <div style={tableWrapStyle()}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {[
+                    'Producto',
+                    'Ventas entregados',
+                    'Costo producto',
+                    'Costo flete',
+                    'Flete devolución',
+                    'Ganancia bruta',
+                    'Margen bruto',
+                    'Rentabilidad',
+                  ].map((h) => (
                     <th key={h} style={thStyle()}>
                       {h}
                     </th>
@@ -1311,7 +1392,7 @@ export default function ReporteDropiPage() {
               </thead>
               <tbody>
                 {productPnl.rows.map((r) => {
-                  const st = marginBadgeStyle(r.margen);
+                  const st = marginBadgeStyle(r.margenBruto);
                   return (
                     <tr key={r.producto}>
                       <td style={tdStyle()}>{r.producto}</td>
@@ -1319,14 +1400,14 @@ export default function ReporteDropiPage() {
                       <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>-{formatCOP(r.cp)}</td>
                       <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>-{formatCOP(r.cf)}</td>
                       <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>-{formatCOP(r.fd)}</td>
-                      <td style={{ ...tdStyle(), color: C.gainText, fontWeight: 700 }}>{formatCOP(r.gan)}</td>
+                      <td style={{ ...tdStyle(), color: C.gainText, fontWeight: 700 }}>{formatCOP(r.gananciaBruta)}</td>
                       <td style={tdStyle()}>
                         <Badge bg={st.bg} color={st.color}>
-                          {formatPct(r.margen)}
+                          {formatPct(r.margenBruto)}
                         </Badge>
                       </td>
                       <td style={tdStyle()}>
-                        <MiniBar pct={Math.min(100, Math.max(0, r.margen))} color={marginBarColor(r.margen)} />
+                        <MiniBar pct={Math.min(100, Math.max(0, r.margenBruto))} color={marginBarColor(r.margenBruto)} />
                       </td>
                     </tr>
                   );
@@ -1342,14 +1423,20 @@ export default function ReporteDropiPage() {
                   <td style={{ ...tdStyle(), color: C.costText }}>-{formatCOP(productPnl.totals.cp)}</td>
                   <td style={{ ...tdStyle(), color: C.costText }}>-{formatCOP(productPnl.totals.cf)}</td>
                   <td style={{ ...tdStyle(), color: C.costText }}>-{formatCOP(productPnl.totals.fd)}</td>
-                  <td style={{ ...tdStyle(), color: C.gainText }}>{formatCOP(productPnl.totals.gan)}</td>
+                  <td style={{ ...tdStyle(), color: C.gainText }}>{formatCOP(productPnl.totals.gananciaBruta)}</td>
                   <td style={tdStyle()}>
-                    <Badge bg={marginBadgeStyle(productPnl.totals.margen).bg} color={marginBadgeStyle(productPnl.totals.margen).color}>
-                      {formatPct(productPnl.totals.margen)}
+                    <Badge
+                      bg={marginBadgeStyle(productPnl.totals.margenBruto).bg}
+                      color={marginBadgeStyle(productPnl.totals.margenBruto).color}
+                    >
+                      {formatPct(productPnl.totals.margenBruto)}
                     </Badge>
                   </td>
                   <td style={tdStyle()}>
-                    <MiniBar pct={Math.min(100, Math.max(0, productPnl.totals.margen))} color={marginBarColor(productPnl.totals.margen)} />
+                    <MiniBar
+                      pct={Math.min(100, Math.max(0, productPnl.totals.margenBruto))}
+                      color={marginBarColor(productPnl.totals.margenBruto)}
+                    />
                   </td>
                 </tr>
               </tbody>
@@ -1357,7 +1444,7 @@ export default function ReporteDropiPage() {
           </div>
         </section>
         <section>
-          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Ganancia por producto (color = margen %)</h3>
+          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Ganancia bruta por producto (color = margen bruto %)</h3>
           <div style={{ height: 280, position: 'relative', ...tableWrapStyle(), padding: 12 }}>
             <Bar data={barProductGanancia} options={barHorizOpts} />
           </div>
