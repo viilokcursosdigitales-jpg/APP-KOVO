@@ -72,7 +72,10 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
     { to: '/meta-ads', label: 'Campañas Meta', icon: <IconMegaphone />, moduleId: 'meta_ads' },
     { to: '/analisis-producto', label: 'Análisis de productos', icon: <IconProduct />, moduleId: 'analisis_producto' },
   ];
-  const logistica: NavItem[] = [{ to: '/reporte-dropi', label: 'Reporte Dropi', icon: <IconTruck />, moduleId: null }];
+  const logistica: NavItem[] = [
+    { to: '/reporte-dropi', label: 'Reporte Dropi', icon: <IconTruck />, moduleId: null },
+    { to: '/estado-resultado-motico', label: 'Estado resultado Motico', icon: <IconTruck />, moduleId: 'estado_resultado_motico' },
+  ];
   const finanzas: NavItem[] = [
     { to: '/ganancia-diaria', label: 'Ganancia diaria', icon: <IconTrendingUp />, moduleId: 'ganancia_diaria' },
     { to: '/comision-ventas', label: 'Comisión por venta', icon: <IconUsers />, moduleId: 'comision_ventas' },
@@ -95,6 +98,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   const group1Visible = visibleByAccess(group1);
   const marketingVisible = visibleByAccess(marketing);
   const finanzasVisible = visibleByAccess(finanzas);
+  const logisticaVisible = visibleByAccess(logistica);
   const integracionesVisible = visibleByAccess(integraciones);
   const configuracionVisible = visibleByAccess(configuracion);
 
@@ -320,7 +324,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
         {divider}
         {renderCollapsibleGroup('marketing', 'Marketing', <IconMegaphone />, marketingVisible)}
         {divider}
-        {renderCollapsibleGroup('logistica', 'Logística', <IconTruck />, logistica)}
+        {renderCollapsibleGroup('logistica', 'Logística', <IconTruck />, logisticaVisible)}
         {divider}
         {renderCollapsibleGroup('finanzas', 'Finanzas', <IconTrendingUp />, finanzasVisible)}
         {divider}

@@ -151,6 +151,7 @@ const CONFIGURABLE_MODULE_IDS = [
   'calculadora_cod',
   'planeacion_ventas',
   'comision_ventas',
+  'estado_resultado_motico',
 ];
 
 const MODULE_CATALOG_FOR_API = [
@@ -168,6 +169,7 @@ const MODULE_CATALOG_FOR_API = [
   { id: 'calculadora_cod', label: 'Calculadora COD', group: 'Marketing' },
   { id: 'planeacion_ventas', label: 'Planeación de Ventas', group: 'Marketing' },
   { id: 'comision_ventas', label: 'Comisión por Ventas', group: 'Marketing' },
+  { id: 'estado_resultado_motico', label: 'Estado de resultado Motico', group: 'Marketing' },
 ];
 
 const pool = createPool();

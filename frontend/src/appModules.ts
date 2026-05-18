@@ -14,6 +14,7 @@ export const APP_MODULE_IDS = [
   'calculadora_cod',
   'planeacion_ventas',
   'comision_ventas',
+  'estado_resultado_motico',
 ] as const;
 
 export type AppModuleId = (typeof APP_MODULE_IDS)[number];
@@ -33,6 +34,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'calculadora_cod', label: 'Calculadora COD', group: 'Marketing' },
   { id: 'planeacion_ventas', label: 'Planeación de Ventas', group: 'Marketing' },
   { id: 'comision_ventas', label: 'Comisión por venta', group: 'Marketing' },
+  { id: 'estado_resultado_motico', label: 'Estado de resultado Motico', group: 'Marketing' },
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
@@ -52,6 +54,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/calculadora-cod': 'calculadora_cod',
   '/planeacion-ventas': 'planeacion_ventas',
   '/comision-ventas': 'comision_ventas',
+  '/estado-resultado-motico': 'estado_resultado_motico',
 };
 
 const MODULE_TO_PATH: Record<AppModuleId, string> = {
@@ -69,6 +72,7 @@ const MODULE_TO_PATH: Record<AppModuleId, string> = {
   calculadora_cod: '/calculadora-cod',
   planeacion_ventas: '/planeacion-ventas',
   comision_ventas: '/comision-ventas',
+  estado_resultado_motico: '/estado-resultado-motico',
 };
 
 /** Orden para “primera pantalla” tras login o al bloquear una ruta. */

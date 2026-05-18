@@ -19,6 +19,7 @@ const PlaneacionVentasLayout = lazy(() => import('./pages/PlaneacionVentas/Plane
 const ListaMensualPlaneacion = lazy(() => import('./pages/PlaneacionVentas/ListaMensual'));
 const DetallePlanPlaneacion = lazy(() => import('./pages/PlaneacionVentas/DetallePlan'));
 const ComisionVentasPage = lazy(() => import('./pages/ComisionVentasPage'));
+const EstadoResultadoMoticoPage = lazy(() => import('./pages/EstadoResultadoMoticoPage'));
 const MetaAdsPage = lazy(() => import('./pages/MetaAdsPage'));
 const ConexionMetaPage = lazy(() => import('./pages/ConexionMetaPage'));
 const MoticoPage = lazy(() => import('./pages/MoticoPage'));
@@ -114,6 +115,7 @@ export default function App() {
               <Route path="/ganancia-diaria" element={<GananciaDiariaPage />} />
               <Route path="/calculadora-cod" element={<CalculadoraCodPage />} />
               <Route path="/comision-ventas" element={<ComisionVentasPage />} />
+              <Route path="/estado-resultado-motico" element={<EstadoResultadoMoticoPage />} />
               <Route path="/planeacion-ventas" element={<PlaneacionVentasLayout />}>
                 <Route index element={<ListaMensualPlaneacion />} />
                 <Route path=":id" element={<DetallePlanPlaneacion />} />
