@@ -205,15 +205,11 @@ function rowInDateRange(r: DropiRow, start: string, end: string): boolean {
 
 function formatCOP(n: number): string {
   if (!Number.isFinite(n)) return '—';
-  const abs = Math.abs(n);
-  if (abs >= 1_000_000 && abs < 1_000_000_000) {
-    return `$${(n / 1_000_000).toFixed(1)}M`;
-  }
-  return new Intl.NumberFormat('es-CO', {
-    style: 'currency',
-    currency: 'COP',
-    maximumFractionDigits: 0,
-  }).format(n);
+  const rounded = Math.round(n);
+  const sign = rounded < 0 ? '-' : '';
+  const digits = Math.abs(rounded).toString();
+  const withSeparators = digits.replace(/\B(?=(\d{3})+(?!\d))/g, '.');
+  return `${sign}$${withSeparators}`;
 }
 
 function formatPct(n: number, digits = 1): string {
