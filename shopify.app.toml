@@ -1,0 +1,21 @@
+# Configuración de referencia para la app Kovo en Shopify Partners.
+# Si usas Shopify CLI, despliega con `shopify app deploy`.
+# Si configuras a mano: Partner Dashboard → App → App setup → App proxy
+
+name = "Kovo"
+client_id = "eeb388c650a4342e822dc5dca2fb6b5b"
+application_url = "https://kovo.services"
+embedded = false
+
+[access_scopes]
+scopes = "read_orders,write_orders,read_products,write_products,read_inventory,write_inventory,read_customers,read_analytics,read_reports,read_fulfillments,write_fulfillments,read_shipping,read_locations"
+
+[auth]
+redirect_urls = [
+  "https://kovo.services/api/shopify/callback",
+]
+
+[app_proxy]
+url = "https://kovo.services/api/shopify-proxy/form"
+subpath = "kovo-form"
+prefix = "apps"

@@ -83,6 +83,31 @@ function verifyShopifyOAuthHmac(query, clientSecret) {
 }
 
 /**
+ * Firma de App Proxy (query.signature, hex).
+ * @see https://shopify.dev/docs/apps/build/online-store/app-proxies/authenticate-app-proxies
+ */
+function verifyShopifyAppProxySignature(query, clientSecret) {
+  const signature = query.signature;
+  if (!signature || typeof signature !== 'string' || !clientSecret) return false;
+  const params = { ...query };
+  delete params.signature;
+  const keys = Object.keys(params).sort();
+  const message = keys
+    .map((k) => {
+      const raw = params[k];
+      const val = Array.isArray(raw) ? raw.join(',') : String(raw ?? '');
+      return `${k}=${val}`;
+    })
+    .join('');
+  const digest = crypto.createHmac('sha256', clientSecret).update(message).digest('hex');
+  try {
+    return crypto.timingSafeEqual(Buffer.from(digest, 'utf8'), Buffer.from(signature, 'utf8'));
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Verificación webhook X-Shopify-Hmac-Sha256 (body raw, base64).
  */
 function verifyShopifyWebhookHmac(rawBody, hmacHeader, clientSecret) {
@@ -962,6 +987,7 @@ function mapFinancialToBadge(financial) {
 module.exports = {
   sanitizeShopDomain,
   verifyShopifyOAuthHmac,
+  verifyShopifyAppProxySignature,
   verifyShopifyWebhookHmac,
   buildShopifyAdminAuthHeaders,
   encodeShopifyBasicCredentialsRecord,

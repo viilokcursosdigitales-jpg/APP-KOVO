@@ -97,6 +97,29 @@ async function initDb(pool) {
     );
     await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS subscription_expires_at TIMESTAMPTZ`);
     await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS last_payment_at TIMESTAMPTZ`);
+    await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS shopify_form_ingest_token_hash TEXT`);
+    await pool.query(
+      `ALTER TABLE organizations ADD COLUMN IF NOT EXISTS shopify_form_ingest_token_rotated_at TIMESTAMPTZ`,
+    );
+    await pool.query(
+      `CREATE UNIQUE INDEX IF NOT EXISTS idx_organizations_shopify_form_ingest_token_hash
+       ON organizations (shopify_form_ingest_token_hash)
+       WHERE shopify_form_ingest_token_hash IS NOT NULL`,
+    );
+    await pool.query(`ALTER TABLE organizations ADD COLUMN IF NOT EXISTS shopify_shop_domain VARCHAR(255)`);
+    await pool.query(
+      `CREATE INDEX IF NOT EXISTS idx_organizations_shopify_shop_domain
+       ON organizations (lower(shopify_shop_domain))
+       WHERE shopify_shop_domain IS NOT NULL`,
+    );
+    await pool.query(
+      `UPDATE organizations o
+       SET shopify_shop_domain = sc.shop_domain
+       FROM shopify_connections sc
+       WHERE sc.organization_id = o.id
+         AND sc.status = 'connected'
+         AND o.shopify_shop_domain IS NULL`,
+    );
     await pool.query(
       `ALTER TABLE organizations
        DROP CONSTRAINT IF EXISTS organizations_subscription_status_check`,

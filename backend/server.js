@@ -13,6 +13,17 @@ const {
   findMinDespachadoCommissionUpdatedAtMs,
   buildClosedCommissionCutSpecs,
 } = require('./comisionVentasPeriod');
+const { createMoticoManualOrderFromBody } = require('./moticoManualOrderCreate');
+const {
+  resolveOrganizationIdByIngestToken,
+  rotateOrganizationIngestToken,
+} = require('./shopifyFormIngestToken');
+const {
+  syncOrganizationShopifyDomain,
+  resolveOrganizationByShopDomain,
+  isShopifyProxyTimestampValid,
+  shopDomainFromProxyRequest,
+} = require('./shopifyAppProxy');
 const {
   normalizeActId,
   datePresetFromDashboardPeriod,
@@ -39,6 +50,7 @@ const { signMetaOAuthState, verifyMetaOAuthState, exchangeMetaOAuthCode } = requ
 const {
   sanitizeShopDomain,
   verifyShopifyOAuthHmac,
+  verifyShopifyAppProxySignature,
   verifyShopifyWebhookHmac,
   shopifyRequest,
   encodeShopifyBasicCredentialsRecord,
@@ -2187,6 +2199,44 @@ app.get('/api/organization', verifyToken, scopeToOrganization, async (req, res) 
     res.status(500).json({ error: 'Error al obtener la organización' });
   }
 });
+
+app.post(
+  '/api/organizations/:id/ingest-token',
+  verifyToken,
+  scopeToOrganization,
+  requireRole('owner', 'admin'),
+  async (req, res) => {
+    try {
+      const orgId = parseInt(String(req.params.id), 10);
+      if (!Number.isFinite(orgId) || orgId <= 0) {
+        return res.status(400).json({ error: 'ID de organización inválido' });
+      }
+      if (orgId !== req.organizationId) {
+        return res.status(403).json({ error: 'No puedes rotar el token de otra organización' });
+      }
+      const rotated = await rotateOrganizationIngestToken(pool, orgId);
+      if (!rotated) {
+        return res.status(404).json({ error: 'Organización no encontrada' });
+      }
+      return res.status(201).json({
+        ok: true,
+        ingest_token: rotated.ingest_token,
+        rotated_at: rotated.rotated_at,
+        ingest_url_path: '/api/ingest/shopify-form',
+        ingest_header: 'x-kovo-ingest-token',
+      });
+    } catch (e) {
+      if (e && e.code === '42703') {
+        return res.status(503).json({
+          error: 'Falta la columna shopify_form_ingest_token_hash. Reinicia el backend para ejecutar initDb.',
+          code: 'schema_missing',
+        });
+      }
+      console.error('[organizations/ingest-token]', e);
+      return res.status(500).json({ error: 'No se pudo generar el token de ingesta' });
+    }
+  },
+);
 
 app.put(
   '/api/organization',
@@ -6187,6 +6237,7 @@ app.get('/api/shopify/callback', async (req, res) => {
          updated_at = now()`,
       [stateRow.organization_id, shop, tokenBody.access_token, scopeStr],
     );
+    await syncOrganizationShopifyDomain(pool, stateRow.organization_id, shop);
     await registerUninstallWebhook(shop, tokenBody.access_token);
     console.log('[shopify callback] OAuth OK, redirigiendo a canales?shopify=connected');
     return redirectOk();
@@ -6252,6 +6303,7 @@ app.post(
            updated_at = now()`,
         [organizationId, shop, accessToken, scopeStr],
       );
+      await syncOrganizationShopifyDomain(pool, organizationId, shop);
 
       await registerUninstallWebhook(shop, accessToken);
 
@@ -6330,6 +6382,7 @@ app.post(
            updated_at = now()`,
         [organizationId, shop, storedAccess, scopeStr],
       );
+      await syncOrganizationShopifyDomain(pool, organizationId, shop);
 
       await registerUninstallWebhook(shop, storedAccess);
 
@@ -6388,6 +6441,187 @@ function hotmartBuyerEmailFromPayload(body) {
   }
   return '';
 }
+
+function shopifyFormIngestCors(req, res, next) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, x-kovo-ingest-token');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  return next();
+}
+
+const moticoManualOrderDeps = () => ({
+  getActiveShopifyConnection,
+  shopifyRequest,
+  gananciaDiariaYmdKey,
+});
+
+app.options('/api/ingest/shopify-form', shopifyFormIngestCors, (_req, res) => {
+  res.sendStatus(204);
+});
+
+function shopifyProxyFormCors(req, res, next) {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(204);
+  }
+  return next();
+}
+
+/**
+ * App Proxy Shopify: /apps/kovo-form → valida firma Shopify y crea pedido (sin token en el navegador).
+ * Configurar en Partner: subpath apps/kovo-form → https://kovo.services/api/shopify-proxy/form
+ */
+app.options('/api/shopify-proxy/form', shopifyProxyFormCors, (_req, res) => {
+  res.sendStatus(204);
+});
+
+app.post('/api/shopify-proxy/form', shopifyProxyFormCors, async (req, res) => {
+  try {
+    if (!SHOPIFY_API_SECRET) {
+      return res.status(503).json({ error: 'Shopify app secret no configurado' });
+    }
+    if (!verifyShopifyAppProxySignature(req.query, SHOPIFY_API_SECRET)) {
+      return res.status(401).json({ error: 'Firma de App Proxy inválida' });
+    }
+    if (!isShopifyProxyTimestampValid(req.query.timestamp)) {
+      return res.status(401).json({ error: 'Timestamp de App Proxy inválido o expirado' });
+    }
+
+    const shop = shopDomainFromProxyRequest(req);
+    if (!shop) {
+      return res.status(400).json({ error: 'Parámetro shop ausente o inválido' });
+    }
+
+    const org = await resolveOrganizationByShopDomain(pool, shop);
+    if (!org) {
+      return res.status(404).json({
+        error: 'No hay organización Kovo vinculada a esta tienda. Conecta Shopify en Kovo.',
+        shop,
+      });
+    }
+    if (!org.hasIngestToken) {
+      return res.status(503).json({
+        error: 'La ingesta de formularios no está configurada. Genera un token en Kovo (Configuración / ingest-token).',
+        code: 'ingest_token_missing',
+      });
+    }
+
+    const body = req.body && typeof req.body === 'object' ? req.body : {};
+    const result = await createMoticoManualOrderFromBody(
+      pool,
+      moticoManualOrderDeps(),
+      org.organizationId,
+      body,
+      { createdByUserId: null, ingestSource: 'shopify_form_proxy' },
+    );
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error, code: result.code });
+    }
+
+    const logReq = {
+      organizationId: org.organizationId,
+      user: {
+        userId: null,
+        name: 'Shopify App Proxy',
+        email: '',
+        role: 'system',
+      },
+    };
+    await appendOrderChangeLog(logReq, {
+      orderSource: 'motico_manual',
+      orderId: Number(result.row.id),
+      action: 'create_manual_order_ingest',
+      payload: {
+        ...result.meta,
+        ingest: 'shopify_form_proxy',
+        shop,
+      },
+    });
+
+    return res.status(201).json({
+      ok: true,
+      order_id: `motico_manual:${result.row.id}`,
+    });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Falta el esquema de pedidos. Reinicia el backend para ejecutar initDb.',
+        code: 'schema_missing',
+      });
+    }
+    if (e && e.code === '42703') {
+      return res.status(503).json({
+        error: 'Falta shopify_shop_domain en organizations. Reinicia el backend para ejecutar initDb.',
+        code: 'schema_missing',
+      });
+    }
+    console.error('[shopify-proxy/form]', e);
+    return res.status(500).json({ error: 'Error al procesar el formulario' });
+  }
+});
+
+/** Pedidos desde formularios Shopify externos (token por organización, sin JWT). */
+app.post('/api/ingest/shopify-form', shopifyFormIngestCors, async (req, res) => {
+  try {
+    const token = String(req.get('x-kovo-ingest-token') || '').trim();
+    if (!token) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+    const organizationId = await resolveOrganizationIdByIngestToken(pool, token);
+    if (!organizationId) {
+      return res.status(401).json({ error: 'Unauthorized' });
+    }
+
+    const result = await createMoticoManualOrderFromBody(
+      pool,
+      moticoManualOrderDeps(),
+      organizationId,
+      req.body,
+      { createdByUserId: null, ingestSource: 'shopify_form' },
+    );
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error, code: result.code });
+    }
+
+    const logReq = {
+      organizationId,
+      user: {
+        userId: null,
+        name: 'Shopify form ingest',
+        email: '',
+        role: 'system',
+      },
+    };
+    await appendOrderChangeLog(logReq, {
+      orderSource: 'motico_manual',
+      orderId: Number(result.row.id),
+      action: 'create_manual_order_ingest',
+      payload: {
+        ...result.meta,
+        ingest: 'shopify_form',
+      },
+    });
+
+    return res.status(201).json({
+      ok: true,
+      order_id: `motico_manual:${result.row.id}`,
+    });
+  } catch (e) {
+    if (e && e.code === '42P01') {
+      return res.status(503).json({
+        error: 'Falta el esquema de pedidos. Reinicia el backend para ejecutar initDb.',
+        code: 'schema_missing',
+      });
+    }
+    console.error('[ingest/shopify-form]', e);
+    return res.status(500).json({ error: 'Error al crear el pedido' });
+  }
+});
 
 app.post('/api/hotmart/webhook', async (req, res) => {
   const expected = String(process.env.HOTMART_WEBHOOK_TOKEN || '').trim();
@@ -8677,214 +8911,24 @@ app.put('/api/motico/settings', verifyToken, scopeToOrganization, async (req, re
 /** Pedido solo en KOVO / Motico (no crea pedido en Shopify). Aparece en Motico con id negativo. */
 app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const body = req.body && typeof req.body === 'object' ? req.body : {};
-    const client_name = String(body.client_name || '').trim();
-    const product_summary_in = String(body.product_summary || '').trim();
-    if (!client_name) {
-      return res.status(400).json({ error: 'El nombre del cliente es obligatorio' });
-    }
-    const total = Number.parseFloat(String(body.total != null ? body.total : '').replace(',', '.'));
-    if (!Number.isFinite(total) || total < 0) {
-      return res.status(400).json({ error: 'Total no válido' });
-    }
-    const anticipoRaw = body.anticipo != null ? String(body.anticipo).replace(',', '.').trim() : '';
-    const anticipo = anticipoRaw === '' ? 0 : Number.parseFloat(anticipoRaw);
-    if (!Number.isFinite(anticipo) || anticipo < 0) {
-      return res.status(400).json({ error: 'Pago anticipado no válido' });
-    }
-    const line_items_in = Array.isArray(body.line_items) ? body.line_items : [];
-    const note = String(body.note || '').trim().slice(0, 500);
-    const parsedLines = [];
-    for (const raw of line_items_in) {
-      if (!raw || typeof raw !== 'object') continue;
-      const li = raw;
-      const title = String(li.title || li.name || '').trim();
-      if (!title) continue;
-      const q = parseInt(String(li.quantity != null ? li.quantity : '1'), 10);
-      if (!Number.isFinite(q) || q < 1) continue;
-      parsedLines.push({
-        product_id: li.product_id != null ? Number(li.product_id) || null : null,
-        variant_id: li.variant_id != null ? Number(li.variant_id) || null : null,
-        title,
-        variant_title: String(li.variant_title || '').trim(),
-        sku: String(li.sku || '').trim(),
-        barcode: String(li.barcode || '').trim(),
-        quantity: q,
-      });
-    }
-    if (!parsedLines.length && !product_summary_in) {
-      return res.status(400).json({ error: 'Selecciona al menos un producto del inventario' });
-    }
-    const qtyFallback = parseInt(String(body.quantity != null ? body.quantity : '1'), 10);
-    const qty = parsedLines.length
-      ? parsedLines.reduce((acc, li) => acc + li.quantity, 0)
-      : Number.isFinite(qtyFallback) && qtyFallback > 0
-        ? qtyFallback
-        : 1;
-    const fin = String(body.financial_status || 'pending').toLowerCase();
-    const allowedFin = new Set([
-      'paid',
-      'pending',
-      'unpaid',
-      'partially_paid',
-      'authorized',
-      'voided',
-      'refunded',
-      'double_freight',
-      'cancelado',
-    ]);
-    const financial_status = allowedFin.has(fin) ? fin : 'pending';
-
-    let currency = String(body.currency || '').trim();
-    if (!currency) {
-      const shopRow = await getActiveShopifyConnection(req.organizationId);
-      if (shopRow) {
-        const sr = await shopifyRequest(shopRow.shop_domain, shopRow.access_token, 'shop.json?fields=currency');
-        if (sr.ok && sr.data && sr.data.shop && sr.data.shop.currency) {
-          currency = String(sr.data.shop.currency).trim();
-        }
-      }
-    }
-    if (!currency) currency = 'USD';
-
-    const client_email = String(body.client_email || '').trim().slice(0, 320);
-    const province = String(body.province || '').trim();
-    const city = String(body.city || '').trim();
-    const address1 = String(body.address1 || '').trim();
-    const address2 = String(body.address2 || '').trim();
-    const zip = String(body.zip || '').trim();
-    const country = String(body.country || '').trim();
-    const phone = String(body.phone || '').trim();
-    const rawCreated = body.created_at != null ? String(body.created_at).trim() : '';
-    let assignedDateYmd = null;
-    if (rawCreated) {
-      const parsed = parseIsoDateYmd(rawCreated.slice(0, 10));
-      if (parsed) assignedDateYmd = gananciaDiariaYmdKey(parsed);
-    }
-
-    const shipping_json = {
-      name: client_name,
-      province,
-      city,
-      address1,
-      address2,
-      zip,
-      country,
-      phone,
-      assigned_date: assignedDateYmd,
-    };
-    const unitPrice = qty > 0 ? Math.round((total / qty) * 10000) / 10000 : total;
-    const line_items_json = parsedLines.length
-      ? parsedLines.map((li, idx) => ({
-          id: idx + 1,
-          product_id: li.product_id,
-          variant_id: li.variant_id,
-          title: li.title,
-          variant_title: li.variant_title,
-          sku: li.sku,
-          barcode: li.barcode,
-          quantity: li.quantity,
-          price: String(unitPrice),
-          properties: idx === 0 && note ? [{ name: 'Observacion', value: note }] : [],
-        }))
-      : [
-          {
-            id: 1,
-            title: product_summary_in || 'Producto',
-            quantity: qty,
-            price: String(unitPrice),
-            properties: note ? [{ name: 'Observacion', value: note }] : [],
-          },
-        ];
-    const baseSummary = parsedLines.length
-      ? parsedLines
-          .map((li) => (li.variant_title ? `${li.title} (${li.variant_title})` : li.title))
-          .join(' + ')
-      : (product_summary_in || 'Producto');
-    const product_summary = `${baseSummary}${note ? ` · Observación: ${note}` : ''}`.slice(0, 600);
-    const anticipoClamped = Math.min(Math.max(0, anticipo), total);
-    const total_outstanding =
-      financial_status === 'paid' || financial_status === 'refunded' || financial_status === 'cancelado'
-        ? 0
-        : Math.max(0, total - anticipoClamped);
-
-    let createdAtParam = null;
-    if (rawCreated) {
-      const t = Date.parse(rawCreated);
-      if (!Number.isFinite(t)) {
-        return res.status(400).json({ error: 'Fecha de creación no válida' });
-      }
-      const now = Date.now();
-      if (t > now + 60_000) {
-        return res.status(400).json({ error: 'La fecha de creación no puede ser futura' });
-      }
-      const minMs = now - 10 * 365 * 86400000;
-      if (t < minMs) {
-        return res.status(400).json({ error: 'La fecha de creación no puede ser anterior a hace 10 años' });
-      }
-      createdAtParam = new Date(t).toISOString();
-    }
-
-    const initialOrderName = 'WHATSAPP_PENDING';
-    const { rows: insRows } = await pool.query(
-      `INSERT INTO motico_manual_orders (
-        organization_id,
-        order_name,
-        client_name,
-        client_email,
-        financial_status,
-        total_price,
-        total_outstanding,
-        currency,
-        shipping_json,
-        product_summary,
-        line_items_json,
-        created_by,
-        motico_status,
-        pago_al_recibir_override,
-        created_at
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10, $11::jsonb, $12, $13, $14, COALESCE($15::timestamptz, now()))
-      RETURNING *`,
-      [
-        req.organizationId,
-        initialOrderName,
-        client_name,
-        client_email,
-        financial_status,
-        total,
-        total_outstanding,
-        currency,
-        JSON.stringify(shipping_json),
-        product_summary.slice(0, 600),
-        JSON.stringify(line_items_json),
-        req.user.userId,
-        MOTICO_STATUS_DEFAULT,
-        anticipoClamped,
-        createdAtParam,
-      ],
+    const result = await createMoticoManualOrderFromBody(
+      pool,
+      moticoManualOrderDeps(),
+      req.organizationId,
+      req.body,
+      { createdByUserId: req.user.userId },
     );
-    const row = insRows[0];
-    const finalName = `Whatsapp #${row.id}`;
-    await pool.query(
-      `UPDATE motico_manual_orders SET order_name = $1, updated_at = now() WHERE id = $2 AND organization_id = $3`,
-      [finalName, row.id, req.organizationId],
-    );
-    row.order_name = finalName;
+    if (!result.ok) {
+      return res.status(result.status).json({ error: result.error, code: result.code });
+    }
+    const row = result.row;
     await appendOrderChangeLog(req, {
       orderSource: 'motico_manual',
       orderId: Number(row.id),
       action: 'create_manual_order',
-      payload: {
-        order_name: finalName,
-        client_name,
-        financial_status,
-        total_price: total,
-        quantity: qty,
-        currency,
-      },
+      payload: result.meta,
     });
-
-    res.status(201).json({ ok: true, order: mapMoticoManualOrderRowFromDb(row) });
+    return res.status(201).json({ ok: true, order: mapMoticoManualOrderRowFromDb(row) });
   } catch (e) {
     if (e && e.code === '42P01') {
       return res.status(503).json({
@@ -8893,9 +8937,10 @@ app.post('/api/motico/manual-orders', verifyToken, scopeToOrganization, async (r
       });
     }
     console.error(e);
-    res.status(500).json({ error: 'Error al crear el pedido manual' });
+    return res.status(500).json({ error: 'Error al crear el pedido manual' });
   }
 });
+
 
 /** Elimina pedido manual Motico solo si está en estado "prueba" y se aporta motivo. */
 app.delete('/api/motico/manual-orders/:manualId', verifyToken, scopeToOrganization, async (req, res) => {
