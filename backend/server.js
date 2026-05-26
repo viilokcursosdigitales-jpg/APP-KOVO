@@ -5641,8 +5641,12 @@ async function loadManualAdSpendByDayForOrg(organizationId, sinceYmd, untilYmd) 
       [organizationId, sinceYmd, untilYmd],
     );
     for (const row of rows) {
-      const dateKey = String(row.spend_date || '').slice(0, 10);
-      if (!dateKey) continue;
+      const rawDate = row.spend_date;
+      const dateKey =
+        rawDate instanceof Date
+          ? `${rawDate.getUTCFullYear()}-${String(rawDate.getUTCMonth() + 1).padStart(2, '0')}-${String(rawDate.getUTCDate()).padStart(2, '0')}`
+          : String(rawDate || '').slice(0, 10);
+      if (!dateKey || !/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) continue;
       const total = Number(row.total) || 0;
       const currency = String(row.currency || 'COP')
         .trim()

@@ -1004,7 +1004,7 @@ export default function GananciaDiariaPage() {
                         <GananciaThStack parts={['%', 'Flete']} />
                       </th>
                       <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Gasto', 'Meta']} />
+                        <GananciaThStack parts={['Gasto', 'Publicitario']} />
                       </th>
                       <th style={thColHeadRight}>
                         <GananciaThStack parts={['%', 'Publicidad']} />
