@@ -4,30 +4,41 @@ import { apiFetch } from '../auth/api';
 import { DataTable, Td, Th, tableBase } from '../design-system/DataTable';
 import { PageHeader } from '../design-system/PageHeader';
 import { ds } from '../design-system/ds';
+import { buildDateRange } from '../utils/datePresets';
 
-type ProductRow = { id: number; title: string };
+type ProductOption = { name?: string; values?: string[] };
+type ProductRow = { id: number; title: string; options?: ProductOption[] };
 
-type VariantRow = {
-  key: string;
-  variant_id: number | null;
-  variant: string;
+type ShopifyOrderRow = {
+  id?: number;
+  internal_status?: string;
+  motico_status?: string;
+  lineItemsDetail?: {
+    product_id?: number | null;
+    variant_id?: number | null;
+    quantity?: number;
+  }[];
+};
+
+type ShopifyOrdersPayload = { orders?: ShopifyOrderRow[]; error?: string };
+
+type ShopifyVariant = {
+  id?: number | string;
+  option1?: string | null;
+  option2?: string | null;
+  option3?: string | null;
+};
+type VariantsPayload = { product_id?: number; variants?: ShopifyVariant[]; error?: string };
+
+type TrendKey = 'up' | 'down' | 'same' | 'new';
+type GroupRow = {
+  value: string;
   orders: number;
   units: number;
   pct: number;
   prev_orders: number;
   prev_pct: number;
-  trend: 'up' | 'down' | 'same' | 'new';
-};
-
-type Payload = {
-  product_id: number;
-  range: { from: string; to: string };
-  previous_range: { from: string; to: string } | null;
-  total_orders: number;
-  top_variant: { variant: string; orders: number; pct: number } | null;
-  active_variants: number;
-  variants: VariantRow[];
-  error?: string;
+  trend: TrendKey;
 };
 
 const inputStyle: React.CSSProperties = {
@@ -55,7 +66,23 @@ function shiftDaysYmd(ymd: string, deltaDays: number): string {
   return `${base.getFullYear()}-${String(base.getMonth() + 1).padStart(2, '0')}-${String(base.getDate()).padStart(2, '0')}`;
 }
 
-function trendLabel(t: VariantRow['trend']): { text: string; color: string } {
+function shiftMonthYmd(ymd: string, deltaMonths: number): string | null {
+  const m = String(ymd || '')
+    .trim()
+    .match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!m) return null;
+  const y = parseInt(m[1], 10);
+  const mo = parseInt(m[2], 10);
+  const d = parseInt(m[3], 10);
+  const base = new Date(Date.UTC(y, mo - 1, d, 12, 0, 0));
+  base.setUTCMonth(base.getUTCMonth() + Number(deltaMonths || 0));
+  const yy = base.getUTCFullYear();
+  const mm = base.getUTCMonth() + 1;
+  const dd = base.getUTCDate();
+  return `${String(yy).padStart(4, '0')}-${String(mm).padStart(2, '0')}-${String(dd).padStart(2, '0')}`;
+}
+
+function trendLabel(t: TrendKey): { text: string; color: string } {
   if (t === 'up') return { text: 'Subió', color: ds.successText };
   if (t === 'down') return { text: 'Bajó', color: ds.dangerText };
   if (t === 'new') return { text: 'Nuevo', color: ds.warningText };
@@ -67,7 +94,17 @@ function pct(n: number): string {
   return `${v.toFixed(1)}%`;
 }
 
-function BarRow({ label, pctValue, right }: { label: string; pctValue: number; right: React.ReactNode }) {
+function BarRow({
+  label,
+  pctValue,
+  right,
+  action,
+}: {
+  label: string;
+  pctValue: number;
+  right: React.ReactNode;
+  action?: React.ReactNode;
+}) {
   const p = Math.max(0, Math.min(100, Number.isFinite(pctValue) ? pctValue : 0));
   return (
     <div
@@ -90,6 +127,11 @@ function BarRow({ label, pctValue, right }: { label: string; pctValue: number; r
         <span style={{ fontSize: 12, color: ds.textSecondary, fontWeight: 700 }}>{pct(p)}</span>
         {right}
       </div>
+      {action ? (
+        <div style={{ gridColumn: '1 / -1', marginTop: 8, display: 'flex', justifyContent: 'flex-end' }}>
+          {action}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -102,7 +144,10 @@ export default function PedidosPorVariantePage() {
   const [to, setTo] = useState(() => todayYmdLocal());
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [data, setData] = useState<Payload | null>(null);
+  const [orders, setOrders] = useState<ShopifyOrderRow[]>([]);
+  const [ordersPrev, setOrdersPrev] = useState<ShopifyOrderRow[]>([]);
+  const [variantMap, setVariantMap] = useState<Map<number, ShopifyVariant>>(new Map());
+  const [path, setPath] = useState<string[]>([]);
 
   const loadProducts = useCallback(async () => {
     try {
@@ -112,10 +157,16 @@ export default function PedidosPorVariantePage() {
         setShopifyOk(false);
         return;
       }
-      const j = (await res.json()) as { products?: { id: number | string; title?: string }[] };
+      const j = (await res.json()) as {
+        products?: { id: number | string; title?: string; options?: ProductOption[] }[];
+      };
       const list = Array.isArray(j.products)
         ? j.products
-            .map((p) => ({ id: Number.parseInt(String(p.id), 10), title: String(p.title || '(sin título)') }))
+            .map((p) => ({
+              id: Number.parseInt(String(p.id), 10),
+              title: String(p.title || '(sin título)'),
+              options: Array.isArray(p.options) ? p.options : [],
+            }))
             .filter((p) => Number.isFinite(p.id))
         : [];
       list.sort((a, b) => a.title.localeCompare(b.title, 'es', { sensitivity: 'base' }));
@@ -128,34 +179,93 @@ export default function PedidosPorVariantePage() {
     }
   }, [productId]);
 
-  const load = useCallback(async () => {
+  const selectedProduct = useMemo(() => {
+    const pid = Number.parseInt(productId, 10);
+    if (!Number.isFinite(pid)) return null;
+    return products.find((p) => p.id === pid) || null;
+  }, [products, productId]);
+
+  const optionLevels = useMemo(() => {
+    const opts = Array.isArray(selectedProduct?.options) ? selectedProduct!.options : [];
+    return opts
+      .map((o) => String(o?.name || '').trim())
+      .filter(Boolean)
+      .slice(0, 3);
+  }, [selectedProduct]);
+
+  const activeLevelIdx = Math.min(path.length, Math.max(0, optionLevels.length - 1));
+  const canDrill = activeLevelIdx < optionLevels.length - 1;
+  const nextLevelName = optionLevels[activeLevelIdx + 1] || '';
+
+  const ordersRangeQs = useMemo(() => {
+    const range = buildDateRange('personalizado', from, to);
+    const qs = new URLSearchParams();
+    if (range.min) qs.set('created_at_min', range.min);
+    if (range.max) qs.set('created_at_max', range.max);
+    return qs.toString();
+  }, [from, to]);
+
+  const prevRange = useMemo(() => {
+    const pf = shiftMonthYmd(from, -1);
+    const pt = shiftMonthYmd(to, -1);
+    if (!pf || !pt) return null;
+    return { from: pf, to: pt };
+  }, [from, to]);
+
+  const ordersPrevRangeQs = useMemo(() => {
+    if (!prevRange) return '';
+    const range = buildDateRange('personalizado', prevRange.from, prevRange.to);
+    const qs = new URLSearchParams();
+    if (range.min) qs.set('created_at_min', range.min);
+    if (range.max) qs.set('created_at_max', range.max);
+    return qs.toString();
+  }, [prevRange]);
+
+  const loadVariants = useCallback(async (pid: number) => {
+    const res = await apiFetch(`/api/shopify/products/${pid}/variants`);
+    const j = (await res.json().catch(() => ({}))) as VariantsPayload;
+    if (!res.ok) {
+      throw new Error(typeof j.error === 'string' ? j.error : 'No se pudieron cargar variantes');
+    }
+    const m = new Map<number, ShopifyVariant>();
+    for (const v of Array.isArray(j.variants) ? j.variants : []) {
+      const id = Number.parseInt(String(v?.id ?? ''), 10);
+      if (!Number.isFinite(id) || id <= 0) continue;
+      m.set(id, v);
+    }
+    setVariantMap(m);
+  }, []);
+
+  const loadOrders = useCallback(async () => {
     setLoading(true);
     setError('');
-    setData(null);
+    setOrders([]);
+    setOrdersPrev([]);
     try {
       const pid = Number.parseInt(productId, 10);
       if (!Number.isFinite(pid) || pid <= 0) {
         setError('Selecciona un producto');
-        setLoading(false);
         return;
       }
-      const qs = new URLSearchParams();
-      qs.set('product_id', String(pid));
-      qs.set('from', from);
-      qs.set('to', to);
-      const res = await apiFetch(`/api/product-analytics/orders-by-variant?${qs.toString()}`);
-      const j = (await res.json().catch(() => ({}))) as Payload;
-      if (!res.ok) {
-        setError(typeof j.error === 'string' ? j.error : 'No se pudo cargar pedidos por variante');
-        return;
+      await loadVariants(pid);
+      const [curRes, prevRes] = await Promise.all([
+        apiFetch(`/api/shopify/orders?${ordersRangeQs}`),
+        prevRange && ordersPrevRangeQs ? apiFetch(`/api/shopify/orders?${ordersPrevRangeQs}`) : Promise.resolve(null),
+      ]);
+      const curJ = (await curRes.json().catch(() => ({}))) as ShopifyOrdersPayload;
+      if (!curRes.ok) throw new Error(typeof curJ.error === 'string' ? curJ.error : 'No se pudieron cargar pedidos');
+      setOrders(Array.isArray(curJ.orders) ? curJ.orders : []);
+      if (prevRes) {
+        const prevJ = (await prevRes.json().catch(() => ({}))) as ShopifyOrdersPayload;
+        if (prevRes.ok) setOrdersPrev(Array.isArray(prevJ.orders) ? prevJ.orders : []);
       }
-      setData(j);
-    } catch {
-      setError('Error de red');
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'Error de red';
+      setError(msg || 'Error de red');
     } finally {
       setLoading(false);
     }
-  }, [productId, from, to]);
+  }, [productId, ordersRangeQs, prevRange, ordersPrevRangeQs, loadVariants]);
 
   useEffect(() => {
     void loadProducts();
@@ -163,21 +273,115 @@ export default function PedidosPorVariantePage() {
 
   useEffect(() => {
     if (!productId) return;
-    void load();
-  }, [productId, from, to, load]);
+    setPath([]);
+  }, [productId]);
 
-  const top = data?.top_variant;
-  const variants = Array.isArray(data?.variants) ? data!.variants : [];
-  const totalOrders = Number(data?.total_orders || 0);
-  const activeVariants = Number(data?.active_variants || 0);
+  useEffect(() => {
+    if (!productId) return;
+    if (optionLevels.length === 0) return;
+    void loadOrders();
+  }, [productId, from, to, optionLevels.length, loadOrders]);
 
-  const tableRows = useMemo(() => variants, [variants]);
+  const computeGroups = useCallback(
+    (srcOrders: ShopifyOrderRow[]) => {
+      const pid = Number.parseInt(productId, 10);
+      if (!Number.isFinite(pid) || pid <= 0) return { totalOrdersInGroup: 0, rows: [] as { value: string; orders: number; units: number }[] };
+      const levelIdx = activeLevelIdx;
+      const byValue = new Map<string, { orders: number; units: number }>();
+      let totalOrdersInGroup = 0;
+
+      for (const o of srcOrders) {
+        const st = String(o?.internal_status || o?.motico_status || '').trim().toLowerCase();
+        if (st === 'prueba') continue;
+        const details = Array.isArray(o?.lineItemsDetail) ? o.lineItemsDetail : [];
+        const orderSeen = new Set<string>();
+        let orderHasAnyInParent = false;
+
+        for (const li of details) {
+          const lp = li?.product_id != null && Number.isFinite(Number(li.product_id)) ? Number(li.product_id) : null;
+          if (lp !== pid) continue;
+          const vid = li?.variant_id != null && Number.isFinite(Number(li.variant_id)) ? Number(li.variant_id) : null;
+          if (!vid) continue;
+          const v = variantMap.get(vid);
+          if (!v) continue;
+
+          const opts = [v.option1, v.option2, v.option3].map((x) => String(x ?? '').trim());
+          let matchesParent = true;
+          for (let i = 0; i < path.length; i += 1) {
+            if (String(opts[i] || '') !== String(path[i] || '')) {
+              matchesParent = false;
+              break;
+            }
+          }
+          if (!matchesParent) continue;
+          orderHasAnyInParent = true;
+
+          const value = String(opts[levelIdx] || '').trim() || '—';
+          const seenKey = value.toLowerCase();
+          if (!orderSeen.has(seenKey)) {
+            orderSeen.add(seenKey);
+            const prev = byValue.get(value) || { orders: 0, units: 0 };
+            byValue.set(value, { ...prev, orders: prev.orders + 1 });
+          }
+          const qty = Number.parseInt(String(li?.quantity ?? 0), 10);
+          if (Number.isFinite(qty) && qty > 0) {
+            const prev = byValue.get(value) || { orders: 0, units: 0 };
+            byValue.set(value, { ...prev, units: prev.units + qty });
+          }
+        }
+        if (orderHasAnyInParent) totalOrdersInGroup += 1;
+      }
+
+      const rows = [...byValue.entries()]
+        .map(([value, agg]) => ({ value, orders: agg.orders, units: agg.units }))
+        .sort(
+          (a, b) =>
+            b.orders - a.orders ||
+            b.units - a.units ||
+            a.value.localeCompare(b.value, 'es', { sensitivity: 'base' }),
+        );
+      return { totalOrdersInGroup, rows };
+    },
+    [productId, activeLevelIdx, path, variantMap],
+  );
+
+  const curAgg = useMemo(() => computeGroups(orders), [orders, computeGroups]);
+  const prevAgg = useMemo(() => computeGroups(ordersPrev), [ordersPrev, computeGroups]);
+
+  const rows: GroupRow[] = useMemo(() => {
+    const prevBy = new Map(prevAgg.rows.map((r) => [r.value, r]));
+    return curAgg.rows.map((r) => {
+      const prev = prevBy.get(r.value);
+      const prevOrders = prev ? prev.orders : 0;
+      let trend: TrendKey = 'same';
+      if (r.orders > prevOrders) trend = prevOrders === 0 ? 'new' : 'up';
+      else if (r.orders < prevOrders) trend = 'down';
+      return {
+        value: r.value,
+        orders: r.orders,
+        units: r.units,
+        pct: curAgg.totalOrdersInGroup > 0 ? Math.round((r.orders / curAgg.totalOrdersInGroup) * 1000) / 10 : 0,
+        prev_orders: prevOrders,
+        prev_pct: prevAgg.totalOrdersInGroup > 0 ? Math.round((prevOrders / prevAgg.totalOrdersInGroup) * 1000) / 10 : 0,
+        trend,
+      };
+    });
+  }, [curAgg, prevAgg]);
+
+  const totalOrders = curAgg.totalOrdersInGroup;
+  const activeVariants = rows.length;
+  const top = rows[0] || null;
+
+  const goToLevel = (level: number) => {
+    const next = Math.max(0, Math.min(level, path.length));
+    setPath((p) => p.slice(0, next));
+  };
 
   return (
     <div style={{ fontFamily: ds.font, maxWidth: 1280, margin: '0 auto' }}>
       <PageHeader
         title="Pedidos por variante"
-        subtitle="Distribución de pedidos por variante (talla, color, etc.) para un producto Shopify."
+        subtitle="Drill-down por niveles de opciones Shopify (option1/2/3)."
         right={
           <Link
             to="/analisis-producto"
@@ -205,6 +409,78 @@ export default function PedidosPorVariantePage() {
           Conecta tu tienda en Canales para listar productos.
         </div>
       ) : null}
+
+      {optionLevels.length > 0 ? (
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 10 }}>
+          {optionLevels.map((name, idx) => {
+            const active = idx === activeLevelIdx;
+            const clickable = idx <= path.length;
+            return (
+              <button
+                key={`${idx}-${name}`}
+                type="button"
+                onClick={() => {
+                  if (!clickable) return;
+                  goToLevel(idx);
+                }}
+                style={{
+                  border: `1px solid ${ds.borderCard}`,
+                  background: active ? ds.brandBg : ds.bgCard,
+                  color: active ? ds.brand : ds.textSecondary,
+                  padding: '8px 12px',
+                  borderRadius: 999,
+                  fontSize: 12,
+                  fontWeight: 800,
+                  cursor: clickable ? 'pointer' : 'not-allowed',
+                  opacity: clickable ? 1 : 0.6,
+                }}
+              >
+                {name}
+              </button>
+            );
+          })}
+        </div>
+      ) : null}
+
+      <div style={{ marginBottom: 12, fontSize: 12, color: ds.textSecondary }}>
+        <button
+          type="button"
+          onClick={() => goToLevel(0)}
+          style={{
+            border: 'none',
+            background: 'transparent',
+            color: path.length ? ds.brand : ds.textPrimary,
+            cursor: path.length ? 'pointer' : 'default',
+            fontWeight: path.length ? 800 : 900,
+            padding: 0,
+          }}
+        >
+          Todos
+        </button>
+        {path.map((p, i) => (
+          <span key={`${i}-${p}`}>
+            <span style={{ color: ds.textMuted }}> › </span>
+            {i < path.length - 1 ? (
+              <button
+                type="button"
+                onClick={() => goToLevel(i + 1)}
+                style={{
+                  border: 'none',
+                  background: 'transparent',
+                  color: ds.brand,
+                  cursor: 'pointer',
+                  fontWeight: 800,
+                  padding: 0,
+                }}
+              >
+                {p || '—'}
+              </button>
+            ) : (
+              <span style={{ color: ds.textPrimary, fontWeight: 900 }}>{p || '—'}</span>
+            )}
+          </span>
+        ))}
+      </div>
 
       <div
         style={{
@@ -255,9 +531,11 @@ export default function PedidosPorVariantePage() {
           </div>
         </div>
         <div style={{ background: ds.bgCard, border: `1px solid ${ds.borderCard}`, borderRadius: 12, padding: '12px 14px' }}>
-          <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 6 }}>Variante con más pedidos</div>
+          <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 6 }}>
+            {optionLevels[activeLevelIdx] ? `Top ${optionLevels[activeLevelIdx]}` : 'Top'}
+          </div>
           <div style={{ fontSize: 14, fontWeight: 800, color: ds.textPrimary, lineHeight: 1.2, minHeight: 34 }}>
-            {loading ? '—' : top ? top.variant : '—'}
+            {loading ? '—' : top ? top.value : '—'}
           </div>
           <div style={{ fontSize: 12, color: ds.textSecondary, marginTop: 6 }}>
             {loading ? '—' : top ? (
@@ -277,22 +555,47 @@ export default function PedidosPorVariantePage() {
       </div>
 
       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 12, marginBottom: 12 }}>
-        <DataTable title="Distribución por variante" subtitle={loading ? 'Cargando…' : `${variants.length} variante${variants.length === 1 ? '' : 's'}`}>
+        <DataTable
+          title={`Distribución por ${optionLevels[activeLevelIdx] || 'variante'}`}
+          subtitle={loading ? 'Cargando…' : `${rows.length} fila${rows.length === 1 ? '' : 's'}`}
+        >
           <div>
             {loading ? (
               <div style={{ padding: '14px 16px', fontSize: 12, color: ds.textMuted }}>Cargando distribución…</div>
-            ) : variants.length === 0 ? (
+            ) : rows.length === 0 ? (
               <div style={{ padding: '14px 16px', fontSize: 12, color: ds.textMuted }}>Sin datos en el rango.</div>
             ) : (
-              variants.map((v, idx) => (
+              rows.map((v) => (
                 <BarRow
-                  key={v.key}
-                  label={v.variant}
+                  key={v.value}
+                  label={v.value}
                   pctValue={v.pct}
                   right={
                     <span style={{ fontSize: 12, color: ds.textSecondary }}>
                       <strong style={{ color: ds.textPrimary }}>{v.orders}</strong> pedidos
                     </span>
+                  }
+                  action={
+                    canDrill ? (
+                      <button
+                        type="button"
+                        onClick={() => setPath((p) => [...p, v.value])}
+                        style={{
+                          border: `1px solid ${ds.borderCard}`,
+                          background: ds.bgCard,
+                          color: ds.textSecondary,
+                          borderRadius: 10,
+                          padding: '8px 12px',
+                          fontSize: 12,
+                          fontWeight: 800,
+                          cursor: 'pointer',
+                        }}
+                      >
+                        Ver por {nextLevelName}
+                      </button>
+                    ) : (
+                      <span style={{ fontSize: 12, color: ds.textMuted, fontWeight: 800 }}>Nivel final</span>
+                    )
                   }
                 />
               ))
@@ -308,8 +611,9 @@ export default function PedidosPorVariantePage() {
             </div>
           </div>
           <div style={{ padding: '14px 16px', fontSize: 12, color: ds.textSecondary, lineHeight: 1.5 }}>
-            - Pedidos: cuenta órdenes únicas donde aparece el producto (si en una orden hay 2 variantes del mismo producto, suma 1 a cada variante).<br />
-            - %: participación de pedidos por variante sobre el total del producto en el rango.
+            - Pedidos: cuenta órdenes únicas dentro del grupo padre actual.<br />
+            - %: se recalcula sobre el total del grupo padre en cada nivel.<br />
+            - Tendencia: compara contra el mismo rango del mes anterior.
           </div>
         </div>
       </div>
@@ -318,7 +622,7 @@ export default function PedidosPorVariantePage() {
         <table style={{ ...tableBase, minWidth: 860 }}>
           <thead>
             <tr>
-              <Th>Variante</Th>
+              <Th>{optionLevels[activeLevelIdx] || 'Variante'}</Th>
               <Th style={{ textAlign: 'right' }}>Pedidos</Th>
               <Th style={{ textAlign: 'right' }}>% del total</Th>
               <Th style={{ textAlign: 'right' }}>Tendencia</Th>
@@ -331,20 +635,20 @@ export default function PedidosPorVariantePage() {
                   Cargando detalle…
                 </td>
               </tr>
-            ) : tableRows.length === 0 ? (
+            ) : rows.length === 0 ? (
               <tr>
                 <td colSpan={4} style={{ padding: '16px 20px', fontSize: 12, color: ds.textMuted, borderBottom: 'none' }}>
                   Sin variantes con pedidos en el rango.
                 </td>
               </tr>
             ) : (
-              tableRows.map((v, i) => {
+              rows.map((v, i) => {
                 const t = trendLabel(v.trend);
-                const isLast = i === tableRows.length - 1;
+                const isLast = i === rows.length - 1;
                 return (
-                  <tr key={`row-${v.key}`}>
+                  <tr key={`row-${v.value}`}>
                     <Td isLast={false} style={{ fontWeight: 600, color: ds.textPrimary }}>
-                      {v.variant}
+                      {v.value}
                     </Td>
                     <Td isLast={false} style={{ textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
                       {v.orders}
