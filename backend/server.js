@@ -5627,6 +5627,37 @@ async function gananciaFetchMetaSpendSingleDay(organizationId, dateStr) {
   return out;
 }
 
+async function loadManualAdSpendByDayForOrg(organizationId, sinceYmd, untilYmd) {
+  const out = { spendByDay: {}, currenciesByDay: {} };
+  try {
+    const { rows } = await pool.query(
+      `SELECT spend_date::date AS spend_date, currency, SUM(amount)::numeric AS total
+         FROM marketing_ad_spend_entries
+        WHERE organization_id = $1
+          AND spend_date >= $2::date
+          AND spend_date <= $3::date
+        GROUP BY spend_date, currency
+        ORDER BY spend_date ASC`,
+      [organizationId, sinceYmd, untilYmd],
+    );
+    for (const row of rows) {
+      const dateKey = String(row.spend_date || '').slice(0, 10);
+      if (!dateKey) continue;
+      const total = Number(row.total) || 0;
+      const currency = String(row.currency || 'COP')
+        .trim()
+        .toUpperCase();
+      out.spendByDay[dateKey] = (out.spendByDay[dateKey] || 0) + total;
+      if (!out.currenciesByDay[dateKey]) out.currenciesByDay[dateKey] = [];
+      if (!out.currenciesByDay[dateKey].includes(currency)) out.currenciesByDay[dateKey].push(currency);
+    }
+    return out;
+  } catch (e) {
+    if (e && e.code === '42P01') return out;
+    throw e;
+  }
+}
+
 /** Líneas de producto guardadas solo en KOVO (JSON en shopify_order_local_fields). */
 function parseShopifyOrderLineItemsOverrideFromBody(bodyLineItems) {
   if (!Array.isArray(bodyLineItems) || bodyLineItems.length === 0) return null;
@@ -7384,7 +7415,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
     const lineTitleToProductIdMap = buildLineItemTitleToProductIdMap(mergedForPricing);
     const productIds = collectOrderLineProductIdsForPricing(mergedForPricing, lineTitleToProductIdMap);
     const uniqPids = [...new Set(productIds)];
-    const [metaSingle, manualPricingMap] = await Promise.all([
+    const [metaSingle, manualPricingMap, manualAdPack] = await Promise.all([
       gananciaFetchMetaSpendSingleDay(req.organizationId, dateStr),
       (async () => {
         try {
@@ -7395,6 +7426,7 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
           throw pricingErr;
         }
       })(),
+      loadManualAdSpendByDayForOrg(req.organizationId, dateStr, dateStr),
     ]);
 
     const excludeFin = new Set(['voided', 'cancelled']);
@@ -7447,31 +7479,48 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
       costoFletePromedioTotal += costs.avgFreightCost;
     }
 
-    const gastoAds = metaSingle.spend;
+    const metaSpend = Number(metaSingle.spend || 0);
+    const manualAdSpend = Number(manualAdPack.spendByDay[dateStr] || 0);
+    const gastoAds = metaSpend + manualAdSpend;
     const metaPartialErrors = metaSingle.metaPartialErrors || [];
     const metaCurrency = metaSingle.metaCurrency || '';
 
     const shopC = shopCurrency.toUpperCase();
     const metaC = metaCurrency.toUpperCase();
-    const sameCurrency =
+    const sameMetaCurrency =
       Boolean(shopC && metaC && shopC === metaC) ||
-      (gastoAds === 0 && Boolean(shopC) && !metaC) ||
-      (gastoAds === 0 && !shopC && !metaC);
+      (metaSpend === 0 && Boolean(shopC) && !metaC) ||
+      (metaSpend === 0 && !shopC && !metaC);
     let ganancia = null;
     let utilidad = null;
     let warning = null;
-    if (sameCurrency && shopC) {
+    const manualCurrencies = Array.isArray(manualAdPack.currenciesByDay[dateStr])
+      ? manualAdPack.currenciesByDay[dateStr]
+      : [];
+    const manualHasMismatchedCurrency = Boolean(
+      shopC &&
+        manualCurrencies.length > 0 &&
+        manualCurrencies.some((c) => String(c || '').trim().toUpperCase() !== shopC),
+    );
+    const comparableWithManual = Boolean(sameMetaCurrency && shopC && !manualHasMismatchedCurrency);
+    if (comparableWithManual) {
       ganancia = Math.round((ventasTotal - gastoAds) * 100) / 100;
       utilidad =
         Math.round((ventasEntregadasTotal - gastoAds - costoProductoEntregadoTotal - costoFletePromedioTotal) * 100) /
         100;
-    } else if (gastoAds > 0 && shopC && !metaC) {
+    } else if (metaSpend > 0 && shopC && !metaC) {
       warning =
         'Hay gasto en Meta pero no se pudo determinar la divisa de la cuenta; no se calcula la ganancia automática.';
-    } else if (gastoAds > 0 && shopC && metaC && shopC !== metaC) {
+    } else if (metaSpend > 0 && shopC && metaC && shopC !== metaC) {
       warning = `La tienda usa ${shopCurrency} y la(s) cuenta(s) Meta ${metaCurrency}. Convierte manualmente para comparar.`;
-    } else if (ventasTotal > 0 && !shopC) {
+    } else if ((metaSpend > 0 || manualAdSpend > 0 || ventasTotal > 0) && !shopC) {
       warning = 'La tienda no reportó divisa en Shopify; revisa el total en el admin.';
+    }
+    if (manualHasMismatchedCurrency) {
+      const manualCurrenciesText = manualCurrencies.join(', ');
+      warning = warning
+        ? `${warning} Además, hay gasto manual en divisa(s) ${manualCurrenciesText} y la tienda usa ${shopCurrency}.`
+        : `Hay gasto manual en divisa(s) ${manualCurrenciesText} y la tienda usa ${shopCurrency}.`;
     }
 
     res.json({
@@ -7610,7 +7659,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     qs.set('created_at_max', rangeMax);
     const sinceYmd = sortedAsc[0];
     const untilYmd = sortedAsc[sortedAsc.length - 1];
-    const [r, manualRows, metaPack] = await Promise.all([
+    const [r, manualRows, metaPack, manualAdPack] = await Promise.all([
       shopifyFetchAllOrders(shopRow.shop_domain, shopRow.access_token, qs),
       loadMoticoManualOrdersForOrgGananciaSeries(
         req.organizationId,
@@ -7620,6 +7669,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         untilYmd,
       ),
       gananciaFetchMetaSpendPack(req.organizationId, sinceYmd, untilYmd),
+      loadManualAdSpendByDayForOrg(req.organizationId, sinceYmd, untilYmd),
     ]);
     if (!r.ok) {
       const st = Number(r.status) >= 400 ? Number(r.status) : 502;
@@ -7755,19 +7805,24 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       if (packM) gananciaMergeProductDay(touchDayProducts(key), packM.contrib);
     }
 
-    const spendByDay = metaPack.spendByDay || {};
+    const spendByDayMeta = metaPack.spendByDay || {};
+    const spendByDayManual = manualAdPack.spendByDay || {};
+    const spendByDay = {};
+    for (const k of sortedAsc) {
+      spendByDay[k] = Number(spendByDayMeta[k] || 0) + Number(spendByDayManual[k] || 0);
+    }
     const metaPartialErrors = metaPack.metaPartialErrors || [];
     const metaCurrency = metaPack.metaCurrency || '';
 
-    const totalMetaSpend = Object.values(spendByDay).reduce((sum, v) => sum + (Number(v) || 0), 0);
+    const totalMetaSpend = Object.values(spendByDayMeta).reduce((sum, v) => sum + (Number(v) || 0), 0);
     const shopC = shopCurrency.toUpperCase();
     const metaC = metaCurrency.toUpperCase();
-    const sameCurrency =
+    const sameMetaCurrency =
       Boolean(shopC && metaC && shopC === metaC) ||
       (totalMetaSpend === 0 && Boolean(shopC) && !metaC) ||
       (totalMetaSpend === 0 && !shopC && !metaC);
     let warning = null;
-    if (sameCurrency && shopC) {
+    if (sameMetaCurrency && shopC) {
       /* ok */
     } else if (totalMetaSpend > 0 && shopC && !metaC) {
       warning =
@@ -7777,8 +7832,20 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     } else if (totalMetaSpend > 0 && !shopC) {
       warning = 'La tienda no reportó divisa en Shopify; revisa el total en el admin.';
     }
+    const hasManualMismatchedCurrency = Boolean(
+      shopC &&
+        sortedAsc.some((k) => {
+          const cur = manualAdPack.currenciesByDay[k];
+          return Array.isArray(cur) && cur.some((c) => String(c || '').trim().toUpperCase() !== shopC);
+        }),
+    );
+    if (hasManualMismatchedCurrency) {
+      warning = warning
+        ? `${warning} Además, hay registros de gasto manual en una divisa distinta a la de la tienda.`
+        : 'Hay registros de gasto manual en una divisa distinta a la de la tienda.';
+    }
 
-    const gananciaComparable = Boolean(sameCurrency && shopC);
+    const gananciaComparable = Boolean(sameMetaCurrency && shopC && !hasManualMismatchedCurrency);
     const sortedDesc = [...sortedAsc].reverse();
     const days = [];
     for (const dateStr of sortedDesc) {
