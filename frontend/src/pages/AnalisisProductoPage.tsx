@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { DataTable, Td, Th, tableBase } from '../design-system/DataTable';
 import { ds } from '../design-system/ds';
@@ -872,6 +873,22 @@ export default function AnalisisProductoPage() {
         >
           Productos top
         </button>
+        <Link
+          to="/analisis-producto/pedidos-por-variante"
+          style={{
+            ...inputStyle,
+            width: 'auto',
+            cursor: 'pointer',
+            fontWeight: 600,
+            background: ds.bgCard,
+            color: ds.textSecondary,
+            textDecoration: 'none',
+            display: 'inline-flex',
+            alignItems: 'center',
+          }}
+        >
+          Pedidos por variante
+        </Link>
       </div>
 
       {error ? (

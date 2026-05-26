@@ -30,6 +30,7 @@ const RelacionPagosMoticoPage = lazy(() => import('./pages/RelacionPagosMoticoPa
 const Profile = lazy(() => import('./pages/Profile'));
 const AcceptInvitation = lazy(() => import('./pages/AcceptInvitation'));
 const AnalisisProductoPage = lazy(() => import('./pages/AnalisisProductoPage'));
+const PedidosPorVariantePage = lazy(() => import('./pages/PedidosPorVariantePage'));
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'));
 const AdminDashboardContentPage = lazy(() => import('./pages/AdminDashboardContentPage'));
 const ReporteDropiPage = lazy(() => import('./pages/ReporteDropiPage'));
@@ -94,6 +95,7 @@ export default function App() {
               <Route path="/inicio" element={<InicioPage />} />
               <Route path="/dashboard" element={<InicioPage />} />
               <Route path="/analisis-producto" element={<AnalisisProductoPage />} />
+              <Route path="/analisis-producto/pedidos-por-variante" element={<PedidosPorVariantePage />} />
               <Route path="/pedidos" element={<PedidosPage />} />
               <Route path="/relacion-pagos-motico" element={<RelacionPagosMoticoPage />} />
               <Route

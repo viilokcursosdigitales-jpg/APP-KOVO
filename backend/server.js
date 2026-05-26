@@ -4347,6 +4347,171 @@ app.get('/api/product-analytics/meta-spend', verifyToken, scopeToOrganization, a
   }
 });
 
+function shiftYmdOneMonth(ymdStr, deltaMonths) {
+  const p = parseIsoDateYmd(ymdStr);
+  if (!p) return null;
+  const base = new Date(Date.UTC(p.y, p.m - 1, p.d, 12, 0, 0));
+  base.setUTCMonth(base.getUTCMonth() + Number(deltaMonths || 0));
+  const y = base.getUTCFullYear();
+  const m = base.getUTCMonth() + 1;
+  const d = base.getUTCDate();
+  return `${String(y).padStart(4, '0')}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+}
+
+function variantLabelForLineItem(li) {
+  const vt = String(li?.variant_title || '').trim();
+  if (vt && vt.toLowerCase() !== 'default title') return vt;
+  const name = String(li?.name || '').trim();
+  // Shopify name suele ser "Producto - Variante"
+  const dash = name.split(' - ').map((x) => x.trim()).filter(Boolean);
+  if (dash.length >= 2) return dash.slice(1).join(' - ');
+  return 'Sin variante';
+}
+
+app.get(
+  '/api/product-analytics/orders-by-variant',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('analisis_producto'),
+  async (req, res) => {
+    try {
+      const row = await getActiveShopifyConnection(req.organizationId);
+      if (!row) {
+        return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
+      }
+      const productId = Number.parseInt(String(req.query.product_id || ''), 10);
+      if (!Number.isFinite(productId) || productId <= 0) {
+        return res.status(400).json({ error: 'product_id inválido' });
+      }
+      const fromYmd = String(req.query.from || '').trim().slice(0, 10);
+      const toYmd = String(req.query.to || '').trim().slice(0, 10);
+      if (!parseIsoDateYmd(fromYmd) || !parseIsoDateYmd(toYmd) || fromYmd > toYmd) {
+        return res.status(400).json({ error: 'Rango de fechas inválido (from/to YYYY-MM-DD)' });
+      }
+      const sr = await shopifyRequest(row.shop_domain, row.access_token, 'shop.json?fields=iana_timezone');
+      const iana =
+        sr.ok && sr.data && sr.data.shop && sr.data.shop.iana_timezone
+          ? String(sr.data.shop.iana_timezone)
+          : 'UTC';
+      const fromParts = parseIsoDateYmd(fromYmd);
+      const toParts = parseIsoDateYmd(toYmd);
+      if (!fromParts || !toParts) return res.status(400).json({ error: 'Rango inválido' });
+      const fromRange = shopifyOrderCreatedRangeForCalendarDate(iana, fromParts.y, fromParts.m, fromParts.d);
+      const toRange = shopifyOrderCreatedRangeForCalendarDate(iana, toParts.y, toParts.m, toParts.d);
+
+      const prevFrom = shiftYmdOneMonth(fromYmd, -1);
+      const prevTo = shiftYmdOneMonth(toYmd, -1);
+      const prevOk = Boolean(prevFrom && prevTo && parseIsoDateYmd(prevFrom) && parseIsoDateYmd(prevTo) && prevFrom <= prevTo);
+      let prevFromRange = null;
+      let prevToRange = null;
+      if (prevOk) {
+        const pf = parseIsoDateYmd(prevFrom);
+        const pt = parseIsoDateYmd(prevTo);
+        if (pf && pt) {
+          prevFromRange = shopifyOrderCreatedRangeForCalendarDate(iana, pf.y, pf.m, pf.d);
+          prevToRange = shopifyOrderCreatedRangeForCalendarDate(iana, pt.y, pt.m, pt.d);
+        }
+      }
+
+      const fetchOrdersInRange = async (minIso, maxIso) => {
+        const qs = new URLSearchParams();
+        qs.set('status', 'any');
+        qs.set('fields', SHOPIFY_ORDER_LIST_FIELDS);
+        qs.set('created_at_min', minIso);
+        qs.set('created_at_max', maxIso);
+        const r = await shopifyFetchAllOrders(row.shop_domain, row.access_token, qs);
+        if (!r.ok) return { ok: false, status: r.status, error: r.error, orders: [] };
+        const normalized = normalizeShopifyOrdersForApp({ orders: r.orders });
+        const ids = normalized.map((o) => Number(o.id)).filter((n) => Number.isFinite(n));
+        let localMap = new Map();
+        try {
+          localMap = await loadLocalFieldsMap(req.organizationId, ids);
+        } catch (e) {
+          if (!(e && e.code === '42P01')) throw e;
+        }
+        const enriched = normalized.map((o) => applyShopifyOrderKovoDisplayOverrides(o, localMap.get(Number(o.id))));
+        return { ok: true, status: 200, error: null, orders: enriched };
+      };
+
+      const [curPack, prevPack] = await Promise.all([
+        fetchOrdersInRange(fromRange.min, toRange.max),
+        prevFromRange && prevToRange ? fetchOrdersInRange(prevFromRange.min, prevToRange.max) : Promise.resolve({ ok: true, orders: [] }),
+      ]);
+      if (!curPack.ok) {
+        const st = Number(curPack.status) >= 400 ? Number(curPack.status) : 502;
+        return res.status(Number.isFinite(st) ? st : 502).json({ error: curPack.error || 'Error Shopify' });
+      }
+
+      const buildAgg = (orders) => {
+        const byKey = new Map();
+        let totalOrdersForProduct = 0;
+        for (const o of orders) {
+          const st = String(o?.internal_status || '').trim().toLowerCase();
+          if (st === 'prueba') continue;
+          const details = Array.isArray(o?.lineItemsDetail) ? o.lineItemsDetail : [];
+          const hits = details.filter((li) => Number(li?.product_id) === productId);
+          if (!hits.length) continue;
+          totalOrdersForProduct += 1;
+          const seenVariantKeys = new Set();
+          for (const li of hits) {
+            const vid = li?.variant_id != null && Number.isFinite(Number(li.variant_id)) ? Number(li.variant_id) : null;
+            const label = variantLabelForLineItem(li);
+            const key = vid != null ? `v:${vid}` : `t:${label.toLowerCase()}`;
+            if (!seenVariantKeys.has(key)) seenVariantKeys.add(key);
+            const prev = byKey.get(key) || { key, variant_id: vid, variant: label, orders: 0, units: 0 };
+            byKey.set(key, {
+              ...prev,
+              orders: prev.orders + 1,
+              units: prev.units + (parseInt(String(li?.quantity || 0), 10) || 0),
+            });
+          }
+        }
+        const rows = [...byKey.values()];
+        rows.sort((a, b) => b.orders - a.orders || b.units - a.units || String(a.variant).localeCompare(String(b.variant), 'es'));
+        return { totalOrdersForProduct, rows };
+      };
+
+      const curAgg = buildAgg(curPack.orders || []);
+      const prevAgg = buildAgg(prevPack.orders || []);
+      const prevByKey = new Map(prevAgg.rows.map((r) => [r.key, r]));
+
+      const variants = curAgg.rows.map((r) => {
+        const prev = prevByKey.get(r.key);
+        const prevOrders = prev ? Number(prev.orders) : 0;
+        let trend = 'same';
+        if (r.orders > prevOrders) trend = prevOrders === 0 ? 'new' : 'up';
+        else if (r.orders < prevOrders) trend = 'down';
+        return {
+          key: r.key,
+          variant_id: r.variant_id,
+          variant: r.variant,
+          orders: r.orders,
+          units: r.units,
+          pct: curAgg.totalOrdersForProduct > 0 ? Math.round((r.orders / curAgg.totalOrdersForProduct) * 1000) / 10 : 0,
+          prev_orders: prevOrders,
+          prev_pct:
+            prevAgg.totalOrdersForProduct > 0 ? Math.round((prevOrders / prevAgg.totalOrdersForProduct) * 1000) / 10 : 0,
+          trend,
+        };
+      });
+
+      const top = variants[0] || null;
+      res.json({
+        product_id: productId,
+        range: { from: fromYmd, to: toYmd },
+        previous_range: prevOk ? { from: prevFrom, to: prevTo } : null,
+        total_orders: curAgg.totalOrdersForProduct,
+        top_variant: top ? { variant: top.variant, orders: top.orders, pct: top.pct } : null,
+        active_variants: variants.length,
+        variants,
+      });
+    } catch (e) {
+      console.error('[product-analytics/orders-by-variant]', e);
+      res.status(500).json({ error: 'Error al calcular pedidos por variante' });
+    }
+  },
+);
+
 function parseMarketingTargetNum(v) {
   if (v === null || v === undefined || v === '') return null;
   const n = Number.parseFloat(String(v).replace(',', '.'));
