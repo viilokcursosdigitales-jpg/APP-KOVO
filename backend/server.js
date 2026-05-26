@@ -14,6 +14,7 @@ const {
   buildClosedCommissionCutSpecs,
 } = require('./comisionVentasPeriod');
 const { createMoticoManualOrderFromBody } = require('./moticoManualOrderCreate');
+const { rowToApi: adSpendRowToApi, validateAdSpendBody } = require('./marketingAdSpend');
 const {
   resolveOrganizationIdByIngestToken,
   rotateOrganizationIngestToken,
@@ -158,6 +159,7 @@ const CONFIGURABLE_MODULE_IDS = [
   'ads_funnel',
   'finanza',
   'indicadores_marketing',
+  'gasto_publicitario',
   'canales',
   'ganancia_diaria',
   'calculadora_cod',
@@ -176,6 +178,7 @@ const MODULE_CATALOG_FOR_API = [
   { id: 'ads_funnel', label: 'Ads Funnel', group: 'Marketing' },
   { id: 'finanza', label: 'Finanza', group: 'Marketing' },
   { id: 'indicadores_marketing', label: 'Indicadores', group: 'Marketing' },
+  { id: 'gasto_publicitario', label: 'Gasto publicitario', group: 'Marketing' },
   { id: 'canales', label: 'Canales', group: 'Marketing' },
   { id: 'ganancia_diaria', label: 'Ganancia Diaria', group: 'Marketing' },
   { id: 'calculadora_cod', label: 'Calculadora COD', group: 'Marketing' },
@@ -4443,6 +4446,181 @@ app.put('/api/shopify/product-marketing-targets', verifyToken, scopeToOrganizati
     res.status(500).json({ error: 'Error al guardar indicadores de marketing' });
   }
 });
+
+app.get(
+  '/api/marketing/ad-spend',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('gasto_publicitario'),
+  async (req, res) => {
+    try {
+      const params = [req.organizationId];
+      const clauses = ['organization_id = $1'];
+      const from = String(req.query.from || '').trim().slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(from)) {
+        params.push(from);
+        clauses.push(`spend_date >= $${params.length}`);
+      }
+      const to = String(req.query.to || '').trim().slice(0, 10);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(to)) {
+        params.push(to);
+        clauses.push(`spend_date <= $${params.length}`);
+      }
+      const { rows } = await pool.query(
+        `SELECT id, spend_date, platform, shopify_product_id, product_title, amount, currency, notes, created_at, updated_at
+           FROM marketing_ad_spend_entries
+          WHERE ${clauses.join(' AND ')}
+          ORDER BY spend_date DESC, id DESC`,
+        params,
+      );
+      res.json({ entries: rows.map(adSpendRowToApi) });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error:
+            'Falta la tabla marketing_ad_spend_entries. Reinicia el backend para ejecutar initDb.',
+          code: 'schema_missing',
+        });
+      }
+      console.error('[marketing/ad-spend GET]', e);
+      res.status(500).json({ error: 'Error al listar gasto publicitario' });
+    }
+  },
+);
+
+app.post(
+  '/api/marketing/ad-spend',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('gasto_publicitario'),
+  async (req, res) => {
+    try {
+      const parsed = validateAdSpendBody(req.body);
+      if (!parsed.ok) {
+        return res.status(parsed.status).json({ error: parsed.error });
+      }
+      const v = parsed.value;
+      const { rows } = await pool.query(
+        `INSERT INTO marketing_ad_spend_entries
+           (organization_id, spend_date, platform, shopify_product_id, product_title, amount, currency, notes)
+         VALUES ($1, $2::date, $3, $4, $5, $6, $7, $8)
+         RETURNING id, spend_date, platform, shopify_product_id, product_title, amount, currency, notes, created_at, updated_at`,
+        [
+          req.organizationId,
+          v.spend_date,
+          v.platform,
+          v.shopify_product_id,
+          v.product_title,
+          v.amount,
+          v.currency,
+          v.notes,
+        ],
+      );
+      res.status(201).json({ entry: adSpendRowToApi(rows[0]) });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error:
+            'Falta la tabla marketing_ad_spend_entries. Reinicia el backend para ejecutar initDb.',
+          code: 'schema_missing',
+        });
+      }
+      console.error('[marketing/ad-spend POST]', e);
+      res.status(500).json({ error: 'Error al crear el registro' });
+    }
+  },
+);
+
+app.put(
+  '/api/marketing/ad-spend/:id',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('gasto_publicitario'),
+  async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID inválido' });
+      }
+      const parsed = validateAdSpendBody(req.body);
+      if (!parsed.ok) {
+        return res.status(parsed.status).json({ error: parsed.error });
+      }
+      const v = parsed.value;
+      const { rows } = await pool.query(
+        `UPDATE marketing_ad_spend_entries
+            SET spend_date = $3::date,
+                platform = $4,
+                shopify_product_id = $5,
+                product_title = $6,
+                amount = $7,
+                currency = $8,
+                notes = $9,
+                updated_at = now()
+          WHERE id = $1 AND organization_id = $2
+          RETURNING id, spend_date, platform, shopify_product_id, product_title, amount, currency, notes, created_at, updated_at`,
+        [
+          id,
+          req.organizationId,
+          v.spend_date,
+          v.platform,
+          v.shopify_product_id,
+          v.product_title,
+          v.amount,
+          v.currency,
+          v.notes,
+        ],
+      );
+      if (!rows[0]) {
+        return res.status(404).json({ error: 'Registro no encontrado' });
+      }
+      res.json({ entry: adSpendRowToApi(rows[0]) });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error:
+            'Falta la tabla marketing_ad_spend_entries. Reinicia el backend para ejecutar initDb.',
+          code: 'schema_missing',
+        });
+      }
+      console.error('[marketing/ad-spend PUT]', e);
+      res.status(500).json({ error: 'Error al actualizar el registro' });
+    }
+  },
+);
+
+app.delete(
+  '/api/marketing/ad-spend/:id',
+  verifyToken,
+  scopeToOrganization,
+  requireModuleAccess('gasto_publicitario'),
+  async (req, res) => {
+    try {
+      const id = parseInt(String(req.params.id), 10);
+      if (!Number.isFinite(id) || id <= 0) {
+        return res.status(400).json({ error: 'ID inválido' });
+      }
+      const del = await pool.query(
+        `DELETE FROM marketing_ad_spend_entries WHERE id = $1 AND organization_id = $2 RETURNING id`,
+        [id, req.organizationId],
+      );
+      if (del.rowCount === 0) {
+        return res.status(404).json({ error: 'Registro no encontrado' });
+      }
+      res.json({ success: true });
+    } catch (e) {
+      if (e && e.code === '42P01') {
+        return res.status(503).json({
+          error:
+            'Falta la tabla marketing_ad_spend_entries. Reinicia el backend para ejecutar initDb.',
+          code: 'schema_missing',
+        });
+      }
+      console.error('[marketing/ad-spend DELETE]', e);
+      res.status(500).json({ error: 'Error al eliminar el registro' });
+    }
+  },
+);
 
 app.put('/api/shopify/product-manual-pricing', verifyToken, scopeToOrganization, async (req, res) => {
   try {

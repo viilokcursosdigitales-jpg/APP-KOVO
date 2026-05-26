@@ -13,6 +13,7 @@ const InicioPage = lazy(() => import('./pages/InicioEditorialPage'));
 const InventarioPage = lazy(() => import('./pages/InventarioPage'));
 const AuthLandingPage = lazy(() => import('./pages/AuthLandingPage'));
 const MarketingIndicatorsPage = lazy(() => import('./pages/MarketingIndicatorsPage'));
+const GastoPublicitarioPage = lazy(() => import('./pages/GastoPublicitarioPage'));
 const GananciaDiariaPage = lazy(() => import('./pages/GananciaDiariaPage'));
 const CalculadoraCodPage = lazy(() => import('./calculadora-cod/CalculadoraCodPage'));
 const PlaneacionVentasLayout = lazy(() => import('./pages/PlaneacionVentas/PlaneacionVentasLayout'));
@@ -111,6 +112,7 @@ export default function App() {
               <Route path="/estrategia-creativa" element={<EstrategiaCreativaPage />} />
               <Route path="/finanza" element={<FinanzaPage />} />
               <Route path="/indicadores-marketing" element={<MarketingIndicatorsPage />} />
+              <Route path="/gasto-publicitario" element={<GastoPublicitarioPage />} />
               <Route path="/canales" element={<CanalesPage />} />
               <Route path="/ganancia-diaria" element={<GananciaDiariaPage />} />
               <Route path="/calculadora-cod" element={<CalculadoraCodPage />} />

@@ -16,6 +16,7 @@ import {
   IconSettings,
   IconShare,
   IconTruck,
+  IconTarget,
   IconTrendingUp,
   IconUser,
   IconUsers,
@@ -71,6 +72,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   const marketing: NavItem[] = [
     { to: '/meta-ads', label: 'Campañas Meta', icon: <IconMegaphone />, moduleId: 'meta_ads' },
     { to: '/analisis-producto', label: 'Análisis de productos', icon: <IconProduct />, moduleId: 'analisis_producto' },
+    { to: '/gasto-publicitario', label: 'Gasto publicitario', icon: <IconTarget />, moduleId: 'gasto_publicitario' },
   ];
   const logistica: NavItem[] = [
     { to: '/reporte-dropi', label: 'Reporte Dropi', icon: <IconTruck />, moduleId: null },

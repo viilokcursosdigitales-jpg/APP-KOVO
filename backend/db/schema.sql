@@ -186,6 +186,23 @@ CREATE TABLE IF NOT EXISTS shopify_product_marketing_targets (
 
 CREATE INDEX IF NOT EXISTS idx_shopify_mkt_targets_org ON shopify_product_marketing_targets (organization_id);
 
+CREATE TABLE IF NOT EXISTS marketing_ad_spend_entries (
+  id SERIAL PRIMARY KEY,
+  organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
+  spend_date DATE NOT NULL,
+  platform VARCHAR(32) NOT NULL CHECK (platform IN ('meta', 'tiktok', 'google', 'otros')),
+  shopify_product_id BIGINT NOT NULL,
+  product_title VARCHAR(500) NOT NULL,
+  amount NUMERIC(14, 2) NOT NULL,
+  currency VARCHAR(8) NOT NULL DEFAULT 'COP',
+  notes TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_marketing_ad_spend_org_date
+  ON marketing_ad_spend_entries (organization_id, spend_date DESC);
+
 CREATE TABLE IF NOT EXISTS shopify_product_manual_pricing (
   id SERIAL PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
