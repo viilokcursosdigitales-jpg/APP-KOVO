@@ -1,13 +1,90 @@
 /**
  * Renovación automática de tokens de usuario Meta (tipo evaluator).
- * Credenciales de app: se usan las guardadas por organización (app_id / app_secret);
- * si META_APP_ID y META_APP_SECRET existen en env y META_APP_ID coincide con el app_id
- * de la fila, se usa el secret del env (útil si no quieres duplicar el secret en BD).
+ * Credenciales de app: META_APP_ID y META_APP_SECRET en env (app_secret no se guarda en BD).
  */
+
+const crypto = require('crypto');
 
 const SEVEN_DAYS_MS = 7 * 24 * 60 * 60 * 1000;
 const FIFTEEN_DAYS_MS = 15 * 24 * 60 * 60 * 1000;
 const DEFAULT_EXPIRES_IN_SEC = 60 * 24 * 60 * 60; // ~60 días si Meta no envía expires_in
+
+function resolveEncryptionKeyBuffer() {
+  const raw = String(process.env.META_TOKEN_ENCRYPTION_KEY || '').trim();
+  if (!raw) return null;
+  if (/^[0-9a-fA-F]{64}$/.test(raw)) return Buffer.from(raw, 'hex');
+  if (raw.length === 32) return Buffer.from(raw, 'utf8');
+  return crypto.createHash('sha256').update(raw).digest();
+}
+
+function isLegacyPlainToken(stored) {
+  const s = String(stored || '').trim();
+  if (!s) return false;
+  if (s.startsWith('EAA')) return true;
+  return !s.includes(':');
+}
+
+/**
+ * @param {string} plainToken
+ * @returns {string}
+ */
+function encryptToken(plainToken) {
+  const plain = String(plainToken || '').trim();
+  if (!plain) return '';
+  const key = resolveEncryptionKeyBuffer();
+  if (!key) return plain;
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([cipher.update(plain, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return `${iv.toString('base64')}:${tag.toString('base64')}:${enc.toString('base64')}`;
+}
+
+/**
+ * @param {string} storedToken
+ * @returns {string}
+ */
+function decryptToken(storedToken) {
+  const stored = String(storedToken || '').trim();
+  if (!stored) return '';
+  if (isLegacyPlainToken(stored)) return stored;
+  const key = resolveEncryptionKeyBuffer();
+  if (!key) return stored;
+  const parts = stored.split(':');
+  if (parts.length !== 3) return stored;
+  try {
+    const iv = Buffer.from(parts[0], 'base64');
+    const tag = Buffer.from(parts[1], 'base64');
+    const enc = Buffer.from(parts[2], 'base64');
+    const decipher = crypto.createDecipheriv('aes-256-gcm', key, iv);
+    decipher.setAuthTag(tag);
+    const plain = Buffer.concat([decipher.update(enc), decipher.final()]).toString('utf8');
+    return plain;
+  } catch {
+    return stored;
+  }
+}
+
+function withDecryptedAccessToken(row) {
+  if (!row) return row;
+  return { ...row, access_token: decryptToken(row.access_token) };
+}
+
+/**
+ * @param {import('pg').Pool} pool
+ * @param {number} connectionId
+ * @param {number} organizationId
+ */
+async function markConnectionMetaTokenInvalid(pool, connectionId, organizationId) {
+  await pool.query(
+    `UPDATE meta_connections
+     SET status = 'error',
+         disconnect_reason = 'token_invalid',
+         updated_at = now()
+     WHERE id = $1 AND organization_id = $2`,
+    [connectionId, organizationId],
+  );
+}
 
 /**
  * @param {import('pg').Pool} pool
@@ -21,7 +98,7 @@ async function getMetaConnectionConnectedForOrg(pool, organizationId) {
      LIMIT 1`,
     [organizationId],
   );
-  return rows[0] || null;
+  return withDecryptedAccessToken(rows[0] || null);
 }
 
 function getAppCredentialsForExchange(row) {
@@ -29,6 +106,9 @@ function getAppCredentialsForExchange(row) {
   const envId = process.env.META_APP_ID ? String(process.env.META_APP_ID).replace(/\s/g, '') : '';
   const envSecret = process.env.META_APP_SECRET ? String(process.env.META_APP_SECRET).trim() : '';
   if (envId && envSecret && envId === rowAppId) {
+    return { appId: envId, appSecret: envSecret };
+  }
+  if (envId && envSecret) {
     return { appId: envId, appSecret: envSecret };
   }
   return { appId: rowAppId, appSecret: String(row.app_secret || '').trim() };
@@ -106,6 +186,7 @@ async function refreshMetaTokenForOrganization(pool, graphVersion, organizationI
     return { ok: false, reason: 'exchange_error' };
   }
 
+  const storedToken = encryptToken(ex.access_token);
   await pool.query(
     `UPDATE meta_connections
      SET access_token = $1,
@@ -113,7 +194,7 @@ async function refreshMetaTokenForOrganization(pool, graphVersion, organizationI
          disconnect_reason = NULL,
          status = 'connected'
      WHERE id = $3 AND organization_id = $4`,
-    [ex.access_token, ex.expires_at.toISOString(), row.id, organizationId],
+    [storedToken, ex.expires_at.toISOString(), row.id, organizationId],
   );
   return { ok: true };
 }
@@ -130,7 +211,7 @@ async function exchangeAndPersistLongLivedForConnection(pool, graphVersion, conn
     `SELECT * FROM meta_connections WHERE id = $1 AND organization_id = $2`,
     [connectionId, organizationId],
   );
-  const row = rows[0];
+  const row = withDecryptedAccessToken(rows[0]);
   if (!row) return;
   const tokenType = row.token_type || 'evaluator';
   if (tokenType === 'system_user') {
@@ -151,11 +232,12 @@ async function exchangeAndPersistLongLivedForConnection(pool, graphVersion, conn
     console.error('[meta-token] initial exchange failed', connectionId, ex.error);
     return;
   }
+  const storedToken = encryptToken(ex.access_token);
   await pool.query(
     `UPDATE meta_connections
      SET access_token = $1, token_expires_at = $2, disconnect_reason = NULL
      WHERE id = $3 AND organization_id = $4`,
-    [ex.access_token, ex.expires_at.toISOString(), connectionId, organizationId],
+    [storedToken, ex.expires_at.toISOString(), connectionId, organizationId],
   );
 }
 
@@ -226,6 +308,9 @@ module.exports = {
   runEvaluatorTokenRefreshCron,
   exchangeFbUserToken,
   getAppCredentialsForExchange,
+  encryptToken,
+  decryptToken,
+  markConnectionMetaTokenInvalid,
   SEVEN_DAYS_MS,
   FIFTEEN_DAYS_MS,
 };

@@ -1,6 +1,166 @@
 'use strict';
 
-const DEFAULT_VERSION = process.env.META_GRAPH_VERSION || 'v21.0';
+const { AsyncLocalStorage } = require('async_hooks');
+
+const metaApiContextStorage = new AsyncLocalStorage();
+
+const MAX_CONCURRENT_PER_TOKEN = 2;
+const MAX_RATE_LIMIT_RETRIES = 4;
+const RATE_LIMIT_BACKOFF_MS = [2000, 4000, 8000, 16000];
+const HOURLY_CALL_WARN_THRESHOLD = 200;
+
+/** @type {Map<string, { running: number, queue: Array<() => void> }>} */
+const tokenSlotState = new Map();
+/** @type {Map<string, { hourKey: string, count: number }>} */
+const hourlyCallCounts = new Map();
+
+function getGraphVersion() {
+  return String(process.env.META_GRAPH_VERSION || 'v21.0').trim() || 'v21.0';
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function graphErrorCode(data) {
+  const fb = data && data.error;
+  if (!fb) return null;
+  const code = fb.code;
+  return typeof code === 'number' ? code : null;
+}
+
+function accessTokenFromGraphUrl(url) {
+  try {
+    const u = new URL(url);
+    return u.searchParams.get('access_token') || '';
+  } catch {
+    return '';
+  }
+}
+
+function trackHourlyCall(connectionId, accessToken) {
+  const key = connectionId != null ? `conn:${connectionId}` : `tok:${String(accessToken || '').slice(0, 12)}`;
+  const hourKey = new Date().toISOString().slice(0, 13);
+  const cur = hourlyCallCounts.get(key) || { hourKey, count: 0 };
+  if (cur.hourKey !== hourKey) {
+    cur.hourKey = hourKey;
+    cur.count = 0;
+  }
+  cur.count += 1;
+  hourlyCallCounts.set(key, cur);
+  if (cur.count === HOURLY_CALL_WARN_THRESHOLD + 1) {
+    console.warn(`[meta-rate-warn] token ${key} superó ${HOURLY_CALL_WARN_THRESHOLD} llamadas/hora`);
+  }
+}
+
+function acquireTokenSlot(tokenKey) {
+  return new Promise((resolve) => {
+    let state = tokenSlotState.get(tokenKey);
+    if (!state) {
+      state = { running: 0, queue: [] };
+      tokenSlotState.set(tokenKey, state);
+    }
+    const tryRun = () => {
+      if (state.running < MAX_CONCURRENT_PER_TOKEN) {
+        state.running += 1;
+        resolve();
+        return;
+      }
+      state.queue.push(tryRun);
+    };
+    tryRun();
+  });
+}
+
+function releaseTokenSlot(tokenKey) {
+  const state = tokenSlotState.get(tokenKey);
+  if (!state) return;
+  state.running = Math.max(0, state.running - 1);
+  const next = state.queue.shift();
+  if (next) next();
+}
+
+/**
+ * @param {() => Promise<{ ok: boolean, data: any, status: number }>} fn
+ * @param {{ accessToken?: string, connectionId?: number, pool?: import('pg').Pool, organizationId?: number }} [options]
+ */
+async function metaApiCall(fn, options = {}) {
+  const store = metaApiContextStorage.getStore() || {};
+  const accessToken = options.accessToken || store.accessToken || '';
+  const tokenKey = accessToken ? accessToken.slice(0, 24) : 'anon';
+  const connectionId = options.connectionId ?? store.connectionId;
+  const pool = options.pool ?? store.pool;
+  const organizationId = options.organizationId ?? store.organizationId;
+
+  trackHourlyCall(connectionId, accessToken);
+  await acquireTokenSlot(tokenKey);
+
+  try {
+    for (let attempt = 0; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
+      const result = await fn();
+      const code = graphErrorCode(result.data);
+
+      if (code === 190) {
+        if (pool && connectionId && organizationId) {
+          const { markConnectionMetaTokenInvalid } = require('./metaTokenService');
+          await markConnectionMetaTokenInvalid(pool, connectionId, organizationId);
+        }
+        const err = new Error('Token de Meta inválido o expirado');
+        err.code = 190;
+        throw err;
+      }
+
+      if ((code === 17 || code === 32) && attempt < MAX_RATE_LIMIT_RETRIES) {
+        await sleep(RATE_LIMIT_BACKOFF_MS[attempt] || 16000);
+        continue;
+      }
+
+      if (code === 17 || code === 32) {
+        const err = new Error('Meta rate limit alcanzado, intenta en unos minutos');
+        err.code = code;
+        throw err;
+      }
+
+      return result;
+    }
+    const err = new Error('Meta rate limit alcanzado, intenta en unos minutos');
+    err.code = 32;
+    throw err;
+  } finally {
+    releaseTokenSlot(tokenKey);
+  }
+}
+
+/**
+ * @param {object} ctx
+ * @param {() => Promise<any>} fn
+ */
+function runWithMetaApiContext(ctx, fn) {
+  return metaApiContextStorage.run(ctx || {}, fn);
+}
+
+async function graphFetchJson(url, options = {}) {
+  const accessToken = options.accessToken || accessTokenFromGraphUrl(url);
+  return metaApiCall(async () => {
+    const res = await fetch(url);
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, data, status: res.status };
+  }, { ...options, accessToken });
+}
+
+async function fetchAllGraphPages(firstUrl, options = {}) {
+  const items = [];
+  let url = firstUrl;
+  while (url) {
+    const { ok, data } = await graphFetchJson(url, options);
+    if (!ok) {
+      return { ok: false, data, items };
+    }
+    if (Array.isArray(data.data)) items.push(...data.data);
+    url = data.paging?.next || null;
+  }
+  return { ok: true, items };
+}
 
 function normalizeActId(raw) {
   const s = String(raw || '').trim();
@@ -24,34 +184,11 @@ function datePresetFromDashboardPeriod(period) {
   return map[period] || 'last_7d';
 }
 
-async function graphFetchJson(url) {
-  const res = await fetch(url);
-  const data = await res.json().catch(() => ({}));
-  return { ok: res.ok, data, status: res.status };
-}
-
-async function fetchAllGraphPages(firstUrl) {
-  const items = [];
-  let url = firstUrl;
-  while (url) {
-    const { ok, data } = await graphFetchJson(url);
-    if (!ok) {
-      return { ok: false, data, items };
-    }
-    if (Array.isArray(data.data)) items.push(...data.data);
-    url = data.paging?.next || null;
-  }
-  return { ok: true, items };
-}
-
-/**
- * @param {string} accessToken
- */
-async function listAdAccounts(accessToken) {
-  const v = DEFAULT_VERSION;
+async function listAdAccounts(accessToken, apiOptions = {}) {
+  const v = getGraphVersion();
   const fields = 'id,name,account_status,currency';
   const base = `https://graph.facebook.com/${v}/me/adaccounts?fields=${encodeURIComponent(fields)}&limit=100&access_token=${encodeURIComponent(accessToken)}`;
-  const r = await fetchAllGraphPages(base);
+  const r = await fetchAllGraphPages(base, { ...apiOptions, accessToken });
   if (!r.ok) {
     const fb = r.data && r.data.error;
     const code190 = fb && fb.code === 190;
@@ -79,12 +216,12 @@ function buildObjectFields(level, datePreset) {
   return `id,name,adset_id,campaign_id,status,effective_status,${ins}`;
 }
 
-async function fetchAccountName(actId, accessToken) {
-  const v = DEFAULT_VERSION;
+async function fetchAccountName(actId, accessToken, apiOptions = {}) {
+  const v = getGraphVersion();
   const id = normalizeActId(actId);
   if (!id) return actId;
   const u = `https://graph.facebook.com/${v}/${id}?fields=name&access_token=${encodeURIComponent(accessToken)}`;
-  const { ok, data } = await graphFetchJson(u);
+  const { ok, data } = await graphFetchJson(u, { ...apiOptions, accessToken });
   if (ok && data.name) return String(data.name);
   return id;
 }
@@ -166,15 +303,15 @@ function normalizeEntity(entity, level, adAccountId, adAccountName) {
  * @param {'campaigns'|'adsets'|'ads'} level
  * @param {string} datePreset
  */
-async function fetchInsightsForAdAccount(actId, accessToken, level, datePreset) {
-  const v = DEFAULT_VERSION;
+async function fetchInsightsForAdAccount(actId, accessToken, level, datePreset, apiOptions = {}) {
+  const v = getGraphVersion();
   const id = normalizeActId(actId);
   if (!id) {
     return { ok: false, rows: [], error: 'ID de cuenta publicitaria no válido' };
   }
   const fields = buildObjectFields(level, datePreset);
   const base = `https://graph.facebook.com/${v}/${id}/${level}?fields=${encodeURIComponent(fields)}&limit=100&access_token=${encodeURIComponent(accessToken)}`;
-  const r = await fetchAllGraphPages(base);
+  const r = await fetchAllGraphPages(base, { ...apiOptions, accessToken });
   if (!r.ok) {
     const fb = r.data && r.data.error;
     return {
@@ -184,7 +321,7 @@ async function fetchInsightsForAdAccount(actId, accessToken, level, datePreset) 
       fb,
     };
   }
-  const acctName = await fetchAccountName(id, accessToken);
+  const acctName = await fetchAccountName(id, accessToken, apiOptions);
   const rows = r.items.map((entity) => normalizeEntity(entity, level, id, acctName));
   return { ok: true, rows, error: null, fb: null };
 }
@@ -289,15 +426,15 @@ function buildFunnelFromAccountInsight(insight) {
   };
 }
 
-async function fetchAccountAggregatedInsights(actId, accessToken, datePreset) {
-  const v = DEFAULT_VERSION;
+async function fetchAccountAggregatedInsights(actId, accessToken, datePreset, apiOptions = {}) {
+  const v = getGraphVersion();
   const id = normalizeActId(actId);
   if (!id) {
     return { ok: false, error: 'ID de cuenta no válido', funnel: null };
   }
   const fields = 'actions,action_values,spend,impressions,clicks,inline_link_clicks,reach';
   const url = `https://graph.facebook.com/${v}/${id}/insights?date_preset=${encodeURIComponent(datePreset)}&fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(accessToken)}`;
-  const { ok, data } = await graphFetchJson(url);
+  const { ok, data } = await graphFetchJson(url, { ...apiOptions, accessToken });
   if (!ok || !data || !Array.isArray(data.data) || !data.data[0]) {
     const msg = (data && data.error && data.error.message) || 'Sin datos de insights para esta cuenta';
     return { ok: false, error: msg, funnel: null };
@@ -337,12 +474,12 @@ function mergeFunnelPayloads(payloads) {
  * @param {string} accessToken
  * @param {string} datePreset
  */
-async function fetchFunnelForAdAccounts(actIds, accessToken, datePreset) {
+async function fetchFunnelForAdAccounts(actIds, accessToken, datePreset, apiOptions = {}) {
   const partialErrors = [];
   const payloads = [];
   for (const raw of actIds) {
     const id = normalizeActId(raw);
-    const r = await fetchAccountAggregatedInsights(id, accessToken, datePreset);
+    const r = await fetchAccountAggregatedInsights(id, accessToken, datePreset, apiOptions);
     if (!r.ok) {
       partialErrors.push({ adAccountId: id, error: r.error || 'Error' });
       continue;
@@ -359,15 +496,15 @@ async function fetchFunnelForAdAccounts(actIds, accessToken, datePreset) {
  * @param {string} accessToken
  * @param {string} datePreset
  */
-async function fetchAccountDailyInsightsForPreset(actId, accessToken, datePreset) {
-  const v = DEFAULT_VERSION;
+async function fetchAccountDailyInsightsForPreset(actId, accessToken, datePreset, apiOptions = {}) {
+  const v = getGraphVersion();
   const id = normalizeActId(actId);
   if (!id) {
     return { ok: false, rows: [], error: 'ID de cuenta no válido' };
   }
   const fields = 'impressions,clicks,spend,actions,action_values,date_start';
   const base = `https://graph.facebook.com/${v}/${id}/insights?date_preset=${encodeURIComponent(datePreset)}&fields=${encodeURIComponent(fields)}&time_increment=1&limit=999&access_token=${encodeURIComponent(accessToken)}`;
-  const r = await fetchAllGraphPages(base);
+  const r = await fetchAllGraphPages(base, { ...apiOptions, accessToken });
   if (!r.ok) {
     const fb = r.data && r.data.error;
     return {
@@ -431,12 +568,12 @@ function mergeDailyAccountInsightRows(rowArrays) {
  * @param {string} accessToken
  * @param {string} datePreset
  */
-async function fetchMergedDailyInsightsForAdAccounts(actIds, accessToken, datePreset) {
+async function fetchMergedDailyInsightsForAdAccounts(actIds, accessToken, datePreset, apiOptions = {}) {
   const partialErrors = [];
   const rowArrays = [];
   for (const raw of actIds) {
     const id = normalizeActId(raw);
-    const r = await fetchAccountDailyInsightsForPreset(id, accessToken, datePreset);
+    const r = await fetchAccountDailyInsightsForPreset(id, accessToken, datePreset, apiOptions);
     if (!r.ok) {
       partialErrors.push({ adAccountId: id || String(raw), error: r.error || 'Error' });
       continue;
@@ -454,8 +591,8 @@ async function fetchMergedDailyInsightsForAdAccounts(actIds, accessToken, datePr
  * @param {string} since
  * @param {string} until
  */
-async function fetchAccountSpendForTimeRange(actId, accessToken, since, until) {
-  const v = DEFAULT_VERSION;
+async function fetchAccountSpendForTimeRange(actId, accessToken, since, until, apiOptions = {}) {
+  const v = getGraphVersion();
   const id = normalizeActId(actId);
   if (!id) {
     return { ok: false, spend: 0, error: 'ID de cuenta publicitaria no válido' };
@@ -463,7 +600,7 @@ async function fetchAccountSpendForTimeRange(actId, accessToken, since, until) {
   const tr = JSON.stringify({ since, until });
   const fields = 'spend';
   const url = `https://graph.facebook.com/${v}/${id}/insights?fields=${encodeURIComponent(fields)}&time_range=${encodeURIComponent(tr)}&access_token=${encodeURIComponent(accessToken)}`;
-  const { ok, data } = await graphFetchJson(url);
+  const { ok, data } = await graphFetchJson(url, { ...apiOptions, accessToken });
   if (!ok || !data) {
     const fb = data && data.error;
     return {
@@ -485,12 +622,12 @@ async function fetchAccountSpendForTimeRange(actId, accessToken, since, until) {
  * @param {string} since YYYY-MM-DD
  * @param {string} until YYYY-MM-DD
  */
-async function fetchTotalSpendForAdAccountsTimeRange(actIds, accessToken, since, until) {
+async function fetchTotalSpendForAdAccountsTimeRange(actIds, accessToken, since, until, apiOptions = {}) {
   let spend = 0;
   const partialErrors = [];
   for (const raw of actIds) {
     const id = normalizeActId(raw);
-    const r = await fetchAccountSpendForTimeRange(id, accessToken, since, until);
+    const r = await fetchAccountSpendForTimeRange(id, accessToken, since, until, apiOptions);
     if (!r.ok) {
       partialErrors.push({ adAccountId: id, error: r.error || 'Error' });
       continue;
@@ -509,8 +646,8 @@ async function fetchTotalSpendForAdAccountsTimeRange(actIds, accessToken, since,
  * @param {string} until YYYY-MM-DD
  * @returns {Promise<{ byDay: Record<string, number>, partialErrors: { adAccountId: string, error: string }[] }>}
  */
-async function fetchDailySpendByDayForAdAccountsTimeRange(actIds, accessToken, since, until) {
-  const v = DEFAULT_VERSION;
+async function fetchDailySpendByDayForAdAccountsTimeRange(actIds, accessToken, since, until, apiOptions = {}) {
+  const v = getGraphVersion();
   const tr = JSON.stringify({ since, until });
   const fields = 'spend,date_start';
   const partialErrors = [];
@@ -523,7 +660,7 @@ async function fetchDailySpendByDayForAdAccountsTimeRange(actIds, accessToken, s
       continue;
     }
     const base = `https://graph.facebook.com/${v}/${id}/insights?fields=${encodeURIComponent(fields)}&time_range=${encodeURIComponent(tr)}&time_increment=1&limit=999&access_token=${encodeURIComponent(accessToken)}`;
-    const r = await fetchAllGraphPages(base);
+    const r = await fetchAllGraphPages(base, { ...apiOptions, accessToken });
     if (!r.ok) {
       const fb = r.data && r.data.error;
       partialErrors.push({
@@ -549,8 +686,8 @@ async function fetchDailySpendByDayForAdAccountsTimeRange(actIds, accessToken, s
  * @param {string} since YYYY-MM-DD
  * @param {string} until YYYY-MM-DD
  */
-async function fetchAccountDailyInsightsForTimeRange(actId, accessToken, since, until) {
-  const v = DEFAULT_VERSION;
+async function fetchAccountDailyInsightsForTimeRange(actId, accessToken, since, until, apiOptions = {}) {
+  const v = getGraphVersion();
   const id = normalizeActId(actId);
   if (!id) {
     return { ok: false, rows: [], error: 'ID de cuenta no válido' };
@@ -558,7 +695,7 @@ async function fetchAccountDailyInsightsForTimeRange(actId, accessToken, since, 
   const tr = JSON.stringify({ since, until });
   const fields = 'impressions,clicks,spend,actions,action_values,date_start';
   const base = `https://graph.facebook.com/${v}/${id}/insights?fields=${encodeURIComponent(fields)}&time_range=${encodeURIComponent(tr)}&time_increment=1&limit=999&access_token=${encodeURIComponent(accessToken)}`;
-  const r = await fetchAllGraphPages(base);
+  const r = await fetchAllGraphPages(base, { ...apiOptions, accessToken });
   if (!r.ok) {
     const fb = r.data && r.data.error;
     return {
@@ -577,12 +714,12 @@ async function fetchAccountDailyInsightsForTimeRange(actId, accessToken, since, 
  * @param {string} since YYYY-MM-DD
  * @param {string} until YYYY-MM-DD
  */
-async function fetchDailyInsightsByDayForAdAccountsTimeRange(actIds, accessToken, since, until) {
+async function fetchDailyInsightsByDayForAdAccountsTimeRange(actIds, accessToken, since, until, apiOptions = {}) {
   const partialErrors = [];
   const rowArrays = [];
   for (const raw of actIds || []) {
     const id = normalizeActId(raw);
-    const r = await fetchAccountDailyInsightsForTimeRange(id, accessToken, since, until);
+    const r = await fetchAccountDailyInsightsForTimeRange(id, accessToken, since, until, apiOptions);
     if (!r.ok) {
       partialErrors.push({ adAccountId: id || String(raw || ''), error: r.error || 'Error' });
       continue;
@@ -598,14 +735,14 @@ async function fetchDailyInsightsByDayForAdAccountsTimeRange(actIds, accessToken
  * @param {string} accessToken
  * @returns {Promise<{ ok: boolean, accountId: string | null, error: string | null }>}
  */
-async function getCampaignAdAccountId(campaignId, accessToken) {
-  const v = DEFAULT_VERSION;
+async function getCampaignAdAccountId(campaignId, accessToken, apiOptions = {}) {
+  const v = getGraphVersion();
   const rawId = String(campaignId || '').trim();
   if (!/^\d+$/.test(rawId)) {
     return { ok: false, accountId: null, error: 'ID de campaña inválido' };
   }
   const u = `https://graph.facebook.com/${v}/${rawId}?fields=account_id&access_token=${encodeURIComponent(accessToken)}`;
-  const { ok, data } = await graphFetchJson(u);
+  const { ok, data } = await graphFetchJson(u, { ...apiOptions, accessToken });
   if (!ok || !data) {
     const fb = data && data.error;
     return {
@@ -626,8 +763,8 @@ async function getCampaignAdAccountId(campaignId, accessToken) {
  * @param {string} accessToken
  * @param {'PAUSED'|'ACTIVE'} status
  */
-async function updateCampaignStatusGraph(campaignId, accessToken, status) {
-  const v = DEFAULT_VERSION;
+async function updateCampaignStatusGraph(campaignId, accessToken, status, apiOptions = {}) {
+  const v = getGraphVersion();
   const rawId = String(campaignId || '').trim();
   if (!/^\d+$/.test(rawId)) {
     return { ok: false, error: 'ID de campaña inválido', fb: null };
@@ -639,13 +776,17 @@ async function updateCampaignStatusGraph(campaignId, accessToken, status) {
   const body = new URLSearchParams();
   body.set('status', status);
   body.set('access_token', accessToken);
-  const res = await fetch(u, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: body.toString(),
-  });
-  const data = await res.json().catch(() => ({}));
-  if (!res.ok || (data && data.error)) {
+  const result = await metaApiCall(async () => {
+    const res = await fetch(u, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: body.toString(),
+    });
+    const data = await res.json().catch(() => ({}));
+    return { ok: res.ok, data, status: res.status };
+  }, { ...apiOptions, accessToken });
+  const data = result.data;
+  if (!result.ok || (data && data.error)) {
     const fb = data && data.error;
     return {
       ok: false,
@@ -659,6 +800,9 @@ async function updateCampaignStatusGraph(campaignId, accessToken, status) {
 module.exports = {
   normalizeActId,
   datePresetFromDashboardPeriod,
+  getGraphVersion,
+  runWithMetaApiContext,
+  metaApiCall,
   listAdAccounts,
   fetchInsightsForAdAccount,
   filterValidAdAccountIds,

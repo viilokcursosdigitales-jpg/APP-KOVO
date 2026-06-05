@@ -616,55 +616,27 @@ function attributeOrderToCampaigns(
   return productCampaignMatches(pids, productToCampaigns);
 }
 
-/** effective_status de Meta: ACTIVE → pausar; PAUSED → reactivar. */
-function campaignMetaControlKind(status: string): 'pause' | 'activate' | null {
-  const u = String(status || '').toUpperCase();
-  if (u === 'ACTIVE') return 'pause';
-  if (u === 'PAUSED') return 'activate';
-  return null;
+/** effective_status de Meta: ACTIVE = entregando; PAUSED = pausada (solo lectura). */
+function campaignMetaDeliveryIsOn(status: string): boolean {
+  return String(status || '').toUpperCase() === 'ACTIVE';
 }
 
 const META_DELIVERY_BLUE = '#1877f2';
 const META_DELIVERY_GREY = '#3a3d44';
 
-/** Interruptor tipo Meta Ads Manager: azul encendido (activa), gris apagado (pausada). */
-function MetaCampaignDeliveryToggle({
-  rowStatus,
-  busy,
-  tokenBlocked,
-  onPause,
-  onActivate,
-}: {
-  rowStatus: string;
-  busy: boolean;
-  tokenBlocked: boolean;
-  onPause: () => void;
-  onActivate: () => void;
-}) {
-  const kind = campaignMetaControlKind(rowStatus);
-  const isOn = kind === 'pause';
-  const notEditable = kind === null;
-  const disabled = tokenBlocked || notEditable || busy;
+/** Interruptor visual de solo lectura (estado en Meta, sin modificar). */
+function MetaCampaignDeliveryReadOnly({ rowStatus }: { rowStatus: string }) {
+  const isOn = campaignMetaDeliveryIsOn(rowStatus);
+  const notEditable = !['ACTIVE', 'PAUSED'].includes(String(rowStatus || '').toUpperCase());
 
   return (
     <button
       type="button"
       role="switch"
       aria-checked={isOn}
-      aria-busy={busy}
-      aria-label={notEditable ? 'Estado no editable' : isOn ? 'Campaña activa, pausar en Meta' : 'Campaña pausada, activar en Meta'}
-      disabled={disabled}
-      onClick={() => {
-        if (isOn) onPause();
-        else onActivate();
-      }}
-      title={
-        notEditable
-          ? 'Solo se puede activar o pausar campañas en estado Activa o Pausada'
-          : isOn
-            ? 'Campaña activa en Meta — clic para pausar'
-            : 'Campaña pausada — clic para activar'
-      }
+      aria-label={notEditable ? 'Estado no editable' : isOn ? 'Campaña activa en Meta' : 'Campaña pausada en Meta'}
+      disabled
+      title="Solo lectura — Kovo no modifica campañas"
       style={{
         position: 'relative',
         width: 44,
@@ -673,11 +645,10 @@ function MetaCampaignDeliveryToggle({
         border: 'none',
         padding: 0,
         background: notEditable ? '#aeb0b8' : isOn ? META_DELIVERY_BLUE : META_DELIVERY_GREY,
-        cursor: disabled ? 'not-allowed' : 'pointer',
-        opacity: tokenBlocked ? 0.45 : 1,
+        cursor: 'not-allowed',
+        opacity: 0.85,
         flexShrink: 0,
         boxSizing: 'border-box',
-        transition: 'background 0.2s ease',
       }}
     >
       <span
@@ -691,10 +662,53 @@ function MetaCampaignDeliveryToggle({
           borderRadius: '50%',
           background: '#fff',
           boxShadow: '0 1px 3px rgba(0, 0, 0, 0.28)',
-          transition: 'left 0.2s ease',
         }}
       />
     </button>
+  );
+}
+
+export type MetaDataSource = 'cache' | 'snapshot' | 'live' | null;
+
+export function MetaDataSourceBadge({
+  source,
+  fresh,
+}: {
+  source: MetaDataSource;
+  fresh: boolean | null;
+}) {
+  if (!source && fresh !== false) return null;
+  return (
+    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginBottom: 12 }}>
+      {source === 'snapshot' ? (
+        <span
+          style={{
+            fontSize: 11,
+            padding: '4px 10px',
+            borderRadius: 999,
+            background: '#eef2ff',
+            color: '#4338ca',
+            fontWeight: 500,
+          }}
+        >
+          Datos de ayer · actualizando…
+        </span>
+      ) : null}
+      {fresh === false ? (
+        <span
+          style={{
+            fontSize: 11,
+            padding: '4px 10px',
+            borderRadius: 999,
+            background: '#fef3c7',
+            color: '#92400e',
+            fontWeight: 500,
+          }}
+        >
+          Última actualización hace más de 24h
+        </span>
+      ) : null}
+    </div>
   );
 }
 
@@ -756,11 +770,9 @@ export function MetaInsightsPanel({
   const [shopifyProducts, setShopifyProducts] = useState<ShopifyProductOption[]>([]);
   const [shopifyCatalogOk, setShopifyCatalogOk] = useState(false);
   const [targetsByProduct, setTargetsByProduct] = useState<Record<number, ProductMarketingTargets>>({});
-  const [pausingCampaignId, setPausingCampaignId] = useState<string | null>(null);
-  const [campaignStatusBanner, setCampaignStatusBanner] = useState<{
-    kind: 'ok' | 'err';
-    text: string;
-  } | null>(null);
+  const [dataSource, setDataSource] = useState<MetaDataSource>(null);
+  const [dataFresh, setDataFresh] = useState<boolean | null>(null);
+  const snapshotPollRef = useRef(false);
   const [shopifyPedidosByCampaign, setShopifyPedidosByCampaign] = useState<Record<string, number>>({});
   const [shopifyComprasByAd, setShopifyComprasByAd] = useState<Record<string, number>>({});
   const [shopifyVentasByLevel, setShopifyVentasByLevel] = useState<Record<string, number>>({});
@@ -1048,17 +1060,17 @@ export function MetaInsightsPanel({
     return { ...base, cpm, cpc, ctr, roas, cpa };
   }, [tableRows]);
 
-  const load = useCallback(async () => {
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
     const cacheKey = `${level}|${period}|${filterActId || 'all'}`;
     const cached = readMetaInsightsCache(cacheKey);
-    if (cached && hydratedCacheKeyRef.current !== cacheKey) {
+    if (cached && hydratedCacheKeyRef.current !== cacheKey && !opts?.silent) {
       hydratedCacheKeyRef.current = cacheKey;
       setRows(Array.isArray(cached.rows) ? cached.rows : []);
       setTotals(cached.totals ?? null);
       setPartialErrors(Array.isArray(cached.partialErrors) ? cached.partialErrors : []);
       setMeta(cached.meta ?? null);
       setLoading(false);
-    } else {
+    } else if (!opts?.silent) {
       setLoading(true);
     }
     setError(null);
@@ -1067,6 +1079,14 @@ export function MetaInsightsPanel({
       const q = new URLSearchParams({ level, period });
       if (filterActId) q.set('adAccountId', filterActId);
       const res = await apiFetch(`/api/meta/insights?${q.toString()}`);
+      const sourceHeader = res.headers.get('X-Data-Source');
+      const freshHeader = res.headers.get('X-Data-Fresh');
+      const source: MetaDataSource =
+        sourceHeader === 'cache' || sourceHeader === 'snapshot' || sourceHeader === 'live'
+          ? sourceHeader
+          : null;
+      setDataSource(source);
+      setDataFresh(freshHeader === 'false' ? false : freshHeader === 'true' ? true : null);
       const data = (await res.json().catch(() => ({}))) as {
         error?: string;
         code?: string;
@@ -1102,14 +1122,21 @@ export function MetaInsightsPanel({
             ? { datePreset: data.datePreset, fetchedAt: data.fetchedAt }
             : null,
       });
+      if (source === 'snapshot' && !snapshotPollRef.current) {
+        snapshotPollRef.current = true;
+        window.setTimeout(() => {
+          snapshotPollRef.current = false;
+          void load({ silent: true });
+        }, 8000);
+      }
     } catch {
-      if (!cached) {
+      if (!cached && !opts?.silent) {
         setError('Error de red al consultar Meta');
         setRows([]);
         setTotals(null);
       }
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [level, period, filterActId]);
 
@@ -1118,51 +1145,6 @@ export function MetaInsightsPanel({
   }, [load]);
 
   const tableColCount = level === 'campaigns' ? 15 : level === 'ads' ? 15 : 14;
-
-  const setCampaignStatusOnMeta = useCallback(
-    async (campaignId: string, name: string, next: 'PAUSED' | 'ACTIVE') => {
-      const verb = next === 'PAUSED' ? 'pausar' : 'reactivar';
-      if (!window.confirm(`¿${verb.charAt(0).toUpperCase() + verb.slice(1)} la campaña «${name}» en Meta?`)) {
-        return;
-      }
-      setCampaignStatusBanner(null);
-      setPausingCampaignId(campaignId);
-      try {
-        const res = await apiFetch('/api/meta/campaign-status', {
-          method: 'POST',
-          body: JSON.stringify({ campaign_id: campaignId, status: next }),
-        });
-        const data = (await res.json().catch(() => ({}))) as {
-          error?: string;
-          code?: string;
-        };
-        if (!res.ok) {
-          const hint =
-            data.code === 'ads_management_required'
-              ? ' Genera un token con permiso ads_management (además de ads_read) en Conexión con Meta.'
-              : '';
-          setCampaignStatusBanner({
-            kind: 'err',
-            text: (typeof data.error === 'string' ? data.error : 'No se pudo actualizar la campaña') + hint,
-          });
-          return;
-        }
-        setCampaignStatusBanner({
-          kind: 'ok',
-          text:
-            next === 'PAUSED'
-              ? `Campaña pausada en Meta: ${name}`
-              : `Campaña reactivada en Meta: ${name}`,
-        });
-        await load();
-      } catch {
-        setCampaignStatusBanner({ kind: 'err', text: 'Error de red al contactar con Meta' });
-      } finally {
-        setPausingCampaignId(null);
-      }
-    },
-    [load],
-  );
 
   const periods: MetaInsightPeriod[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'custom'];
 
@@ -1401,13 +1383,14 @@ export function MetaInsightsPanel({
 
       {error && <MetaFetchErrorPanel error={error} code={code} />}
 
+      <MetaDataSourceBadge source={dataSource} fresh={dataFresh} />
+
       {dataIssue && !error && <MetaDataIssueCard issue={dataIssue} />}
 
       {level === 'campaigns' ? (
         <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textMuted, maxWidth: 720, lineHeight: 1.45 }}>
-          En <strong style={{ color: ds.textSecondary }}>Campañas</strong>, la columna <strong>Act.</strong> usa el mismo
-          tipo de interruptor que el Administrador de anuncios de Meta (azul = entregando, gris = pausada). Requiere{' '}
-          <code style={{ fontSize: 11 }}>ads_management</code> en el token. Las filas{' '}
+          En <strong style={{ color: ds.textSecondary }}>Campañas</strong>, la columna <strong>Act.</strong> muestra el
+          estado de entrega en Meta (solo lectura). Las filas{' '}
           <strong style={{ color: ds.dangerText }}>sin ningún producto Shopify asignado</strong> se resaltan en rojo hasta
           que vincules al menos uno.
         </p>
@@ -1421,23 +1404,6 @@ export function MetaInsightsPanel({
           de atribución, compras sin UTMs en el pedido, anuncios que no están en esta tabla, etc.). Si comparas con el
           Administrador de anuncios de Meta, revisa la misma vista (Campañas vs. anuncios) y filtros activos.
         </p>
-      ) : null}
-
-      {campaignStatusBanner ? (
-        <div
-          style={{
-            marginBottom: 14,
-            padding: '10px 14px',
-            borderRadius: 10,
-            fontSize: 13,
-            lineHeight: 1.45,
-            background: campaignStatusBanner.kind === 'ok' ? ds.successBg : ds.dangerBg,
-            color: campaignStatusBanner.kind === 'ok' ? ds.successText : ds.dangerText,
-            border: `1px solid ${ds.borderCard}`,
-          }}
-        >
-          {campaignStatusBanner.text}
-        </div>
       ) : null}
 
       {loading && !totals ? (
@@ -1588,13 +1554,7 @@ export function MetaInsightsPanel({
                     </td>
                     {level === 'campaigns' ? (
                       <td style={{ padding: '12px 14px', verticalAlign: 'middle', width: 56 }}>
-                        <MetaCampaignDeliveryToggle
-                          rowStatus={row.status}
-                          busy={pausingCampaignId === row.id}
-                          tokenBlocked={tokenBlocked}
-                          onPause={() => void setCampaignStatusOnMeta(row.id, row.name, 'PAUSED')}
-                          onActivate={() => void setCampaignStatusOnMeta(row.id, row.name, 'ACTIVE')}
-                        />
+                        <MetaCampaignDeliveryReadOnly rowStatus={row.status} />
                       </td>
                     ) : null}
                     <td style={{ padding: '12px 16px', maxWidth: 220 }}>

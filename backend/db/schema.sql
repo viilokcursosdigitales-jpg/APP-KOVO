@@ -38,7 +38,7 @@ CREATE TABLE IF NOT EXISTS meta_connections (
   organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
   created_by INTEGER REFERENCES users (id) ON DELETE SET NULL,
   app_id TEXT NOT NULL,
-  app_secret TEXT NOT NULL,
+  app_secret TEXT NOT NULL, -- siempre vacío, el secret vive en .env
   access_token TEXT,
   token_expires_at TIMESTAMPTZ,
   token_type TEXT NOT NULL DEFAULT 'evaluator',

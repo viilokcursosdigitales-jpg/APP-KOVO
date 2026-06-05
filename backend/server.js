@@ -36,9 +36,10 @@ const {
   fetchTotalSpendForAdAccountsTimeRange,
   fetchDailySpendByDayForAdAccountsTimeRange,
   fetchDailyInsightsByDayForAdAccountsTimeRange,
-  getCampaignAdAccountId,
-  updateCampaignStatusGraph,
+  runWithMetaApiContext,
+  getGraphVersion,
 } = require('./metaMarketingApi');
+const { respondMetaStaleFirst } = require('./metaInsightsRespond');
 const cron = require('node-cron');
 const {
   ensureValidMetaTokenForOrg,
@@ -46,6 +47,7 @@ const {
   runEvaluatorTokenRefreshCron,
   exchangeFbUserToken,
   getMetaConnectionConnectedForOrg,
+  encryptToken,
 } = require('./metaTokenService');
 const { signMetaOAuthState, verifyMetaOAuthState, exchangeMetaOAuthCode } = require('./metaOAuth');
 const {
@@ -274,7 +276,7 @@ app.use(
       callback(null, false);
     },
     credentials: true,
-    exposedHeaders: ['Location'],
+    exposedHeaders: ['Location', 'X-Data-Source', 'X-Data-Fresh'],
   }),
 );
 app.use(
@@ -1377,6 +1379,359 @@ async function buildMetaSnapshotFallbackForPeriod(organizationId, period) {
     usedLatestFallback,
     fetchedAt: Number.isFinite(fetchedAt) ? new Date(fetchedAt).toISOString() : null,
   };
+}
+
+function metaApiCtxFromRow(row, organizationId) {
+  return {
+    pool,
+    connectionId: row && row.id,
+    organizationId,
+    accessToken: row && row.access_token,
+  };
+}
+
+function insightsPayloadFromSnapshot(snap, level, period, datePreset, actIds) {
+  return {
+    live: false,
+    snapshot: true,
+    level,
+    datePreset,
+    period,
+    adAccountId: actIds && actIds.length === 1 ? actIds[0] : null,
+    fetchedAt: snap.fetchedAt || new Date().toISOString(),
+    totals: snap.totals,
+    rows: [],
+    partialErrors: [
+      {
+        source: 'meta_snapshot',
+        error: 'Datos de respaldo; actualización live en curso.',
+      },
+    ],
+    snapshot_window: {
+      since: snap.sinceYmd,
+      until: snap.untilYmd,
+      used_latest_fallback: snap.usedLatestFallback,
+    },
+    snapshot_rows: snap.rows.length,
+  };
+}
+
+function funnelPayloadFromSnapshot(snap, period, datePreset, actIds) {
+  const t = snap.totals;
+  const linkClicks = Math.round(t.clicks);
+  const purchases = Math.round(t.purchases);
+  const stages = [
+    { key: 'imp', label: 'Impresiones', people: Math.round(t.impressions) },
+    { key: 'clk', label: 'Clics', people: linkClicks },
+    { key: 'pur', label: 'Compras', people: purchases },
+  ];
+  return {
+    live: false,
+    snapshot: true,
+    datePreset,
+    period,
+    adAccountId: actIds && actIds.length === 1 ? actIds[0] : null,
+    fetchedAt: snap.fetchedAt || new Date().toISOString(),
+    stages,
+    drops: [],
+    spend: t.spend,
+    revenue: t.revenue,
+    impressions: t.impressions,
+    purchases,
+    linkClicks,
+    convRate: linkClicks > 0 ? (purchases / linkClicks) * 100 : 0,
+    cpa: t.cpa,
+    roas: t.roas,
+    partialErrors: [{ source: 'meta_snapshot', error: 'Embudo desde respaldo; actualización en curso.' }],
+  };
+}
+
+function adsFunnelPanelPayloadFromSnapshot(snap, period, datePreset, actIds) {
+  const funnel = funnelPayloadFromSnapshot(snap, period, datePreset, actIds);
+  const t = snap.totals;
+  const totals = {
+    impressions: t.impressions,
+    clicks: t.clicks,
+    spend: t.spend,
+    purchases: t.purchases,
+    revenue: t.revenue,
+    cpm: t.cpm,
+    cpc: t.cpc,
+    ctr: t.ctr,
+    roas: t.roas,
+    cpa: t.cpa,
+  };
+  const daily = (snap.rows || []).map((r) => ({
+    date_start: r.snapshot_date,
+    impressions: r.impressions,
+    clicks: r.clicks,
+    spend: r.spend,
+    purchases: r.purchases,
+    revenue: r.revenue,
+    cpc: r.cpc,
+    cpm: r.cpm,
+    ctr: r.ctr,
+    roas: r.roas,
+    convPct: r.clicks > 0 ? (r.purchases / r.clicks) * 100 : 0,
+  }));
+  return {
+    live: false,
+    snapshot: true,
+    period,
+    datePreset,
+    adAccountId: actIds && actIds.length === 1 ? actIds[0] : null,
+    fetchedAt: funnel.fetchedAt,
+    funnel: {
+      stages: funnel.stages,
+      drops: funnel.drops,
+      spend: funnel.spend,
+      revenue: funnel.revenue,
+      impressions: funnel.impressions,
+      purchases: funnel.purchases,
+      linkClicks: funnel.linkClicks,
+      convRate: funnel.convRate,
+      cpa: funnel.cpa,
+      roas: funnel.roas,
+    },
+    totals,
+    adsRows: [],
+    daily,
+    kpi: {
+      ctr: totals.ctr,
+      cpc: totals.cpc,
+      convRate: totals.clicks > 0 ? (totals.purchases / totals.clicks) * 100 : 0,
+    },
+    partialErrors: funnel.partialErrors,
+  };
+}
+
+async function fetchLiveMetaInsightsPayload(organizationId, row, level, period, datePreset, actIds) {
+  return runWithMetaApiContext(metaApiCtxFromRow(row, organizationId), async () => {
+    const allRows = [];
+    const partialErrors = [];
+    for (const actId of actIds) {
+      const norm = normalizeActId(actId);
+      const r = await fetchInsightsForAdAccount(norm, row.access_token, level, datePreset);
+      if (!r.ok) {
+        partialErrors.push({ adAccountId: norm, error: r.error || 'Error desconocido' });
+        continue;
+      }
+      allRows.push(...r.rows);
+    }
+    const totals = allRows.reduce(
+      (acc, x) => ({
+        impressions: acc.impressions + x.impressions,
+        clicks: acc.clicks + x.clicks,
+        spend: acc.spend + x.spend,
+        purchases: acc.purchases + x.purchases,
+        revenue: acc.revenue + x.revenue,
+      }),
+      { impressions: 0, clicks: 0, spend: 0, purchases: 0, revenue: 0 },
+    );
+    totals.cpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
+    totals.cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
+    totals.ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
+    totals.roas = totals.spend > 0 && totals.revenue > 0 ? totals.revenue / totals.spend : 0;
+    totals.cpa = totals.purchases > 0 ? totals.spend / totals.purchases : 0;
+
+    if (allRows.length === 0) {
+      const snap = await buildMetaSnapshotFallbackForPeriod(organizationId, period);
+      if (snap.ok) {
+        return insightsPayloadFromSnapshot(snap, level, period, datePreset, actIds);
+      }
+    }
+
+    return {
+      live: true,
+      snapshot: false,
+      level,
+      datePreset,
+      period,
+      adAccountId: actIds.length === 1 ? actIds[0] : null,
+      fetchedAt: new Date().toISOString(),
+      totals,
+      rows: allRows,
+      partialErrors,
+    };
+  });
+}
+
+async function fetchLiveMetaFunnelPayload(organizationId, row, period, datePreset, actIds) {
+  return runWithMetaApiContext(metaApiCtxFromRow(row, organizationId), async () => {
+    const { merged, partialErrors, ok } = await fetchFunnelForAdAccounts(actIds, row.access_token, datePreset);
+    if (!ok || !merged) {
+      const snap = await buildMetaSnapshotFallbackForPeriod(organizationId, period);
+      if (snap.ok) return funnelPayloadFromSnapshot(snap, period, datePreset, actIds);
+      throw new Error('funnel_empty');
+    }
+    const drops = [];
+    for (let i = 0; i < merged.stages.length - 1; i++) {
+      const from = merged.stages[i].people;
+      const to = merged.stages[i + 1].people;
+      drops.push(from > 0 ? ((from - to) / from) * 100 : 0);
+    }
+    const linkClicks = merged.stages[1] ? merged.stages[1].people : 0;
+    const purchases = merged.stages[merged.stages.length - 1]
+      ? merged.stages[merged.stages.length - 1].people
+      : 0;
+    return {
+      live: true,
+      snapshot: false,
+      datePreset,
+      period,
+      adAccountId: actIds.length === 1 ? actIds[0] : null,
+      fetchedAt: new Date().toISOString(),
+      stages: merged.stages,
+      drops,
+      spend: merged.spend,
+      revenue: merged.revenue,
+      impressions: merged.impressions,
+      purchases,
+      linkClicks,
+      convRate: linkClicks > 0 ? (purchases / linkClicks) * 100 : 0,
+      cpa: purchases > 0 ? merged.spend / purchases : 0,
+      roas: merged.spend > 0 && merged.revenue > 0 ? merged.revenue / merged.spend : 0,
+      partialErrors,
+    };
+  });
+}
+
+async function resolveMetaAdsQueryContext(req) {
+  const organizationId = req.organizationId;
+  const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, organizationId);
+  if (!row || !String(row.access_token || '').trim()) {
+    return { ok: true, organizationId, row: null, actIds: [], hasToken: false };
+  }
+  const resolved = resolveAdAccountIdsForRequest(req.query.adAccountId, row.selected_ad_account_ids);
+  if (!resolved.ok) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: 'Esa cuenta no está entre las vinculadas en la conexión Meta.',
+        code: resolved.code || 'invalid_ad_account',
+      },
+    };
+  }
+  if (resolved.actIds.length === 0) {
+    return {
+      ok: false,
+      status: 400,
+      body: {
+        error: 'No hay cuentas publicitarias seleccionadas. Configúralas en Conexión Meta ADS.',
+        code: 'no_ad_accounts',
+      },
+    };
+  }
+  return { ok: true, organizationId, row, actIds: resolved.actIds, hasToken: true };
+}
+
+async function fetchLiveMetaAdsFunnelPanelPayload(organizationId, row, period, datePreset, actIds) {
+  return runWithMetaApiContext(metaApiCtxFromRow(row, organizationId), async () => {
+    const partialErrors = [];
+    const { merged, partialErrors: funnelPartial, ok: funnelOk } = await fetchFunnelForAdAccounts(
+      actIds,
+      row.access_token,
+      datePreset,
+    );
+    if (Array.isArray(funnelPartial)) {
+      for (const e of funnelPartial) {
+        partialErrors.push({ source: 'funnel', adAccountId: e.adAccountId, error: e.error });
+      }
+    }
+    if (!funnelOk || !merged) {
+      const snap = await buildMetaSnapshotFallbackForPeriod(organizationId, period);
+      if (snap.ok) return adsFunnelPanelPayloadFromSnapshot(snap, period, datePreset, actIds);
+      throw new Error('funnel_empty');
+    }
+
+    const drops = [];
+    for (let i = 0; i < merged.stages.length - 1; i++) {
+      const from = merged.stages[i].people;
+      const to = merged.stages[i + 1].people;
+      drops.push(from > 0 ? ((from - to) / from) * 100 : 0);
+    }
+    const linkClicks = merged.stages[1] ? merged.stages[1].people : 0;
+    const purchases = merged.stages[merged.stages.length - 1]
+      ? merged.stages[merged.stages.length - 1].people
+      : 0;
+    const convRate = linkClicks > 0 ? (purchases / linkClicks) * 100 : 0;
+    const cpa = purchases > 0 ? merged.spend / purchases : 0;
+    const roas = merged.spend > 0 && merged.revenue > 0 ? merged.revenue / merged.spend : 0;
+
+    const funnelPayload = {
+      stages: merged.stages,
+      drops,
+      spend: merged.spend,
+      revenue: merged.revenue,
+      impressions: merged.impressions,
+      purchases,
+      linkClicks,
+      convRate,
+      cpa,
+      roas,
+    };
+
+    const allRows = [];
+    for (const actId of actIds) {
+      const norm = normalizeActId(actId);
+      const r = await fetchInsightsForAdAccount(norm, row.access_token, 'ads', datePreset);
+      if (!r.ok) {
+        partialErrors.push({ source: 'ads', adAccountId: norm, error: r.error || 'Error al leer anuncios' });
+        continue;
+      }
+      allRows.push(...r.rows);
+    }
+
+    const totals = allRows.reduce(
+      (acc, x) => ({
+        impressions: acc.impressions + x.impressions,
+        clicks: acc.clicks + x.clicks,
+        spend: acc.spend + x.spend,
+        purchases: acc.purchases + x.purchases,
+        revenue: acc.revenue + x.revenue,
+      }),
+      { impressions: 0, clicks: 0, spend: 0, purchases: 0, revenue: 0 },
+    );
+    totals.cpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
+    totals.cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
+    totals.ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
+    totals.roas = totals.spend > 0 && totals.revenue > 0 ? totals.revenue / totals.spend : 0;
+    totals.cpa = totals.purchases > 0 ? totals.spend / totals.purchases : 0;
+
+    const adsSorted = [...allRows].sort((a, b) => b.spend - a.spend).slice(0, 25);
+    const { series: daily, partialErrors: dailyPartial } = await fetchMergedDailyInsightsForAdAccounts(
+      actIds,
+      row.access_token,
+      datePreset,
+    );
+    if (Array.isArray(dailyPartial)) {
+      for (const e of dailyPartial) {
+        partialErrors.push({ source: 'daily', adAccountId: e.adAccountId, error: e.error });
+      }
+    }
+
+    const convSitePct = totals.clicks > 0 ? (totals.purchases / totals.clicks) * 100 : 0;
+
+    return {
+      live: true,
+      snapshot: false,
+      period,
+      datePreset,
+      adAccountId: actIds.length === 1 ? actIds[0] : null,
+      fetchedAt: new Date().toISOString(),
+      funnel: funnelPayload,
+      totals,
+      adsRows: adsSorted,
+      daily,
+      kpi: {
+        ctr: totals.ctr,
+        cpc: totals.cpc,
+        convRate: convSitePct,
+      },
+      partialErrors,
+    };
+  });
 }
 
 function spendByDayFromMetaSnapshotRows(rows) {
@@ -3479,7 +3834,7 @@ function buildMetaOAuthAuthorizeUrl(organizationId, userId) {
   dialog.searchParams.set('client_id', META_APP_ID_ENV);
   dialog.searchParams.set('redirect_uri', META_REDIRECT_URI_ENV);
   dialog.searchParams.set('state', state);
-  dialog.searchParams.set('scope', 'ads_read,ads_management,read_insights');
+  dialog.searchParams.set('scope', 'ads_read,read_insights');
   dialog.searchParams.set('response_type', 'code');
   return dialog.toString();
 }
@@ -3619,7 +3974,7 @@ app.get('/api/meta/callback', async (req, res) => {
              created_by = $6,
              updated_at = now()
          WHERE id = $7 AND organization_id = $8`,
-        [longToken, expiresIso, META_APP_ID_ENV, '', displayName, userId, existing.id, organizationId],
+        [encryptToken(longToken), expiresIso, META_APP_ID_ENV, '', displayName, userId, existing.id, organizationId],
       );
     } else {
       const limit = await checkPlanLimit(organizationId, 'meta_connection');
@@ -3636,7 +3991,7 @@ app.get('/api/meta/callback', async (req, res) => {
           userId,
           META_APP_ID_ENV,
           '',
-          longToken,
+          encryptToken(longToken),
           displayName,
           expiresIso,
         ],
@@ -3855,6 +4210,8 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
 
     const accountName = label || verified.accountName;
 
+    const storedToken = accessToken ? encryptToken(accessToken) : null;
+
     const ins = await pool.query(
       `INSERT INTO meta_connections
        (organization_id, created_by, app_id, app_secret, access_token, status, connected_at, account_name, label, selected_ad_account_ids, token_type, token_expires_at, disconnect_reason)
@@ -3863,8 +4220,8 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
         req.organizationId,
         req.user.userId,
         appId.replace(/\s/g, ''),
-        appSecret,
-        accessToken || null,
+        '',
+        storedToken,
         accountName,
         label,
         selectedJson,
@@ -3960,7 +4317,7 @@ app.put('/api/meta/connections/:id/system-token', verifyToken, scopeToOrganizati
            token_expires_at = NULL,
            updated_at = now()
        WHERE id = $3 AND organization_id = $4`,
-      [accessToken, verified.accountName, id, req.organizationId],
+      [encryptToken(accessToken), verified.accountName, id, req.organizationId],
     );
 
     res.json({
@@ -4024,140 +4381,54 @@ app.put('/api/meta/connections/:id/ad-accounts', verifyToken, scopeToOrganizatio
 
 app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const cacheKey = cacheKeyForRequest(req, 'meta_insights');
-    const cachedPayload = readCachedJsonResponse(cacheKey);
-    if (cachedPayload) {
-      return res.json(cachedPayload);
-    }
-    const sendCached = (payload) => {
-      writeCachedJsonResponse(cacheKey, payload, 45_000);
-      return res.json(payload);
-    };
     const level = ['campaigns', 'adsets', 'ads'].includes(String(req.query.level))
       ? String(req.query.level)
       : 'campaigns';
     const period = String(req.query.period || 'hoy');
     const datePreset = datePresetFromDashboardPeriod(period);
+    const cacheKey = cacheKeyForRequest(req, 'meta_insights');
 
-    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
-    if (!row || !String(row.access_token || '').trim()) {
-      const snap = await buildMetaSnapshotFallbackForPeriod(req.organizationId, period);
-      if (snap.ok) {
-        return sendCached({
-          live: false,
-          snapshot: true,
+    const ctx = await resolveMetaAdsQueryContext(req);
+    if (!ctx.ok) return res.status(ctx.status).json(ctx.body);
+
+    const snapResult = await buildMetaSnapshotFallbackForPeriod(ctx.organizationId, period);
+
+    await respondMetaStaleFirst(res, {
+      cacheKey,
+      cacheTtl: 45_000,
+      readCache: readCachedJsonResponse,
+      writeCache: writeCachedJsonResponse,
+      getSnapshot: () => {
+        if (!snapResult.ok) return null;
+        return {
+          payload: insightsPayloadFromSnapshot(snapResult, level, period, datePreset, ctx.actIds),
+          fetchedAt: snapResult.fetchedAt,
+        };
+      },
+      fetchLive: async () => {
+        if (!ctx.hasToken) {
+          if (snapResult.ok) {
+            return insightsPayloadFromSnapshot(snapResult, level, period, datePreset, ctx.actIds);
+          }
+          throw Object.assign(new Error('no_token'), { code: 'no_token' });
+        }
+        return fetchLiveMetaInsightsPayload(
+          ctx.organizationId,
+          ctx.row,
           level,
-          datePreset,
           period,
-          adAccountId: null,
-          fetchedAt: snap.fetchedAt || new Date().toISOString(),
-          totals: snap.totals,
-          rows: [],
-          partialErrors: [
-            {
-              source: 'meta_snapshot',
-              error: 'Meta desconectado: mostrando respaldo guardado en KOVO.',
-            },
-          ],
-          snapshot_window: {
-            since: snap.sinceYmd,
-            until: snap.untilYmd,
-            used_latest_fallback: snap.usedLatestFallback,
-          },
-          snapshot_rows: snap.rows.length,
-        });
-      }
+          datePreset,
+          ctx.actIds,
+        );
+      },
+    });
+  } catch (e) {
+    if (e && e.code === 'no_token') {
       return res.status(400).json({
         error: 'Falta token de usuario en la conexión Meta.',
         code: 'no_token',
       });
     }
-    const storedIds = row.selected_ad_account_ids;
-    const resolved = resolveAdAccountIdsForRequest(req.query.adAccountId, storedIds);
-    if (!resolved.ok) {
-      return res.status(400).json({
-        error: 'Esa cuenta no está entre las vinculadas en la conexión Meta.',
-        code: resolved.code || 'invalid_ad_account',
-      });
-    }
-    const actIds = resolved.actIds;
-    if (actIds.length === 0) {
-      return res.status(400).json({
-        error: 'No hay cuentas publicitarias seleccionadas. Configúralas en Conexión Meta ADS.',
-        code: 'no_ad_accounts',
-      });
-    }
-
-    const allRows = [];
-    const partialErrors = [];
-    for (const actId of actIds) {
-      const norm = normalizeActId(actId);
-      const r = await fetchInsightsForAdAccount(norm, row.access_token, level, datePreset);
-      if (!r.ok) {
-        partialErrors.push({ adAccountId: norm, error: r.error || 'Error desconocido' });
-        continue;
-      }
-      allRows.push(...r.rows);
-    }
-
-    const totals = allRows.reduce(
-      (acc, x) => ({
-        impressions: acc.impressions + x.impressions,
-        clicks: acc.clicks + x.clicks,
-        spend: acc.spend + x.spend,
-        purchases: acc.purchases + x.purchases,
-        revenue: acc.revenue + x.revenue,
-      }),
-      { impressions: 0, clicks: 0, spend: 0, purchases: 0, revenue: 0 },
-    );
-    totals.cpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
-    totals.cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
-    totals.ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
-    totals.roas = totals.spend > 0 && totals.revenue > 0 ? totals.revenue / totals.spend : 0;
-    totals.cpa = totals.purchases > 0 ? totals.spend / totals.purchases : 0;
-
-    if (allRows.length === 0) {
-      const snap = await buildMetaSnapshotFallbackForPeriod(req.organizationId, period);
-      if (snap.ok) {
-        return sendCached({
-          live: false,
-          snapshot: true,
-          level,
-          datePreset,
-          period,
-          adAccountId: actIds.length === 1 ? actIds[0] : null,
-          fetchedAt: snap.fetchedAt || new Date().toISOString(),
-          totals: snap.totals,
-          rows: [],
-          partialErrors: [
-            ...partialErrors,
-            {
-              source: 'meta_snapshot',
-              error: 'No hubo respuesta live de Meta; se muestra respaldo guardado en KOVO.',
-            },
-          ],
-          snapshot_window: {
-            since: snap.sinceYmd,
-            until: snap.untilYmd,
-            used_latest_fallback: snap.usedLatestFallback,
-          },
-          snapshot_rows: snap.rows.length,
-        });
-      }
-    }
-
-    sendCached({
-      live: true,
-      level,
-      datePreset,
-      period,
-      adAccountId: actIds.length === 1 ? actIds[0] : null,
-      fetchedAt: new Date().toISOString(),
-      totals,
-      rows: allRows,
-      partialErrors,
-    });
-  } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener métricas de Meta' });
   }
@@ -4192,70 +4463,24 @@ app.get('/api/meta/ctr-compare', verifyToken, scopeToOrganization, async (req, r
   }
 });
 
-app.post('/api/meta/campaign-status', verifyToken, scopeToOrganization, async (req, res) => {
-  try {
-    const campaignId = String(req.body?.campaign_id || '').trim();
-    const status = String(req.body?.status || '').toUpperCase();
-    if (!campaignId) {
-      return res.status(400).json({ error: 'campaign_id requerido' });
-    }
-    if (status !== 'PAUSED' && status !== 'ACTIVE') {
-      return res.status(400).json({ error: 'status debe ser PAUSED o ACTIVE' });
-    }
-
-    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
-    if (!row || !String(row.access_token || '').trim()) {
-      return res.status(400).json({
-        error: 'Falta token de usuario en la conexión Meta.',
-        code: 'no_token',
-      });
-    }
-    const resolved = resolveAdAccountIdsForRequest(undefined, row.selected_ad_account_ids);
-    if (!resolved.ok || resolved.actIds.length === 0) {
-      return res.status(400).json({
-        error: 'No hay cuentas publicitarias seleccionadas.',
-        code: 'no_ad_accounts',
-      });
-    }
-
-    const lookup = await getCampaignAdAccountId(campaignId, row.access_token);
-    if (!lookup.ok || !lookup.accountId) {
-      return res.status(400).json({
-        error: lookup.error || 'No se pudo verificar la campaña',
-        code: 'campaign_lookup_failed',
-      });
-    }
-
-    const allowed = new Set(resolved.actIds.map((x) => normalizeActId(x)).filter(Boolean));
-    if (!allowed.has(lookup.accountId)) {
-      return res.status(403).json({
-        error: 'Esta campaña no pertenece a las cuentas publicitarias vinculadas en KOVO.',
-        code: 'campaign_not_in_selection',
-      });
-    }
-
-    const up = await updateCampaignStatusGraph(campaignId, row.access_token, status);
-    if (!up.ok) {
-      const msg = String(up.error || '').toLowerCase();
-      const needsMgmt =
-        up.fb &&
-        (up.fb.code === 10 ||
-          up.fb.code === 200 ||
-          msg.includes('ads_management') ||
-          msg.includes('permission') ||
-          msg.includes('permissions'));
-      return res.status(502).json({
-        error: up.error || 'Meta no pudo aplicar el cambio',
-        code: needsMgmt ? 'ads_management_required' : 'meta_update_failed',
-      });
-    }
-
-    res.json({ ok: true, campaign_id: campaignId, status });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: 'Error al actualizar el estado de la campaña' });
-  }
+app.post('/api/meta/campaign-status', verifyToken, scopeToOrganization, async (_req, res) => {
+  return res.status(403).json({
+    error: 'Función deshabilitada. Kovo es solo lectura de métricas.',
+  });
 });
+
+app.get(
+  '/api/meta/api-version',
+  verifyToken,
+  scopeToOrganization,
+  requireRole('owner', 'admin'),
+  (_req, res) => {
+    res.json({
+      current: META_GRAPH_VERSION,
+      checkUrl: 'https://developers.facebook.com/docs/graph-api/changelog',
+    });
+  },
+);
 
 app.get('/api/meta/campaign-product-links', verifyToken, scopeToOrganization, async (req, res) => {
   try {
@@ -4987,75 +5212,48 @@ app.get('/api/meta/funnel', verifyToken, scopeToOrganization, async (req, res) =
   try {
     const period = String(req.query.period || 'hoy');
     const datePreset = datePresetFromDashboardPeriod(period);
+    const cacheKey = cacheKeyForRequest(req, 'meta_funnel');
 
-    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
-    if (!row || !String(row.access_token || '').trim()) {
+    const ctx = await resolveMetaAdsQueryContext(req);
+    if (!ctx.ok) return res.status(ctx.status).json(ctx.body);
+
+    const snapResult = await buildMetaSnapshotFallbackForPeriod(ctx.organizationId, period);
+
+    await respondMetaStaleFirst(res, {
+      cacheKey,
+      cacheTtl: 45_000,
+      readCache: readCachedJsonResponse,
+      writeCache: writeCachedJsonResponse,
+      getSnapshot: () => {
+        if (!snapResult.ok) return null;
+        return {
+          payload: funnelPayloadFromSnapshot(snapResult, period, datePreset, ctx.actIds),
+          fetchedAt: snapResult.fetchedAt,
+        };
+      },
+      fetchLive: async () => {
+        if (!ctx.hasToken) {
+          if (snapResult.ok) {
+            return funnelPayloadFromSnapshot(snapResult, period, datePreset, ctx.actIds);
+          }
+          throw Object.assign(new Error('no_token'), { code: 'no_token' });
+        }
+        return fetchLiveMetaFunnelPayload(ctx.organizationId, ctx.row, period, datePreset, ctx.actIds);
+      },
+    });
+  } catch (e) {
+    if (e && (e.code === 'no_token' || e.message === 'no_token')) {
       return res.status(400).json({
         error: 'Falta token de usuario en la conexión Meta.',
         code: 'no_token',
       });
     }
-    const resolved = resolveAdAccountIdsForRequest(req.query.adAccountId, row.selected_ad_account_ids);
-    if (!resolved.ok) {
-      return res.status(400).json({
-        error: 'Esa cuenta no está entre las vinculadas en la conexión Meta.',
-        code: resolved.code || 'invalid_ad_account',
-      });
-    }
-    const actIds = resolved.actIds;
-    if (actIds.length === 0) {
-      return res.status(400).json({
-        error: 'No hay cuentas publicitarias seleccionadas.',
-        code: 'no_ad_accounts',
-      });
-    }
-
-    const { merged, partialErrors, ok } = await fetchFunnelForAdAccounts(
-      actIds,
-      row.access_token,
-      datePreset,
-    );
-    if (!ok || !merged) {
+    if (e && e.message === 'funnel_empty') {
       return res.status(502).json({
         error: 'Meta no devolvió datos de embudo para las cuentas indicadas.',
         code: 'funnel_empty',
-        partialErrors,
       });
     }
-
-    const drops = [];
-    for (let i = 0; i < merged.stages.length - 1; i++) {
-      const from = merged.stages[i].people;
-      const to = merged.stages[i + 1].people;
-      drops.push(from > 0 ? ((from - to) / from) * 100 : 0);
-    }
-    const linkClicks = merged.stages[1] ? merged.stages[1].people : 0;
-    const purchases = merged.stages[merged.stages.length - 1]
-      ? merged.stages[merged.stages.length - 1].people
-      : 0;
-    const convRate = linkClicks > 0 ? (purchases / linkClicks) * 100 : 0;
-    const cpa = purchases > 0 ? merged.spend / purchases : 0;
-    const roas = merged.spend > 0 && merged.revenue > 0 ? merged.revenue / merged.spend : 0;
-
-    res.json({
-      live: true,
-      datePreset,
-      period,
-      adAccountId: actIds.length === 1 ? actIds[0] : null,
-      fetchedAt: new Date().toISOString(),
-      stages: merged.stages,
-      drops,
-      spend: merged.spend,
-      revenue: merged.revenue,
-      impressions: merged.impressions,
-      purchases,
-      linkClicks,
-      convRate,
-      cpa,
-      roas,
-      partialErrors,
-    });
-  } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al obtener embudo de Meta' });
   }
@@ -5064,147 +5262,56 @@ app.get('/api/meta/funnel', verifyToken, scopeToOrganization, async (req, res) =
 /** Embudo + anuncios + serie diaria (panel Ads Funnel). */
 app.get('/api/meta/ads-funnel-panel', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const cacheKey = cacheKeyForRequest(req, 'meta_ads_funnel_panel');
-    const cachedPayload = readCachedJsonResponse(cacheKey);
-    if (cachedPayload) {
-      return res.json(cachedPayload);
-    }
-    const sendCached = (payload) => {
-      writeCachedJsonResponse(cacheKey, payload, 60_000);
-      return res.json(payload);
-    };
     const period = String(req.query.period || '7d');
     const datePreset = datePresetFromDashboardPeriod(period);
+    const cacheKey = cacheKeyForRequest(req, 'meta_ads_funnel_panel');
 
-    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
-    if (!row || !String(row.access_token || '').trim()) {
+    const ctx = await resolveMetaAdsQueryContext(req);
+    if (!ctx.ok) return res.status(ctx.status).json(ctx.body);
+
+    const snapResult = await buildMetaSnapshotFallbackForPeriod(ctx.organizationId, period);
+
+    await respondMetaStaleFirst(res, {
+      cacheKey,
+      cacheTtl: 60_000,
+      readCache: readCachedJsonResponse,
+      writeCache: writeCachedJsonResponse,
+      getSnapshot: () => {
+        if (!snapResult.ok) return null;
+        return {
+          payload: adsFunnelPanelPayloadFromSnapshot(snapResult, period, datePreset, ctx.actIds),
+          fetchedAt: snapResult.fetchedAt,
+        };
+      },
+      fetchLive: async () => {
+        if (!ctx.hasToken) {
+          if (snapResult.ok) {
+            return adsFunnelPanelPayloadFromSnapshot(snapResult, period, datePreset, ctx.actIds);
+          }
+          throw Object.assign(new Error('no_token'), { code: 'no_token' });
+        }
+        return fetchLiveMetaAdsFunnelPanelPayload(
+          ctx.organizationId,
+          ctx.row,
+          period,
+          datePreset,
+          ctx.actIds,
+        );
+      },
+    });
+  } catch (e) {
+    if (e && (e.code === 'no_token' || e.message === 'no_token')) {
       return res.status(400).json({
         error: 'Falta token de usuario en la conexión Meta.',
         code: 'no_token',
       });
     }
-    const resolved = resolveAdAccountIdsForRequest(req.query.adAccountId, row.selected_ad_account_ids);
-    if (!resolved.ok) {
-      return res.status(400).json({
-        error: 'Esa cuenta no está entre las vinculadas en la conexión Meta.',
-        code: resolved.code || 'invalid_ad_account',
-      });
-    }
-    const actIds = resolved.actIds;
-    if (actIds.length === 0) {
-      return res.status(400).json({
-        error: 'No hay cuentas publicitarias seleccionadas.',
-        code: 'no_ad_accounts',
-      });
-    }
-
-    const partialErrors = [];
-
-    const { merged, partialErrors: funnelPartial, ok: funnelOk } = await fetchFunnelForAdAccounts(
-      actIds,
-      row.access_token,
-      datePreset,
-    );
-    if (Array.isArray(funnelPartial)) {
-      for (const e of funnelPartial) {
-        partialErrors.push({ source: 'funnel', adAccountId: e.adAccountId, error: e.error });
-      }
-    }
-    if (!funnelOk || !merged) {
+    if (e && e.message === 'funnel_empty') {
       return res.status(502).json({
         error: 'Meta no devolvió datos de embudo para las cuentas indicadas.',
         code: 'funnel_empty',
-        partialErrors,
       });
     }
-
-    const drops = [];
-    for (let i = 0; i < merged.stages.length - 1; i++) {
-      const from = merged.stages[i].people;
-      const to = merged.stages[i + 1].people;
-      drops.push(from > 0 ? ((from - to) / from) * 100 : 0);
-    }
-    const linkClicks = merged.stages[1] ? merged.stages[1].people : 0;
-    const purchases = merged.stages[merged.stages.length - 1]
-      ? merged.stages[merged.stages.length - 1].people
-      : 0;
-    const convRate = linkClicks > 0 ? (purchases / linkClicks) * 100 : 0;
-    const cpa = purchases > 0 ? merged.spend / purchases : 0;
-    const roas = merged.spend > 0 && merged.revenue > 0 ? merged.revenue / merged.spend : 0;
-
-    const funnelPayload = {
-      stages: merged.stages,
-      drops,
-      spend: merged.spend,
-      revenue: merged.revenue,
-      impressions: merged.impressions,
-      purchases,
-      linkClicks,
-      convRate,
-      cpa,
-      roas,
-    };
-
-    const allRows = [];
-    for (const actId of actIds) {
-      const norm = normalizeActId(actId);
-      const r = await fetchInsightsForAdAccount(norm, row.access_token, 'ads', datePreset);
-      if (!r.ok) {
-        partialErrors.push({ source: 'ads', adAccountId: norm, error: r.error || 'Error al leer anuncios' });
-        continue;
-      }
-      allRows.push(...r.rows);
-    }
-
-    const totals = allRows.reduce(
-      (acc, x) => ({
-        impressions: acc.impressions + x.impressions,
-        clicks: acc.clicks + x.clicks,
-        spend: acc.spend + x.spend,
-        purchases: acc.purchases + x.purchases,
-        revenue: acc.revenue + x.revenue,
-      }),
-      { impressions: 0, clicks: 0, spend: 0, purchases: 0, revenue: 0 },
-    );
-    totals.cpm = totals.impressions > 0 ? (totals.spend / totals.impressions) * 1000 : 0;
-    totals.cpc = totals.clicks > 0 ? totals.spend / totals.clicks : 0;
-    totals.ctr = totals.impressions > 0 ? (totals.clicks / totals.impressions) * 100 : 0;
-    totals.roas = totals.spend > 0 && totals.revenue > 0 ? totals.revenue / totals.spend : 0;
-    totals.cpa = totals.purchases > 0 ? totals.spend / totals.purchases : 0;
-
-    const adsSorted = [...allRows].sort((a, b) => b.spend - a.spend).slice(0, 25);
-
-    const { series: daily, partialErrors: dailyPartial } = await fetchMergedDailyInsightsForAdAccounts(
-      actIds,
-      row.access_token,
-      datePreset,
-    );
-    if (Array.isArray(dailyPartial)) {
-      for (const e of dailyPartial) {
-        partialErrors.push({ source: 'daily', adAccountId: e.adAccountId, error: e.error });
-      }
-    }
-
-    const convSitePct = totals.clicks > 0 ? (totals.purchases / totals.clicks) * 100 : 0;
-
-    sendCached({
-      live: true,
-      period,
-      datePreset,
-      adAccountId: actIds.length === 1 ? actIds[0] : null,
-      fetchedAt: new Date().toISOString(),
-      funnel: funnelPayload,
-      totals,
-      adsRows: adsSorted,
-      daily,
-      kpi: {
-        ctr: totals.ctr,
-        cpc: totals.cpc,
-        convRate: convSitePct,
-      },
-      partialErrors,
-    });
-  } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al cargar panel Ads Funnel' });
   }
@@ -10044,6 +10151,17 @@ async function start() {
     { timezone: cronTz },
   );
   console.log(`[meta-token-cron] renovación diaria 09:00 (${cronTz}, tokens tipo evaluator)`);
+
+  cron.schedule(
+    '0 8 1 * *',
+    () => {
+      console.log(
+        `[meta-version-reminder] Versión actual: ${META_GRAPH_VERSION}. Verificar deprecaciones en: developers.facebook.com/docs/graph-api/changelog`,
+      );
+    },
+    { timezone: cronTz },
+  );
+  console.log(`[meta-version-reminder] recordatorio mensual día 1 (${cronTz})`);
 
   const backfillEnabled = !['0', 'false', 'no', 'off'].includes(
     String(process.env.META_SNAPSHOT_BACKFILL_ON_START || 'true').trim().toLowerCase(),

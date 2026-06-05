@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, useId } from 'react';
+import { useCallback, useEffect, useState, useId, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
@@ -10,6 +10,7 @@ import {
   MetaLiveDataStrip,
 } from '../meta/MetaApiStatusBanner';
 import type { MetaInsightPeriod } from '../meta/MetaInsightsPanel';
+import { MetaDataSourceBadge, type MetaDataSource } from '../meta/MetaInsightsPanel';
 import { resolveMetaDataIssue } from '../meta/metaDataIssues';
 import { useMetaInsightsReady } from '../meta/useMetaInsightsReady';
 
@@ -380,6 +381,9 @@ export default function AdsFunnelPage() {
   const [error, setError] = useState<string | null>(null);
   const [code, setCode] = useState<string | null>(null);
   const [panel, setPanel] = useState<PanelResponse | null>(null);
+  const [dataSource, setDataSource] = useState<MetaDataSource>(null);
+  const [dataFresh, setDataFresh] = useState<boolean | null>(null);
+  const snapshotPollRef = useRef(false);
 
   useEffect(() => {
     let c = false;
@@ -399,14 +403,24 @@ export default function AdsFunnelPage() {
     };
   }, []);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) {
+      setLoading(true);
+    }
     setError(null);
     setCode(null);
     try {
       const q = new URLSearchParams({ period });
       if (filterActId) q.set('adAccountId', filterActId);
       const res = await apiFetch(`/api/meta/ads-funnel-panel?${q.toString()}`);
+      const sourceHeader = res.headers.get('X-Data-Source');
+      const freshHeader = res.headers.get('X-Data-Fresh');
+      const source: MetaDataSource =
+        sourceHeader === 'cache' || sourceHeader === 'snapshot' || sourceHeader === 'live'
+          ? sourceHeader
+          : null;
+      setDataSource(source);
+      setDataFresh(freshHeader === 'false' ? false : freshHeader === 'true' ? true : null);
       const data = (await res.json().catch(() => ({}))) as PanelResponse;
       if (!res.ok) {
         setPanel(null);
@@ -415,12 +429,19 @@ export default function AdsFunnelPage() {
         return;
       }
       setPanel(data);
+      if (source === 'snapshot' && !snapshotPollRef.current) {
+        snapshotPollRef.current = true;
+        window.setTimeout(() => {
+          snapshotPollRef.current = false;
+          void load({ silent: true });
+        }, 8000);
+      }
     } catch {
       setPanel(null);
-      setError('Error de red');
+      if (!opts?.silent) setError('Error de red');
       setCode(null);
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [period, filterActId]);
 
@@ -502,6 +523,8 @@ export default function AdsFunnelPage() {
       )}
 
       <MetaLiveDataStrip issue={dataIssue} meta={metaStrip} variant="insights" />
+
+      <MetaDataSourceBadge source={dataSource} fresh={dataFresh} />
 
       <header
         style={{
