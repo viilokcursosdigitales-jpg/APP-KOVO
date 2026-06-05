@@ -616,58 +616,6 @@ function attributeOrderToCampaigns(
   return productCampaignMatches(pids, productToCampaigns);
 }
 
-/** effective_status de Meta: ACTIVE = entregando; PAUSED = pausada (solo lectura). */
-function campaignMetaDeliveryIsOn(status: string): boolean {
-  return String(status || '').toUpperCase() === 'ACTIVE';
-}
-
-const META_DELIVERY_BLUE = '#1877f2';
-const META_DELIVERY_GREY = '#3a3d44';
-
-/** Interruptor visual de solo lectura (estado en Meta, sin modificar). */
-function MetaCampaignDeliveryReadOnly({ rowStatus }: { rowStatus: string }) {
-  const isOn = campaignMetaDeliveryIsOn(rowStatus);
-  const notEditable = !['ACTIVE', 'PAUSED'].includes(String(rowStatus || '').toUpperCase());
-
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={isOn}
-      aria-label={notEditable ? 'Estado no editable' : isOn ? 'Campaña activa en Meta' : 'Campaña pausada en Meta'}
-      disabled
-      title="Solo lectura — Kovo no modifica campañas"
-      style={{
-        position: 'relative',
-        width: 44,
-        height: 24,
-        borderRadius: 12,
-        border: 'none',
-        padding: 0,
-        background: notEditable ? '#aeb0b8' : isOn ? META_DELIVERY_BLUE : META_DELIVERY_GREY,
-        cursor: 'not-allowed',
-        opacity: 0.85,
-        flexShrink: 0,
-        boxSizing: 'border-box',
-      }}
-    >
-      <span
-        aria-hidden
-        style={{
-          position: 'absolute',
-          top: 2,
-          left: isOn ? 22 : 2,
-          width: 20,
-          height: 20,
-          borderRadius: '50%',
-          background: '#fff',
-          boxShadow: '0 1px 3px rgba(0, 0, 0, 0.28)',
-        }}
-      />
-    </button>
-  );
-}
-
 export type MetaDataSource = 'cache' | 'snapshot' | 'live' | null;
 
 export function MetaDataSourceBadge({
@@ -1144,7 +1092,7 @@ export function MetaInsightsPanel({
     void load();
   }, [load]);
 
-  const tableColCount = level === 'campaigns' ? 15 : level === 'ads' ? 15 : 14;
+  const tableColCount = 10;
 
   const periods: MetaInsightPeriod[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'custom'];
 
@@ -1389,20 +1337,9 @@ export function MetaInsightsPanel({
 
       {level === 'campaigns' ? (
         <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textMuted, maxWidth: 720, lineHeight: 1.45 }}>
-          En <strong style={{ color: ds.textSecondary }}>Campañas</strong>, la columna <strong>Act.</strong> muestra el
-          estado de entrega en Meta (solo lectura). Las filas{' '}
+          Las filas{' '}
           <strong style={{ color: ds.dangerText }}>sin ningún producto Shopify asignado</strong> se resaltan en rojo hasta
-          que vincules al menos uno.
-        </p>
-      ) : null}
-
-      {level === 'ads' ? (
-        <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textMuted, maxWidth: 900, lineHeight: 1.45 }}>
-          La columna <strong style={{ color: ds.textSecondary }}>Compras</strong> es la de Meta (píxel / conversiones
-          del período). <strong>Compras Shopify</strong> es otra cosa: pedidos del proceso de compra enlazados a cada anuncio por
-          UTMs o URL. Por eso el total de Shopify suele ser <strong>menor</strong> que el de Meta (view-through, ventana
-          de atribución, compras sin UTMs en el pedido, anuncios que no están en esta tabla, etc.). Si comparas con el
-          Administrador de anuncios de Meta, revisa la misma vista (Campañas vs. anuncios) y filtros activos.
+          que vincules al menos uno en la columna Productos.
         </p>
       ) : null}
 
@@ -1443,35 +1380,24 @@ export function MetaInsightsPanel({
           overflow: 'auto',
         }}
       >
-        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 1040 }}>
+        <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 12, minWidth: 720 }}>
           <thead>
             <tr style={{ background: ds.bgApp, textAlign: 'left' }}>
               {[
                 'Cuenta publicitaria',
-                ...(level === 'campaigns' ? ['Act.'] : []),
                 level === 'campaigns' ? 'Campaña' : level === 'adsets' ? 'Conjunto' : 'Anuncio',
                 'Estado',
                 ...(level === 'campaigns' ? ['Productos (Shopify)'] : []),
                 ...(level !== 'campaigns' ? ['ID ref.'] : []),
                 'Impresiones',
                 'Clics',
-                'Compras',
-                'CPA',
                 'Gasto',
                 'CPM',
                 'CTR',
                 'CPC',
-                'ROAS',
-                'ROAS SHOPIFY',
-                ...(level === 'ads' ? ['Compras Shopify'] : []),
               ].map((h) => (
                 <th
                   key={h}
-                  title={
-                    h === 'Compras Shopify'
-                      ? 'Pedidos del mismo rango que Meta: fechas en calendario de la tienda Shopify. Atribución por id en utm_term / utm_content / utm_id, por nombre del anuncio (como en Meta), o por URL; un pedido = una fila. Pedidos con UTM pero sin anuncio en esta lista no suman aquí.'
-                      : undefined
-                  }
                   style={{
                     padding: '11px 16px',
                     fontWeight: 500,
@@ -1532,13 +1458,6 @@ export function MetaInsightsPanel({
                 const trTitle = [ev.tooltip, campaignMissingShopifyProduct ? 'Sin producto Shopify asignado.' : '']
                   .filter(Boolean)
                   .join(' ');
-                const roasRealLevel =
-                  shopifyPedidosAvailable
-                    ? (() => {
-                        const sales = shopifySalesAmountForInsightRow(shopifyVentasByLevel, row);
-                        return row.spend > 0 && sales > 0 ? sales / row.spend : 0;
-                      })()
-                    : null;
                 return (
                   <tr
                     key={`${row.adAccountId}-${row.id}`}
@@ -1552,11 +1471,6 @@ export function MetaInsightsPanel({
                       <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{row.adAccountName}</div>
                       <div style={{ fontSize: 10.5, color: ds.textHint }}>{row.adAccountId}</div>
                     </td>
-                    {level === 'campaigns' ? (
-                      <td style={{ padding: '12px 14px', verticalAlign: 'middle', width: 56 }}>
-                        <MetaCampaignDeliveryReadOnly rowStatus={row.status} />
-                      </td>
-                    ) : null}
                     <td style={{ padding: '12px 16px', maxWidth: 220 }}>
                       <div style={{ fontWeight: 600, fontSize: 12, color: ds.textPrimary }}>{row.name}</div>
                       <div style={{ fontSize: 10.5, color: ds.textHint }}>id {row.id}</div>
@@ -1580,34 +1494,10 @@ export function MetaInsightsPanel({
                     )}
                     <td style={{ padding: '12px 16px' }}>{formatNumber(row.impressions)}</td>
                     <td style={{ padding: '12px 16px' }}>{formatNumber(row.clicks)}</td>
-                    <td style={{ padding: '12px 16px' }}>{formatNumber(row.purchases)}</td>
-                    <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpa) }}>
-                      {row.purchases > 0 ? formatMoney2(row.cpa) : '—'}
-                    </td>
                     <td style={{ padding: '12px 16px' }}>{formatMoney2(row.spend)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpm) }}>{formatMoney2(row.cpm)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.ctr) }}>{formatPct(row.ctr)}</td>
                     <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.cpc) }}>{formatMoney2(row.cpc)}</td>
-                    <td style={{ padding: '12px 16px', background: insightMetricCellBg(ev.roas) }}>
-                      {roasRealLevel != null ? formatRoasMeta(roasRealLevel) : formatRoasMeta(row.roas)}
-                    </td>
-                    <td style={{ padding: '12px 16px' }}>
-                      {roasRealLevel != null
-                        ? formatRoasMeta(roasRealLevel)
-                        : row.spend > 0 && row.revenue > 0
-                          ? formatRoasMeta(row.revenue / row.spend)
-                          : '—'}
-                    </td>
-                    {level === 'ads' && (
-                      <td
-                        style={{ padding: '12px 16px' }}
-                        title="Atribución por id de anuncio en UTMs o URL; con varios ids se desempata por campaña/adset. Sin id de anuncio no se adivina entre varios del mismo adset"
-                      >
-                        {shopifyPedidosAvailable
-                          ? formatNumber(shopifyComprasCountForAdRow(shopifyComprasByAd, row))
-                          : '—'}
-                      </td>
-                    )}
                   </tr>
                 );
               })
