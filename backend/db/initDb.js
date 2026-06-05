@@ -76,6 +76,10 @@ async function initDb(pool) {
     ALTER TABLE meta_connections
     ADD COLUMN IF NOT EXISTS disconnect_reason TEXT
   `);
+  await pool.query(`
+    ALTER TABLE meta_connections
+    ADD COLUMN IF NOT EXISTS label VARCHAR(255)
+  `);
 
   try {
     await pool.query(`

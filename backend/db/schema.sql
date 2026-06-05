@@ -47,6 +47,7 @@ CREATE TABLE IF NOT EXISTS meta_connections (
   connected_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   account_name TEXT,
+  label VARCHAR(255),
   selected_ad_account_ids JSONB NOT NULL DEFAULT '[]'::jsonb
 );
 

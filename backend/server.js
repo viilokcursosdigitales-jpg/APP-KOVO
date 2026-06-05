@@ -3658,8 +3658,8 @@ app.get('/api/meta/connections', verifyToken, scopeToOrganization, async (req, r
   try {
     const rows = (
       await pool.query(
-        `SELECT id, app_id, status, connected_at, account_name, selected_ad_account_ids,
-                token_type, disconnect_reason,
+        `SELECT id, app_id, status, connected_at, account_name, label, selected_ad_account_ids,
+                token_type, token_expires_at, disconnect_reason,
                 (access_token IS NOT NULL AND length(trim(access_token)) > 0) AS has_access_token
          FROM meta_connections WHERE organization_id = $1 ORDER BY id DESC`,
         [req.organizationId],
@@ -3677,9 +3677,11 @@ app.get('/api/meta/connections', verifyToken, scopeToOrganization, async (req, r
         status: r.status,
         connected_at: r.connected_at,
         account_name: r.account_name,
+        label: r.label ? String(r.label) : null,
         selected_ad_account_ids: selectedIds,
         insights_ready: insightsReady,
         token_type: r.token_type || 'evaluator',
+        token_expires_at: r.token_expires_at ? new Date(r.token_expires_at).toISOString() : null,
         disconnect_reason: r.disconnect_reason || null,
       };
     });
@@ -3794,11 +3796,24 @@ app.get('/api/meta/selected-ad-accounts', verifyToken, scopeToOrganization, asyn
 
 app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const appId = String(req.body?.appId || '').trim();
-    const appSecret = String(req.body?.appSecret || '').trim();
-    const accessToken = req.body?.accessToken ? String(req.body.accessToken).trim() : '';
     const tokenType = req.body?.tokenType === 'system_user' ? 'system_user' : 'evaluator';
-    const rawSelected = req.body?.selectedAdAccountIds;
+    let appId = String(req.body?.appId || '').trim();
+    let appSecret = String(req.body?.appSecret || '').trim();
+    if (tokenType === 'system_user') {
+      if (!appId) appId = META_APP_ID_ENV;
+      if (!appSecret) appSecret = META_APP_SECRET_ENV;
+      if (!appId || !appSecret) {
+        return res.status(503).json({
+          error:
+            'OAuth Meta no está configurado en el servidor. Define META_APP_ID y META_APP_SECRET para conexiones system_user.',
+          code: 'server_config',
+        });
+      }
+    }
+    const accessToken = req.body?.accessToken ? String(req.body.accessToken).trim() : '';
+    const labelRaw = String(req.body?.label || '').trim();
+    const label = labelRaw ? labelRaw.slice(0, 255) : null;
+    const rawSelected = req.body?.selectedAdAccountIds ?? req.body?.adAccountIds;
     const selectedInput = Array.isArray(rawSelected) ? rawSelected.map((x) => String(x)) : [];
 
     let verified;
@@ -3838,17 +3853,20 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
       selectedJson = JSON.stringify(valid);
     }
 
+    const accountName = label || verified.accountName;
+
     const ins = await pool.query(
       `INSERT INTO meta_connections
-       (organization_id, created_by, app_id, app_secret, access_token, status, connected_at, account_name, selected_ad_account_ids, token_type, token_expires_at, disconnect_reason)
-       VALUES ($1, $2, $3, $4, $5, 'connected', now(), $6, $7::jsonb, $8, $9, $10) RETURNING id, connected_at`,
+       (organization_id, created_by, app_id, app_secret, access_token, status, connected_at, account_name, label, selected_ad_account_ids, token_type, token_expires_at, disconnect_reason)
+       VALUES ($1, $2, $3, $4, $5, 'connected', now(), $6, $7, $8::jsonb, $9, $10, $11) RETURNING id, connected_at`,
       [
         req.organizationId,
         req.user.userId,
         appId.replace(/\s/g, ''),
         appSecret,
         accessToken || null,
-        verified.accountName,
+        accountName,
+        label,
         selectedJson,
         tokenType,
         null,
@@ -3871,7 +3889,8 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
     res.status(201).json({
       connection: {
         id: ins.rows[0].id,
-        account_name: verified.accountName,
+        account_name: accountName,
+        label,
         connected_at: ins.rows[0].connected_at,
         app_id_hint:
           appId.replace(/\D/g, '').length >= 4
@@ -3879,12 +3898,84 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
             : '····',
         selected_ad_account_ids: selectedIds,
         insights_ready: insightsReady,
+        token_type: tokenType,
+        token_expires_at: null,
       },
       limits: await getUsageSnapshot(req.organizationId),
     });
   } catch (e) {
     console.error(e);
     res.status(500).json({ error: 'Error al guardar la conexión' });
+  }
+});
+
+/** Actualizar token de una conexión system_user existente (herramienta integrador). */
+app.put('/api/meta/connections/:id/system-token', verifyToken, scopeToOrganization, async (req, res) => {
+  try {
+    const id = parseInt(req.params.id, 10);
+    if (!Number.isFinite(id) || id <= 0) {
+      return res.status(400).json({ error: 'ID de conexión inválido' });
+    }
+    const accessToken = String(req.body?.accessToken || '').trim();
+    if (!accessToken) {
+      return res.status(400).json({ error: 'Indica el nuevo token de usuario del sistema.', code: 'token_required' });
+    }
+
+    const { rows } = await pool.query(
+      `SELECT * FROM meta_connections WHERE id = $1 AND organization_id = $2`,
+      [id, req.organizationId],
+    );
+    const row = rows[0];
+    if (!row) {
+      return res.status(404).json({ error: 'Conexión no encontrada' });
+    }
+    if ((row.token_type || 'evaluator') !== 'system_user') {
+      return res.status(400).json({ error: 'Solo se puede actualizar el token de conexiones system_user', code: 'not_system_user' });
+    }
+
+    let appId = String(row.app_id || '').trim() || META_APP_ID_ENV;
+    let appSecret = String(row.app_secret || '').trim() || META_APP_SECRET_ENV;
+
+    let verified;
+    try {
+      verified = await verifyMetaWithGraphApi(appId, appSecret, accessToken);
+    } catch (err) {
+      const code = err.code || 'unknown';
+      const map = {
+        invalid_credentials: 'El App ID o App Secret son incorrectos',
+        token_expired: 'El Access Token ha expirado o no es válido, genera uno nuevo',
+        network: 'No se pudo contactar a Meta. Revisa tu conexión e inténtalo de nuevo',
+        permissions: 'Tu app o token no tienen los permisos necesarios en Meta',
+      };
+      const status = code === 'network' ? 503 : 400;
+      return res.status(status).json({ error: map[code] || 'No se pudo validar', code });
+    }
+
+    await pool.query(
+      `UPDATE meta_connections
+       SET access_token = $1,
+           account_name = COALESCE(label, $2),
+           status = 'connected',
+           disconnect_reason = NULL,
+           token_expires_at = NULL,
+           updated_at = now()
+       WHERE id = $3 AND organization_id = $4`,
+      [accessToken, verified.accountName, id, req.organizationId],
+    );
+
+    res.json({
+      ok: true,
+      connection: {
+        id,
+        account_name: row.label || verified.accountName,
+        label: row.label ? String(row.label) : null,
+        token_type: 'system_user',
+        token_expires_at: null,
+      },
+    });
+  } catch (e) {
+    console.error(e);
+    res.status(500).json({ error: 'Error al actualizar el token' });
   }
 });
 

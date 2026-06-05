@@ -39,6 +39,7 @@ const EstrategiaCreativaPage = lazy(() => import('./pages/EstrategiaCreativaPage
 const FinanzaPage = lazy(() => import('./pages/FinanzaPage'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Settings = lazy(() => import('./pages/Settings'));
+const AdminMetaConnectPage = lazy(() => import('./pages/AdminMetaConnectPage'));
 
 function RootLandingRoute() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -132,6 +133,7 @@ export default function App() {
             <Route element={<AdminRoute />}>
               <Route path="/settings" element={<Settings />} />
               <Route path="/configuracion" element={<Settings />} />
+              <Route path="/admin/meta-connect" element={<AdminMetaConnectPage />} />
             </Route>
           </Route>
         </Route>
