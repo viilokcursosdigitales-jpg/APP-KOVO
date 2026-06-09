@@ -90,3 +90,38 @@ export function buildDateRange(
   }
   return { min: null, max: null };
 }
+
+/** YYYY-MM-DD en calendario local del navegador. */
+export function formatYmdLocal(d: Date = new Date()): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+export function isValidYmd(value: string): boolean {
+  const s = String(value || '').trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const [y, m, d] = s.split('-').map(Number);
+  const dt = new Date(y, m - 1, d);
+  return dt.getFullYear() === y && dt.getMonth() === m - 1 && dt.getDate() === d;
+}
+
+/** Normaliza rango personalizado (ordena fechas, recorta futuro al día de hoy). */
+export function normalizeCustomYmdRange(
+  from: string,
+  to: string,
+): { from: string; to: string } | null {
+  const f = String(from || '').trim();
+  const t = String(to || '').trim();
+  if (!isValidYmd(f) || !isValidYmd(t)) return null;
+  const today = formatYmdLocal();
+  let fromYmd = f > today ? today : f;
+  let toYmd = t > today ? today : t;
+  if (fromYmd > toYmd) {
+    const tmp = fromYmd;
+    fromYmd = toYmd;
+    toYmd = tmp;
+  }
+  return { from: fromYmd, to: toYmd };
+}

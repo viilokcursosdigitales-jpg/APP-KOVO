@@ -15,7 +15,7 @@ import {
 } from '../design-system/orderListTableScroll';
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
-import { type DatePreset, PEDIDOS_DATE_PRESETS, buildDateRange } from '../utils/datePresets';
+import { type DatePreset, PEDIDOS_DATE_PRESETS, buildDateRange, formatYmdLocal, isValidYmd, normalizeCustomYmdRange } from '../utils/datePresets';
 import {
   ORDER_INTERNAL_ESTADO_OPTIONS as INTERNAL_OPTIONS,
   type OrderInternalEstadoValue as InternalStatusValue,
@@ -314,6 +314,14 @@ function readInitialPedidosFiltersFromSearch(search: string) {
   const internalStatusFilter: 'all' | InternalStatusValue =
     rawInternalStatus === 'all' ? 'all' : coerceOrderInternalEstadoForSelect(rawInternalStatus);
   const datePreset: DatePreset = isDatePreset(rawDatePreset) ? rawDatePreset : 'hoy';
+  let customFrom = from;
+  let customTo = to;
+  if (datePreset === 'personalizado') {
+    const norm =
+      normalizeCustomYmdRange(from, to) ?? { from: formatYmdLocal(), to: formatYmdLocal() };
+    customFrom = norm.from;
+    customTo = norm.to;
+  }
 
   return {
     filter,
@@ -321,8 +329,8 @@ function readInitialPedidosFiltersFromSearch(search: string) {
     searchInput: q,
     searchTerm: q,
     datePreset,
-    customFrom: from,
-    customTo: to,
+    customFrom,
+    customTo,
     selectedCityKeys: cityKeys,
   };
 }
@@ -617,6 +625,27 @@ export default function PedidosPage() {
     [datePreset, customFrom, customTo],
   );
 
+  const customCalendarRange = useMemo(
+    () => (datePreset === 'personalizado' ? normalizeCustomYmdRange(customFrom, customTo) : null),
+    [datePreset, customFrom, customTo],
+  );
+
+  const ordersFetchKey = useMemo(() => {
+    if (datePreset === 'personalizado') {
+      return customCalendarRange ? `cal|${customCalendarRange.from}|${customCalendarRange.to}` : '';
+    }
+    return `${dateQuery.min || ''}|${dateQuery.max || ''}`;
+  }, [datePreset, customCalendarRange, dateQuery.min, dateQuery.max]);
+
+  const handleDatePresetChange = useCallback((id: DatePreset) => {
+    setDatePreset(id);
+    if (id === 'personalizado') {
+      const today = formatYmdLocal();
+      setCustomFrom((prev) => (isValidYmd(prev) ? prev : today));
+      setCustomTo((prev) => (isValidYmd(prev) ? prev : today));
+    }
+  }, []);
+
   const normalizeRow = useCallback((o: ShopifyOrderRow): ShopifyOrderRow => {
     const bv = o.badgeVariant;
     const safeBv = (['success', 'paused', 'error', 'info', 'warning'].includes(bv) ? bv : 'info') as StatusBadgeVariant;
@@ -724,7 +753,11 @@ export default function PedidosPage() {
   const loadShopifyOrders = useCallback(
     async (opts?: { silent?: boolean }) => {
       const silent = Boolean(opts?.silent);
-      const cacheKey = `${dateQuery.min || ''}|${dateQuery.max || ''}`;
+      if (datePreset === 'personalizado' && !customCalendarRange) {
+        if (!silent) setShopifyLoading(false);
+        return;
+      }
+      const cacheKey = ordersFetchKey;
       const cached = ordersCacheRef.current.get(cacheKey);
       if (cached && !silent) {
         setShopifyConnected(true);
@@ -746,8 +779,13 @@ export default function PedidosPage() {
       ordersRequestSeqRef.current = requestSeq;
       try {
         const qs = new URLSearchParams();
-        if (dateQuery.min) qs.set('created_at_min', dateQuery.min);
-        if (dateQuery.max) qs.set('created_at_max', dateQuery.max);
+        if (datePreset === 'personalizado' && customCalendarRange) {
+          qs.set('date_from', customCalendarRange.from);
+          qs.set('date_to', customCalendarRange.to);
+        } else {
+          if (dateQuery.min) qs.set('created_at_min', dateQuery.min);
+          if (dateQuery.max) qs.set('created_at_max', dateQuery.max);
+        }
         const res = await apiFetch(`/api/shopify/orders?${qs.toString()}`, { signal: abortController.signal });
         if (ordersRequestSeqRef.current !== requestSeq) return;
         const data = (await res.json().catch(() => ({}))) as ShopifyOrdersPayload & {
@@ -791,7 +829,7 @@ export default function PedidosPage() {
         }
       }
     },
-    [dateQuery.min, dateQuery.max, normalizeRow],
+    [datePreset, customCalendarRange, ordersFetchKey, dateQuery.min, dateQuery.max, normalizeRow],
   );
 
   const patchLocalFields = useCallback(async (orderId: number, body: Record<string, unknown>) => {
@@ -1083,8 +1121,9 @@ export default function PedidosPage() {
 
   useEffect(() => {
     if (!shopifyConnected) return;
+    if (datePreset === 'personalizado' && !customCalendarRange) return;
     void loadShopifyOrders();
-  }, [dateQuery.min, dateQuery.max, shopifyConnected, loadShopifyOrders]);
+  }, [ordersFetchKey, shopifyConnected, datePreset, customCalendarRange, loadShopifyOrders]);
 
   useEffect(() => {
     if (!shopifyConnected) return;
@@ -1679,7 +1718,7 @@ export default function PedidosPage() {
             <button
               key={p.id}
               type="button"
-              onClick={() => setDatePreset(p.id)}
+              onClick={() => handleDatePresetChange(p.id)}
               style={{
                 padding: '6px 12px',
                 borderRadius: 8,
@@ -1699,6 +1738,7 @@ export default function PedidosPage() {
               <input
                 type="date"
                 value={customFrom}
+                max={formatYmdLocal()}
                 onChange={(e) => setCustomFrom(e.target.value)}
                 style={{ ...inputStyle, maxWidth: 140 }}
               />
@@ -1706,6 +1746,8 @@ export default function PedidosPage() {
               <input
                 type="date"
                 value={customTo}
+                max={formatYmdLocal()}
+                min={customFrom || undefined}
                 onChange={(e) => setCustomTo(e.target.value)}
                 style={{ ...inputStyle, maxWidth: 140 }}
               />

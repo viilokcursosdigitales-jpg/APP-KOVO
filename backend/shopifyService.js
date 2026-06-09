@@ -965,9 +965,24 @@ function shopifyClampInformativeCreatedAtRange(ianaTimezone, minIso, maxIso) {
   let tMin = Date.parse(String(minIso));
   if (!Number.isFinite(tMin)) tMin = jan1Ms;
   if (tMin < jan1Ms) tMin = jan1Ms;
-  if (tMin > tMax) tMin = jan1Ms;
+  if (tMin > tMax) {
+    const { y, m, d } = wallClockPartsInZone(tMax, tz);
+    const dayR = shopifyOrderCreatedRangeForCalendarDate(tz, y, m, d);
+    tMin = Date.parse(dayR.min);
+    tMax = Date.parse(dayR.max);
+  }
 
   return { min: new Date(tMin).toISOString(), max: new Date(tMax).toISOString() };
+}
+
+function compareYmd(a, b) {
+  if (a.y !== b.y) return a.y - b.y;
+  if (a.m !== b.m) return a.m - b.m;
+  return a.d - b.d;
+}
+
+function shopifyTodayYmd(ianaTimezone) {
+  return wallClockPartsInZone(Date.now(), String(ianaTimezone || 'UTC').trim() || 'UTC');
 }
 
 function mapFinancialToBadge(financial) {
@@ -1010,5 +1025,7 @@ module.exports = {
   shopifyFetchAllOrders,
   shopifyInformativeOrdersRangeYearToDate,
   shopifyClampInformativeCreatedAtRange,
+  compareYmd,
+  shopifyTodayYmd,
   DEFAULT_API_VERSION,
 };

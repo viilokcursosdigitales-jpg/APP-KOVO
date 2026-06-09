@@ -67,6 +67,8 @@ const {
   shopifyFetchAllOrders,
   shopifyInformativeOrdersRangeYearToDate,
   shopifyClampInformativeCreatedAtRange,
+  compareYmd,
+  shopifyTodayYmd,
   phoneWithoutColombia57,
 } = require('./shopifyService');
 const {
@@ -7347,17 +7349,48 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
           : 'UTC';
     }
     const shopTz = shopCalendarTz || 'UTC';
+    const dateFromRaw = typeof req.query.date_from === 'string' ? req.query.date_from.trim() : '';
+    const dateToRaw = typeof req.query.date_to === 'string' ? req.query.date_to.trim() : '';
+    const dateFromParsed = parseIsoDateYmd(dateFromRaw);
+    const dateToParsed = parseIsoDateYmd(dateToRaw);
+    let usedCalendarRange = false;
+    if (dateFromParsed && dateToParsed) {
+      let fromYmd = dateFromParsed;
+      let toYmd = dateToParsed;
+      if (compareYmd(fromYmd, toYmd) > 0) {
+        const tmp = fromYmd;
+        fromYmd = toYmd;
+        toYmd = tmp;
+      }
+      const todayYmd = shopifyTodayYmd(shopTz);
+      if (compareYmd(fromYmd, todayYmd) > 0) {
+        return res.json({
+          source: 'shopify',
+          orders: [],
+          shop_domain: row.shop_domain,
+          fetchedAt: new Date().toISOString(),
+        });
+      }
+      if (compareYmd(toYmd, todayYmd) > 0) toYmd = todayYmd;
+      const rFrom = shopifyOrderCreatedRangeForCalendarDate(shopTz, fromYmd.y, fromYmd.m, fromYmd.d);
+      const rTo = shopifyOrderCreatedRangeForCalendarDate(shopTz, toYmd.y, toYmd.m, toYmd.d);
+      min = rFrom.min;
+      max = rTo.max;
+      usedCalendarRange = true;
+    }
     if (!metaPeriodRaw || !metaPeriodAllowed.has(metaPeriodRaw)) {
-      if (!min && !max) {
-        const ytd = shopifyInformativeOrdersRangeYearToDate(shopTz);
-        min = ytd.min;
-        max = ytd.max;
-      } else if (min && !max) {
-        max = shopifyOrderCreatedRangeForMetaPeriod('hoy', shopTz).max;
-      } else if (!min && max) {
-        const tMax = Date.parse(max);
-        const y = shopCalendarYmdFromInstant(Number.isFinite(tMax) ? tMax : Date.now(), shopTz).y;
-        min = shopifyOrderCreatedRangeForCalendarDate(shopTz, y, 1, 1).min;
+      if (!usedCalendarRange) {
+        if (!min && !max) {
+          const ytd = shopifyInformativeOrdersRangeYearToDate(shopTz);
+          min = ytd.min;
+          max = ytd.max;
+        } else if (min && !max) {
+          max = shopifyOrderCreatedRangeForMetaPeriod('hoy', shopTz).max;
+        } else if (!min && max) {
+          const tMax = Date.parse(max);
+          const y = shopCalendarYmdFromInstant(Number.isFinite(tMax) ? tMax : Date.now(), shopTz).y;
+          min = shopifyOrderCreatedRangeForCalendarDate(shopTz, y, 1, 1).min;
+        }
       }
     }
     if (min && max) {
