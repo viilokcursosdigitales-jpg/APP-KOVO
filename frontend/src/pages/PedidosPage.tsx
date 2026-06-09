@@ -15,7 +15,7 @@ import {
 } from '../design-system/orderListTableScroll';
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
-import { type DatePreset, DATE_PRESETS, buildDateRange } from '../utils/datePresets';
+import { type DatePreset, PEDIDOS_DATE_PRESETS, buildDateRange } from '../utils/datePresets';
 import {
   ORDER_INTERNAL_ESTADO_OPTIONS as INTERNAL_OPTIONS,
   type OrderInternalEstadoValue as InternalStatusValue,
@@ -296,7 +296,7 @@ function orderMatchesInternalStatusFilter(
 }
 
 function isDatePreset(value: string): value is DatePreset {
-  return DATE_PRESETS.some((p) => p.id === value);
+  return PEDIDOS_DATE_PRESETS.some((p) => p.id === value);
 }
 
 function readInitialPedidosFiltersFromSearch(search: string) {
@@ -1675,7 +1675,7 @@ export default function PedidosPage() {
             alignItems: 'center',
           }}
         >
-          {DATE_PRESETS.map((p) => (
+          {PEDIDOS_DATE_PRESETS.map((p) => (
             <button
               key={p.id}
               type="button"

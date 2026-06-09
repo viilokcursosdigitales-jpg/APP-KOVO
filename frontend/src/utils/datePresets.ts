@@ -1,8 +1,34 @@
-export type DatePreset = 'hoy' | 'ayer' | 'este_mes' | 'mes_anterior' | 'este_ano' | 'personalizado';
+export type DatePreset =
+  | 'hoy'
+  | 'ayer'
+  | 'antier'
+  | 'ultimos_3d'
+  | 'ultimos_4d'
+  | 'ultimos_5d'
+  | 'ultimos_7d'
+  | 'este_mes'
+  | 'mes_anterior'
+  | 'este_ano'
+  | 'personalizado';
 
 export const DATE_PRESETS: { id: DatePreset; label: string }[] = [
   { id: 'hoy', label: 'Hoy' },
   { id: 'ayer', label: 'Ayer' },
+  { id: 'este_mes', label: 'Este mes' },
+  { id: 'mes_anterior', label: 'Mes anterior' },
+  { id: 'este_ano', label: 'Este año' },
+  { id: 'personalizado', label: 'Personalizado' },
+];
+
+/** Presets de fecha del módulo Pedidos (incluye ventanas móviles de N días). */
+export const PEDIDOS_DATE_PRESETS: { id: DatePreset; label: string }[] = [
+  { id: 'hoy', label: 'Hoy' },
+  { id: 'ayer', label: 'Ayer' },
+  { id: 'antier', label: 'Antier' },
+  { id: 'ultimos_3d', label: 'Hace 3 días' },
+  { id: 'ultimos_4d', label: 'Hace 4 días' },
+  { id: 'ultimos_5d', label: 'Hace 5 días' },
+  { id: 'ultimos_7d', label: 'Último 7 días' },
   { id: 'este_mes', label: 'Este mes' },
   { id: 'mes_anterior', label: 'Mes anterior' },
   { id: 'este_ano', label: 'Este año' },
@@ -25,6 +51,18 @@ export function buildDateRange(
     const y = new Date(now);
     y.setDate(y.getDate() - 1);
     return isoDay(y);
+  }
+  if (preset === 'antier') {
+    const d = new Date(now);
+    d.setDate(d.getDate() - 2);
+    return isoDay(d);
+  }
+  if (preset === 'ultimos_3d' || preset === 'ultimos_4d' || preset === 'ultimos_5d' || preset === 'ultimos_7d') {
+    const days =
+      preset === 'ultimos_3d' ? 3 : preset === 'ultimos_4d' ? 4 : preset === 'ultimos_5d' ? 5 : 7;
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1), 0, 0, 0, 0);
+    return { min: start.toISOString(), max: end.toISOString() };
   }
   if (preset === 'este_mes') {
     const start = new Date(now.getFullYear(), now.getMonth(), 1, 0, 0, 0, 0);
