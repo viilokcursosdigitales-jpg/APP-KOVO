@@ -20,7 +20,7 @@ export const DATE_PRESETS: { id: DatePreset; label: string }[] = [
   { id: 'personalizado', label: 'Personalizado' },
 ];
 
-/** Presets de fecha del módulo Pedidos (incluye ventanas móviles de N días). */
+/** Presets de fecha del módulo Pedidos. */
 export const PEDIDOS_DATE_PRESETS: { id: DatePreset; label: string }[] = [
   { id: 'hoy', label: 'Hoy' },
   { id: 'ayer', label: 'Ayer' },
@@ -57,11 +57,15 @@ export function buildDateRange(
     d.setDate(d.getDate() - 2);
     return isoDay(d);
   }
-  if (preset === 'ultimos_3d' || preset === 'ultimos_4d' || preset === 'ultimos_5d' || preset === 'ultimos_7d') {
-    const days =
-      preset === 'ultimos_3d' ? 3 : preset === 'ultimos_4d' ? 4 : preset === 'ultimos_5d' ? 5 : 7;
+  if (preset === 'ultimos_3d' || preset === 'ultimos_4d' || preset === 'ultimos_5d') {
+    const daysAgo = preset === 'ultimos_3d' ? 3 : preset === 'ultimos_4d' ? 4 : 5;
+    const d = new Date(now);
+    d.setDate(d.getDate() - daysAgo);
+    return isoDay(d);
+  }
+  if (preset === 'ultimos_7d') {
     const end = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
-    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1), 0, 0, 0, 0);
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate() - 6, 0, 0, 0, 0);
     return { min: start.toISOString(), max: end.toISOString() };
   }
   if (preset === 'este_mes') {
@@ -124,4 +128,46 @@ export function normalizeCustomYmdRange(
     toYmd = tmp;
   }
   return { from: fromYmd, to: toYmd };
+}
+
+/** Días hacia atrás desde hoy para presets de un solo día calendario. */
+export function singleDayPresetDaysAgo(preset: DatePreset): number | null {
+  switch (preset) {
+    case 'hoy':
+      return 0;
+    case 'ayer':
+      return 1;
+    case 'antier':
+      return 2;
+    case 'ultimos_3d':
+      return 3;
+    case 'ultimos_4d':
+      return 4;
+    case 'ultimos_5d':
+      return 5;
+    default:
+      return null;
+  }
+}
+
+/** Rango YMD (mismo día) para presets de un solo día — usado en Pedidos con TZ de Shopify. */
+export function calendarRangeForSingleDayPreset(
+  preset: DatePreset,
+): { from: string; to: string } | null {
+  const daysAgo = singleDayPresetDaysAgo(preset);
+  if (daysAgo === null) return null;
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  const ymd = formatYmdLocal(d);
+  return { from: ymd, to: ymd };
+}
+
+/** Rango calendario para consultar pedidos: día único o personalizado. */
+export function pedidosCalendarQueryRange(
+  preset: DatePreset,
+  customFrom: string,
+  customTo: string,
+): { from: string; to: string } | null {
+  if (preset === 'personalizado') return normalizeCustomYmdRange(customFrom, customTo);
+  return calendarRangeForSingleDayPreset(preset);
 }

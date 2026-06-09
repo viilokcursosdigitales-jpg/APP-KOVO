@@ -15,7 +15,7 @@ import {
 } from '../design-system/orderListTableScroll';
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge, type StatusBadgeVariant } from '../design-system/StatusBadge';
-import { type DatePreset, PEDIDOS_DATE_PRESETS, buildDateRange, formatYmdLocal, isValidYmd, normalizeCustomYmdRange } from '../utils/datePresets';
+import { type DatePreset, PEDIDOS_DATE_PRESETS, buildDateRange, formatYmdLocal, isValidYmd, pedidosCalendarQueryRange } from '../utils/datePresets';
 import {
   ORDER_INTERNAL_ESTADO_OPTIONS as INTERNAL_OPTIONS,
   type OrderInternalEstadoValue as InternalStatusValue,
@@ -318,7 +318,8 @@ function readInitialPedidosFiltersFromSearch(search: string) {
   let customTo = to;
   if (datePreset === 'personalizado') {
     const norm =
-      normalizeCustomYmdRange(from, to) ?? { from: formatYmdLocal(), to: formatYmdLocal() };
+      pedidosCalendarQueryRange('personalizado', from, to) ??
+      { from: formatYmdLocal(), to: formatYmdLocal() };
     customFrom = norm.from;
     customTo = norm.to;
   }
@@ -625,17 +626,15 @@ export default function PedidosPage() {
     [datePreset, customFrom, customTo],
   );
 
-  const customCalendarRange = useMemo(
-    () => (datePreset === 'personalizado' ? normalizeCustomYmdRange(customFrom, customTo) : null),
+  const calendarQueryRange = useMemo(
+    () => pedidosCalendarQueryRange(datePreset, customFrom, customTo),
     [datePreset, customFrom, customTo],
   );
 
   const ordersFetchKey = useMemo(() => {
-    if (datePreset === 'personalizado') {
-      return customCalendarRange ? `cal|${customCalendarRange.from}|${customCalendarRange.to}` : '';
-    }
+    if (calendarQueryRange) return `cal|${calendarQueryRange.from}|${calendarQueryRange.to}`;
     return `${dateQuery.min || ''}|${dateQuery.max || ''}`;
-  }, [datePreset, customCalendarRange, dateQuery.min, dateQuery.max]);
+  }, [calendarQueryRange, dateQuery.min, dateQuery.max]);
 
   const handleDatePresetChange = useCallback((id: DatePreset) => {
     setDatePreset(id);
@@ -753,7 +752,7 @@ export default function PedidosPage() {
   const loadShopifyOrders = useCallback(
     async (opts?: { silent?: boolean }) => {
       const silent = Boolean(opts?.silent);
-      if (datePreset === 'personalizado' && !customCalendarRange) {
+      if (datePreset === 'personalizado' && !calendarQueryRange) {
         if (!silent) setShopifyLoading(false);
         return;
       }
@@ -779,9 +778,9 @@ export default function PedidosPage() {
       ordersRequestSeqRef.current = requestSeq;
       try {
         const qs = new URLSearchParams();
-        if (datePreset === 'personalizado' && customCalendarRange) {
-          qs.set('date_from', customCalendarRange.from);
-          qs.set('date_to', customCalendarRange.to);
+        if (calendarQueryRange) {
+          qs.set('date_from', calendarQueryRange.from);
+          qs.set('date_to', calendarQueryRange.to);
         } else {
           if (dateQuery.min) qs.set('created_at_min', dateQuery.min);
           if (dateQuery.max) qs.set('created_at_max', dateQuery.max);
@@ -829,7 +828,7 @@ export default function PedidosPage() {
         }
       }
     },
-    [datePreset, customCalendarRange, ordersFetchKey, dateQuery.min, dateQuery.max, normalizeRow],
+    [datePreset, calendarQueryRange, ordersFetchKey, dateQuery.min, dateQuery.max, normalizeRow],
   );
 
   const patchLocalFields = useCallback(async (orderId: number, body: Record<string, unknown>) => {
@@ -1121,9 +1120,9 @@ export default function PedidosPage() {
 
   useEffect(() => {
     if (!shopifyConnected) return;
-    if (datePreset === 'personalizado' && !customCalendarRange) return;
+    if (datePreset === 'personalizado' && !calendarQueryRange) return;
     void loadShopifyOrders();
-  }, [ordersFetchKey, shopifyConnected, datePreset, customCalendarRange, loadShopifyOrders]);
+  }, [ordersFetchKey, shopifyConnected, datePreset, calendarQueryRange, loadShopifyOrders]);
 
   useEffect(() => {
     if (!shopifyConnected) return;
