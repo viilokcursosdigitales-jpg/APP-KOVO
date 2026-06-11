@@ -4153,6 +4153,11 @@ app.get('/api/meta/selected-ad-accounts', verifyToken, scopeToOrganization, asyn
 
 app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, res) => {
   try {
+    const limit = await checkPlanLimit(req.organizationId, 'meta_connection');
+    if (!limit.ok) {
+      return res.status(403).json({ error: limit.message, code: 'plan_limit' });
+    }
+
     const tokenType = req.body?.tokenType === 'system_user' ? 'system_user' : 'evaluator';
     let appId = String(req.body?.appId || '').trim();
     let appSecret = String(req.body?.appSecret || '').trim();
