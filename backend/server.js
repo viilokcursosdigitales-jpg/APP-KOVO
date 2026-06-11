@@ -4096,14 +4096,19 @@ app.post('/api/meta/preview-ad-accounts', verifyToken, scopeToOrganization, asyn
 
 app.get('/api/meta/ad-accounts', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
-    if (!row || !String(row.access_token || '').trim()) {
-      return res.status(400).json({
-        error: 'No hay token de usuario guardado. Vuelve a conectar Meta con un access token.',
-        code: 'no_token',
-      });
+    const previewToken = req.query.token ? String(req.query.token).trim() : '';
+    let accessToken = previewToken;
+    if (!accessToken) {
+      const row = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
+      if (!row || !String(row.access_token || '').trim()) {
+        return res.status(400).json({
+          error: 'No hay token de usuario guardado. Vuelve a conectar Meta con un access token.',
+          code: 'no_token',
+        });
+      }
+      accessToken = String(row.access_token).trim();
     }
-    const listed = await listAdAccounts(row.access_token);
+    const listed = await listAdAccounts(accessToken);
     if (!listed.ok) {
       return res.status(400).json({ error: listed.message, code: listed.code || 'api_error' });
     }
