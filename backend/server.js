@@ -49,6 +49,7 @@ const {
   exchangeFbUserToken,
   getMetaConnectionConnectedForOrg,
   encryptToken,
+  decryptToken,
 } = require('./metaTokenService');
 const { signMetaOAuthState, verifyMetaOAuthState, exchangeMetaOAuthCode } = require('./metaOAuth');
 const {
@@ -1154,6 +1155,21 @@ function parseAdAccountIdsFromDb(val) {
     }
   }
   return [];
+}
+
+/** Log estructurado de errores Graph API (Meta Marketing). */
+function logMetaGraphApiError(context, details = {}) {
+  const fb = details.fb && typeof details.fb === 'object' ? details.fb : null;
+  console.error(`[meta-graph] ${context}`, {
+    httpStatus: details.httpStatus ?? null,
+    code: fb?.code ?? details.code ?? null,
+    message: fb?.message ?? details.message ?? null,
+    error_subcode: fb?.error_subcode ?? details.error_subcode ?? null,
+    type: fb?.type ?? null,
+    fbtrace_id: fb?.fbtrace_id ?? null,
+    ...details,
+    fb: fb || undefined,
+  });
 }
 
 /** @param {string | undefined} queryAdAccountId */
@@ -4353,33 +4369,65 @@ app.put('/api/meta/connections/:id/system-token', verifyToken, scopeToOrganizati
 });
 
 app.put('/api/meta/connections/:id/ad-accounts', verifyToken, scopeToOrganization, async (req, res) => {
+  const connectionId = parseInt(req.params.id, 10);
   try {
-    const id = parseInt(req.params.id, 10);
     const raw = req.body?.adAccountIds;
     const selectedInput = Array.isArray(raw) ? raw.map((x) => String(x)) : [];
     await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, req.organizationId);
     const { rows } = await pool.query(
       'SELECT id, access_token FROM meta_connections WHERE id = $1 AND organization_id = $2',
-      [id, req.organizationId],
+      [connectionId, req.organizationId],
     );
     const row = rows[0];
     if (!row) {
       return res.status(404).json({ error: 'Conexión no encontrada' });
     }
-    if (!String(row.access_token || '').trim()) {
+    const accessToken = decryptToken(String(row.access_token || '').trim());
+    if (!accessToken) {
       return res.status(400).json({
         error: 'No hay token de usuario. Conecta de nuevo incluyendo el access token.',
         code: 'no_token',
       });
     }
-    const listed = await listAdAccounts(row.access_token);
+    let listed;
+    try {
+      listed = await listAdAccounts(accessToken, {
+        pool,
+        organizationId: req.organizationId,
+        connectionId,
+      });
+    } catch (graphErr) {
+      logMetaGraphApiError('PUT /api/meta/connections/:id/ad-accounts listAdAccounts threw', {
+        organizationId: req.organizationId,
+        connectionId,
+        selectedInputCount: selectedInput.length,
+        httpStatus: graphErr.httpStatus ?? null,
+        code: graphErr.code ?? null,
+        message: graphErr.message ?? null,
+        error_subcode: graphErr.fb?.error_subcode ?? null,
+        fb: graphErr.fb ?? null,
+      });
+      const status = graphErr.code === 190 ? 400 : graphErr.code === 17 || graphErr.code === 32 ? 503 : 500;
+      return res.status(status).json({
+        error: graphErr.message || 'Error al listar cuentas publicitarias en Meta',
+        code: graphErr.code === 190 ? 'token_expired' : 'api_error',
+      });
+    }
     if (!listed.ok) {
+      logMetaGraphApiError('PUT /api/meta/connections/:id/ad-accounts listAdAccounts failed', {
+        organizationId: req.organizationId,
+        connectionId,
+        selectedInputCount: selectedInput.length,
+        listedCode: listed.code || null,
+        httpStatus: listed.httpStatus ?? null,
+        fb: listed.fb || null,
+      });
       return res.status(400).json({ error: listed.message, code: listed.code || 'api_error' });
     }
     const valid = filterValidAdAccountIds(selectedInput, listed.accounts);
     await pool.query(`UPDATE meta_connections SET selected_ad_account_ids = $1::jsonb WHERE id = $2 AND organization_id = $3`, [
       JSON.stringify(valid),
-      id,
+      connectionId,
       req.organizationId,
     ]);
     const insightsReady = valid.length > 0;
@@ -4390,7 +4438,16 @@ app.put('/api/meta/connections/:id/ad-accounts', verifyToken, scopeToOrganizatio
       limits: await getUsageSnapshot(req.organizationId),
     });
   } catch (e) {
-    console.error(e);
+    logMetaGraphApiError('PUT /api/meta/connections/:id/ad-accounts unhandled error', {
+      organizationId: req.organizationId,
+      connectionId,
+      httpStatus: e?.httpStatus ?? null,
+      code: e?.code ?? null,
+      message: e?.message ? String(e.message) : String(e),
+      error_subcode: e?.fb?.error_subcode ?? null,
+      fb: e?.fb ?? null,
+      stack: e?.stack ? String(e.stack) : undefined,
+    });
     res.status(500).json({ error: 'Error al actualizar cuentas publicitarias' });
   }
 });

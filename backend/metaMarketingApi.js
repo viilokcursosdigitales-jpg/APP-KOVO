@@ -105,8 +105,11 @@ async function metaApiCall(fn, options = {}) {
           const { markConnectionMetaTokenInvalid } = require('./metaTokenService');
           await markConnectionMetaTokenInvalid(pool, connectionId, organizationId);
         }
-        const err = new Error('Token de Meta inválido o expirado');
+        const fb = result.data && result.data.error;
+        const err = new Error((fb && fb.message) || 'Token de Meta inválido o expirado');
         err.code = 190;
+        err.fb = fb || null;
+        err.httpStatus = result.status ?? null;
         throw err;
       }
 
@@ -152,14 +155,14 @@ async function fetchAllGraphPages(firstUrl, options = {}) {
   const items = [];
   let url = firstUrl;
   while (url) {
-    const { ok, data } = await graphFetchJson(url, options);
+    const { ok, data, status } = await graphFetchJson(url, options);
     if (!ok) {
-      return { ok: false, data, items };
+      return { ok: false, data, items, status };
     }
     if (Array.isArray(data.data)) items.push(...data.data);
     url = data.paging?.next || null;
   }
-  return { ok: true, items };
+  return { ok: true, items, status: 200 };
 }
 
 function normalizeActId(raw) {
@@ -199,9 +202,10 @@ async function listAdAccounts(accessToken, apiOptions = {}) {
       message: (fb && fb.message) || 'No se pudieron listar las cuentas publicitarias',
       accounts: [],
       fb,
+      httpStatus: r.status ?? null,
     };
   }
-  return { ok: true, accounts: r.items, code: null, message: null, fb: null };
+  return { ok: true, accounts: r.items, code: null, message: null, fb: null, httpStatus: 200 };
 }
 
 const SYSTEM_USER_REQUIRED_PERMISSIONS = ['ads_read'];
