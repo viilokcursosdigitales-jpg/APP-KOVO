@@ -204,7 +204,7 @@ async function listAdAccounts(accessToken, apiOptions = {}) {
   return { ok: true, accounts: r.items, code: null, message: null, fb: null };
 }
 
-const SYSTEM_USER_REQUIRED_PERMISSIONS = ['ads_read', 'read_insights'];
+const SYSTEM_USER_REQUIRED_PERMISSIONS = ['ads_read'];
 
 /**
  * Valida un System User token sin depender de META_APP_ID / META_APP_SECRET del servidor.
@@ -278,7 +278,7 @@ async function verifySystemUserMetaToken(accessToken) {
     return {
       ok: false,
       code: 'permissions',
-      message: `Al token le faltan permisos: ${missing.join(', ')}. Genera el token con ads_read y read_insights.`,
+      message: `Al token le falta el permiso ads_read. Genera el token con ads_read en Business Manager.`,
     };
   }
 
