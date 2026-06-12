@@ -46,11 +46,16 @@ type SavedConnection = {
 
 const INSTRUCTION_STEPS = [
   'Ir a business.facebook.com → Configuración → Usuarios → Usuarios del sistema',
-  'Crear un Usuario del sistema con rol "Empleado"',
-  'Clic en "Agregar activos" → seleccionar Cuentas publicitarias → asignar permiso "Analista" (solo lectura)',
-  'Clic en "Generar token" → seleccionar la app de KOVO → marcar permisos: ads_read, read_insights',
+  'Crear un Usuario del sistema con rol "Empleado" (si aún no existe)',
+  'Clic en "Agregar activos" → Cuentas publicitarias → permiso "Analista" (solo lectura)',
+  'Clic en "Generar token" → elegir la app KOVO (1682308006114923) → permisos ads_read y read_insights',
   'Copiar el token, pegarlo abajo y pulsar "Cargar cuentas" para elegir tus cuentas publicitarias',
 ];
+
+const META_APP_ID_HINT = '1682308006114923';
+
+const META_BM_WARNING =
+  'No uses Configuración → Cuentas → Apps → "Agregar app". Esa pantalla es para reclamar una app propia; la app KOVO ya pertenece a KOVO y ahí Meta suele mostrar error en rojo. Ve directo a Usuarios del sistema → Generar token.';
 
 const fieldStyle: React.CSSProperties = {
   width: '100%',
@@ -1073,7 +1078,21 @@ export default function ConexionMetaADS() {
             ))}
           </ol>
           <p style={{ margin: '16px 0 0', fontSize: 12, color: ds.textMuted, lineHeight: 1.45 }}>
-            El token debe generarse para la app de KOVO en tu Business Manager, con permisos de solo lectura.
+            App KOVO: <code style={{ fontSize: 11 }}>{META_APP_ID_HINT}</code>. El token debe generarse en
+            Usuarios del sistema, no en la sección Apps del portafolio.
+          </p>
+          <p
+            style={{
+              margin: '14px 0 0',
+              padding: '10px 12px',
+              borderRadius: 10,
+              background: ds.warningBg,
+              color: ds.warningText,
+              fontSize: 12,
+              lineHeight: 1.5,
+            }}
+          >
+            {META_BM_WARNING}
           </p>
         </section>
 

@@ -204,7 +204,119 @@ async function listAdAccounts(accessToken, apiOptions = {}) {
   return { ok: true, accounts: r.items, code: null, message: null, fb: null };
 }
 
-// Solo campos admitidos en insights anidados (act_*/campaigns|adsets|ads?fields=…,insights.date_preset(…) {…}).
+const SYSTEM_USER_REQUIRED_PERMISSIONS = ['ads_read', 'read_insights'];
+
+/**
+ * Valida un System User token sin depender de META_APP_ID / META_APP_SECRET del servidor.
+ * 1) GET /me  2) GET /me/permissions  3) GET /me/adaccounts (≥1 cuenta)
+ * @param {string} accessToken
+ * @returns {Promise<{ ok: true, accountName: string, appId: string, accounts: object[] } | { ok: false, code: string, message: string }>}
+ */
+async function verifySystemUserMetaToken(accessToken) {
+  const token = String(accessToken || '').trim();
+  if (!token || token.length < 30) {
+    return { ok: false, code: 'token_expired', message: 'El Access Token no es válido. Genera uno nuevo.' };
+  }
+
+  const v = getGraphVersion();
+  const enc = encodeURIComponent(token);
+
+  async function graphGet(pathAndQuery) {
+    let res;
+    try {
+      res = await fetch(`https://graph.facebook.com/${v}/${pathAndQuery}`);
+    } catch {
+      return {
+        ok: false,
+        code: 'network',
+        message: 'No se pudo contactar a Meta. Revisa tu conexión e inténtalo de nuevo',
+        body: null,
+      };
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok || body.error) {
+      const fb = body.error;
+      const code = fb && fb.code === 190 ? 'token_expired' : 'invalid_token';
+      const message =
+        fb && fb.message
+          ? String(fb.message)
+          : 'El token no es válido o ha expirado. Genera uno nuevo en Business Manager.';
+      return { ok: false, code, message, body };
+    }
+    return { ok: true, body };
+  }
+
+  const meR = await graphGet(`me?fields=name&access_token=${enc}`);
+  if (!meR.ok) {
+    return {
+      ok: false,
+      code: meR.code === 'network' ? 'network' : 'token_expired',
+      message: meR.code === 'network' ? meR.message : 'El token no es válido o ha expirado. Genera uno nuevo.',
+    };
+  }
+
+  const permR = await graphGet(`me/permissions?access_token=${enc}`);
+  if (!permR.ok) {
+    return {
+      ok: false,
+      code: permR.code === 'network' ? 'network' : 'permissions',
+      message:
+        permR.code === 'network'
+          ? permR.message
+          : 'No se pudieron verificar los permisos del token.',
+    };
+  }
+
+  const permRows = Array.isArray(permR.body?.data) ? permR.body.data : [];
+  const granted = new Set(
+    permRows
+      .filter((p) => p && String(p.status).toLowerCase() === 'granted')
+      .map((p) => String(p.permission)),
+  );
+  const missing = SYSTEM_USER_REQUIRED_PERMISSIONS.filter((p) => !granted.has(p));
+  if (missing.length > 0) {
+    return {
+      ok: false,
+      code: 'permissions',
+      message: `Al token le faltan permisos: ${missing.join(', ')}. Genera el token con ads_read y read_insights.`,
+    };
+  }
+
+  const listed = await listAdAccounts(token);
+  if (!listed.ok) {
+    return {
+      ok: false,
+      code: listed.code || 'api_error',
+      message: listed.message || 'No se pudieron listar las cuentas publicitarias.',
+    };
+  }
+  if (!listed.accounts || listed.accounts.length === 0) {
+    return {
+      ok: false,
+      code: 'no_ad_accounts',
+      message:
+        'El token no tiene acceso a ninguna cuenta publicitaria. Revisa que el usuario del sistema tenga cuentas asignadas con permiso Analista.',
+    };
+  }
+
+  let appId = '';
+  const debugR = await graphGet(`debug_token?input_token=${enc}&access_token=${enc}`);
+  if (debugR.ok && debugR.body?.data?.app_id != null) {
+    appId = String(debugR.body.data.app_id).replace(/\s/g, '');
+  }
+
+  let accountName = 'Usuario del sistema';
+  const meName = meR.body?.name != null ? String(meR.body.name).trim() : '';
+  if (meName) {
+    accountName = meName;
+  } else if (appId && /^\d+$/.test(appId)) {
+    accountName = `Usuario del sistema · App ${appId.slice(-4)}`;
+  }
+
+  return { ok: true, accountName, appId, accounts: listed.accounts };
+}
+
+// Solo campos admitidos en insights anidados
 // omni_purchase_roas / website_purchase_roas / cost_per_action_type suelen devolver (#100) en este modo; ROAS y CPA se calculan con actions + action_values + spend.
 const INSIGHT_FIELDS =
   'impressions,clicks,spend,cpm,cpc,ctr,reach,frequency,actions,action_values';
@@ -804,6 +916,7 @@ module.exports = {
   runWithMetaApiContext,
   metaApiCall,
   listAdAccounts,
+  verifySystemUserMetaToken,
   fetchInsightsForAdAccount,
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,

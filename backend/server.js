@@ -29,6 +29,7 @@ const {
   normalizeActId,
   datePresetFromDashboardPeriod,
   listAdAccounts,
+  verifySystemUserMetaToken,
   fetchInsightsForAdAccount,
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
@@ -4166,17 +4167,6 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
     const tokenType = req.body?.tokenType === 'system_user' ? 'system_user' : 'evaluator';
     let appId = String(req.body?.appId || '').trim();
     let appSecret = String(req.body?.appSecret || '').trim();
-    if (tokenType === 'system_user') {
-      if (!appId) appId = META_APP_ID_ENV;
-      if (!appSecret) appSecret = META_APP_SECRET_ENV;
-      if (!appId || !appSecret) {
-        return res.status(503).json({
-          error:
-            'OAuth Meta no está configurado en el servidor. Define META_APP_ID y META_APP_SECRET para conexiones system_user.',
-          code: 'server_config',
-        });
-      }
-    }
     const accessToken = req.body?.accessToken ? String(req.body.accessToken).trim() : '';
     const labelRaw = String(req.body?.label || '').trim();
     const label = labelRaw ? labelRaw.slice(0, 255) : null;
@@ -4184,18 +4174,38 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
     const selectedInput = Array.isArray(rawSelected) ? rawSelected.map((x) => String(x)) : [];
 
     let verified;
-    try {
-      verified = await verifyMetaWithGraphApi(appId, appSecret, accessToken || undefined);
-    } catch (err) {
-      const code = err.code || 'unknown';
-      const map = {
-        invalid_credentials: 'El App ID o App Secret son incorrectos',
-        token_expired: 'El Access Token ha expirado, genera uno nuevo',
-        network: 'No se pudo contactar a Meta. Revisa tu conexión e inténtalo de nuevo',
-        permissions: 'Tu app o token no tienen los permisos necesarios en Meta',
-      };
-      const status = code === 'network' ? 503 : 400;
-      return res.status(status).json({ error: map[code] || 'No se pudo validar', code });
+    /** Cuentas ya listadas durante validación system_user (evita llamada duplicada a Graph). */
+    let prelistedAccounts = null;
+
+    if (tokenType === 'system_user') {
+      if (!accessToken) {
+        return res.status(400).json({
+          error: 'Indica el token de usuario del sistema.',
+          code: 'token_required',
+        });
+      }
+      const sysVerify = await verifySystemUserMetaToken(accessToken);
+      if (!sysVerify.ok) {
+        const status = sysVerify.code === 'network' ? 503 : 400;
+        return res.status(status).json({ error: sysVerify.message, code: sysVerify.code });
+      }
+      verified = { accountName: sysVerify.accountName };
+      appId = sysVerify.appId || appId || '';
+      prelistedAccounts = sysVerify.accounts;
+    } else {
+      try {
+        verified = await verifyMetaWithGraphApi(appId, appSecret, accessToken || undefined);
+      } catch (err) {
+        const code = err.code || 'unknown';
+        const map = {
+          invalid_credentials: 'El App ID o App Secret son incorrectos',
+          token_expired: 'El Access Token ha expirado, genera uno nuevo',
+          network: 'No se pudo contactar a Meta. Revisa tu conexión e inténtalo de nuevo',
+          permissions: 'Tu app o token no tienen los permisos necesarios en Meta',
+        };
+        const status = code === 'network' ? 503 : 400;
+        return res.status(status).json({ error: map[code] || 'No se pudo validar', code });
+      }
     }
 
     let selectedJson = '[]';
@@ -4206,7 +4216,10 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
           code: 'token_required',
         });
       }
-      const listed = await listAdAccounts(accessToken);
+      const listed =
+        prelistedAccounts != null
+          ? { ok: true, accounts: prelistedAccounts }
+          : await listAdAccounts(accessToken);
       if (!listed.ok) {
         return res.status(400).json({ error: listed.message, code: listed.code || 'api_error' });
       }
@@ -4231,7 +4244,7 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
       [
         req.organizationId,
         req.user.userId,
-        appId.replace(/\s/g, ''),
+        (appId || '').replace(/\s/g, ''),
         '',
         storedToken,
         accountName,
@@ -4262,8 +4275,8 @@ app.post('/api/meta/connections', verifyToken, scopeToOrganization, async (req, 
         label,
         connected_at: ins.rows[0].connected_at,
         app_id_hint:
-          appId.replace(/\D/g, '').length >= 4
-            ? `····${appId.replace(/\D/g, '').slice(-4)}`
+          String(appId || '').replace(/\D/g, '').length >= 4
+            ? `····${String(appId).replace(/\D/g, '').slice(-4)}`
             : '····',
         selected_ad_account_ids: selectedIds,
         insights_ready: insightsReady,
@@ -4302,34 +4315,25 @@ app.put('/api/meta/connections/:id/system-token', verifyToken, scopeToOrganizati
       return res.status(400).json({ error: 'Solo se puede actualizar el token de conexiones system_user', code: 'not_system_user' });
     }
 
-    let appId = String(row.app_id || '').trim() || META_APP_ID_ENV;
-    let appSecret = String(row.app_secret || '').trim() || META_APP_SECRET_ENV;
-
-    let verified;
-    try {
-      verified = await verifyMetaWithGraphApi(appId, appSecret, accessToken);
-    } catch (err) {
-      const code = err.code || 'unknown';
-      const map = {
-        invalid_credentials: 'El App ID o App Secret son incorrectos',
-        token_expired: 'El Access Token ha expirado o no es válido, genera uno nuevo',
-        network: 'No se pudo contactar a Meta. Revisa tu conexión e inténtalo de nuevo',
-        permissions: 'Tu app o token no tienen los permisos necesarios en Meta',
-      };
-      const status = code === 'network' ? 503 : 400;
-      return res.status(status).json({ error: map[code] || 'No se pudo validar', code });
+    const sysVerify = await verifySystemUserMetaToken(accessToken);
+    if (!sysVerify.ok) {
+      const status = sysVerify.code === 'network' ? 503 : 400;
+      return res.status(status).json({ error: sysVerify.message, code: sysVerify.code });
     }
+    const verified = { accountName: sysVerify.accountName };
+    const metaAppId = sysVerify.appId || String(row.app_id || '').trim() || '';
 
     await pool.query(
       `UPDATE meta_connections
        SET access_token = $1,
            account_name = COALESCE(label, $2),
+           app_id = CASE WHEN $5 <> '' THEN $5 ELSE app_id END,
            status = 'connected',
            disconnect_reason = NULL,
            token_expires_at = NULL,
            updated_at = now()
        WHERE id = $3 AND organization_id = $4`,
-      [encryptToken(accessToken), verified.accountName, id, req.organizationId],
+      [encryptToken(accessToken), verified.accountName, id, req.organizationId, metaAppId],
     );
 
     res.json({
