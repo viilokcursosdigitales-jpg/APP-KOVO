@@ -188,6 +188,9 @@ async function initDb(pool) {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_shopify_oauth_states_expires ON shopify_oauth_states (expires_at)`,
   );
+  await pool.query(
+    `ALTER TABLE shopify_oauth_states ADD COLUMN IF NOT EXISTS oauth_client_id VARCHAR(64)`,
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shopify_order_local_fields (

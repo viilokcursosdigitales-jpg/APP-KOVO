@@ -83,7 +83,8 @@ CREATE TABLE IF NOT EXISTS shopify_oauth_states (
   state TEXT PRIMARY KEY,
   organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
   shop_domain VARCHAR(255) NOT NULL,
-  expires_at TIMESTAMPTZ NOT NULL
+  expires_at TIMESTAMPTZ NOT NULL,
+  oauth_client_id VARCHAR(64)
 );
 
 CREATE INDEX IF NOT EXISTS idx_shopify_oauth_states_expires ON shopify_oauth_states (expires_at);
