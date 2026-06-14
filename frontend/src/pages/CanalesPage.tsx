@@ -113,7 +113,9 @@ export default function CanalesPage() {
       navigate('/login');
       return;
     }
+    // app=2 primero: el JWT en kovo_token puede ser largo y algunos proxies truncan el query string al final.
     const qs = new URLSearchParams({
+      app: '2',
       shop: parsed.shop,
       kovo_token: token,
     });

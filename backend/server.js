@@ -74,6 +74,14 @@ const {
   phoneWithoutColombia57,
 } = require('./shopifyService');
 const {
+  resolveShopifyOAuthAppFromAuthQuery,
+  resolveShopifyOAuthAppByClientId,
+  verifyShopifyOAuthCallbackAndResolveApp,
+  shopifyOAuthApp1Credentials,
+  shopifyApp2Configured,
+  logShopifyOAuthAppsStatus,
+} = require('./shopifyOAuthApps');
+const {
   getPublicAppUrl,
   sendInvitationEmail,
   isMailConfigured,
@@ -6690,25 +6698,30 @@ function shopifyMissingEnvKeys() {
 }
 
 /** Inserta state OAuth y devuelve la URL de autorización en Shopify (dominio myshopify.com). */
-async function buildShopifyAuthorizeUrlForOrg(organizationId, shop) {
+async function buildShopifyAuthorizeUrlForOrg(organizationId, shop, oauthAppCreds) {
+  const creds = oauthAppCreds || shopifyOAuthApp1Credentials();
+  if (!creds.clientId || !creds.clientSecret) {
+    throw new Error('shopify_oauth_app_not_configured');
+  }
   await cleanupShopifyOauthStates();
   const state = crypto.randomUUID();
   const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
   await pool.query(
-    `INSERT INTO shopify_oauth_states (state, organization_id, shop_domain, expires_at) VALUES ($1, $2, $3, $4)`,
-    [state, organizationId, shop, expiresAt],
+    `INSERT INTO shopify_oauth_states (state, organization_id, shop_domain, expires_at, oauth_client_id)
+     VALUES ($1, $2, $3, $4, $5)`,
+    [state, organizationId, shop, expiresAt, creds.clientId.replace(/\s/g, '')],
   );
-  console.log('State guardado en BD:', { state, shop, expiresAt });
+  console.log('State guardado en BD:', { state, shop, expiresAt, oauthClientId: creds.clientId.slice(-6) });
   const redirectUri = SHOPIFY_REDIRECT_URI;
   const params = new URLSearchParams({
-    client_id: SHOPIFY_API_KEY,
+    client_id: creds.clientId,
     scope: SHOPIFY_SCOPES,
     redirect_uri: redirectUri,
     state,
   });
   const authUrl = `https://${shop}/admin/oauth/authorize?${params.toString()}`;
   console.log('Redirect URI enviada a Shopify:', redirectUri);
-  console.log('Auth URL completa:', authUrl);
+  console.log('Auth URL completa (app slot', creds.appSlot, '):', authUrl.replace(creds.clientId, '····'));
   return authUrl;
 }
 
@@ -6742,8 +6755,8 @@ app.get('/api/shopify/auth', async (req, res) => {
       return redirectCanalesErr();
     }
 
-    if (!shopifyConfigured()) {
-      console.warn('[shopify auth] OAuth no configurado:', shopifyMissingEnvKeys().join(', '));
+    if (!SHOPIFY_REDIRECT_URI) {
+      console.warn('[shopify auth] Falta SHOPIFY_REDIRECT_URI o SHOPIFY_APP_URL');
       return redirectCanalesErr();
     }
 
@@ -6752,7 +6765,26 @@ app.get('/api/shopify/auth', async (req, res) => {
       return redirectCanalesErr();
     }
 
-    const authorizeUrl = await buildShopifyAuthorizeUrlForOrg(req.organizationId, shop);
+    const appQuery = req.query.app;
+    const oauthApp = resolveShopifyOAuthAppFromAuthQuery(appQuery);
+    if (!oauthApp || !oauthApp.clientId || !oauthApp.clientSecret) {
+      if (String(Array.isArray(appQuery) ? appQuery[0] : appQuery || '').trim() === '2') {
+        console.warn('[shopify auth] App 2 OAuth no configurada (SHOPIFY_API_KEY_2 / SHOPIFY_API_SECRET_2)');
+      } else {
+        console.warn('[shopify auth] OAuth no configurado:', shopifyMissingEnvKeys().join(', '));
+      }
+      return redirectCanalesErr();
+    }
+
+    console.log('[shopify auth] inicio OAuth', {
+      appQuery: Array.isArray(appQuery) ? appQuery[0] : appQuery,
+      appSlot: oauthApp.appSlot,
+      clientIdSuffix: oauthApp.clientId.slice(-6),
+      shop,
+      organizationId: req.organizationId,
+    });
+
+    const authorizeUrl = await buildShopifyAuthorizeUrlForOrg(req.organizationId, shop, oauthApp);
     return res.redirect(302, authorizeUrl);
   } catch (e) {
     console.error('[shopify auth]', e);
@@ -6776,8 +6808,8 @@ app.get('/api/shopify/callback', async (req, res) => {
   });
 
   try {
-    if (!SHOPIFY_API_SECRET || !SHOPIFY_API_KEY) {
-      console.log('[shopify callback] fail: falta SHOPIFY_API_KEY o SHOPIFY_API_SECRET');
+    if (!shopifyConfigured() && !shopifyApp2Configured()) {
+      console.log('[shopify callback] fail: falta configuración OAuth (App 1 y App 2)');
       return redirectErr();
     }
 
@@ -6800,18 +6832,11 @@ app.get('/api/shopify/callback', async (req, res) => {
       return redirectErr();
     }
 
-    console.log('[shopify callback] antes de verificar HMAC');
-    const hmacOk = verifyShopifyOAuthHmac(query, SHOPIFY_API_SECRET);
-    if (!hmacOk) {
-      console.log('[shopify callback] fail: HMAC inválido o parámetro hmac ausente');
-      return redirectErr();
-    }
-
     console.log('[shopify callback] antes de verificar state en BD');
     let rows;
     try {
       const result = await pool.query(
-        `SELECT organization_id, shop_domain FROM shopify_oauth_states WHERE state = $1 AND expires_at > now()`,
+        `SELECT organization_id, shop_domain, oauth_client_id FROM shopify_oauth_states WHERE state = $1 AND expires_at > now()`,
         [state],
       );
       rows = result.rows;
@@ -6845,6 +6870,22 @@ app.get('/api/shopify/callback', async (req, res) => {
       return redirectErr();
     }
 
+    let oauthApp =
+      resolveShopifyOAuthAppByClientId(stateRow.oauth_client_id) ||
+      verifyShopifyOAuthCallbackAndResolveApp(query);
+    if (!oauthApp) {
+      console.log('[shopify callback] fail: HMAC inválido o parámetro hmac ausente');
+      return redirectErr();
+    }
+    if (
+      stateRow.oauth_client_id &&
+      oauthApp.clientId.replace(/\s/g, '') !== String(stateRow.oauth_client_id).replace(/\s/g, '')
+    ) {
+      console.warn('[shopify callback] client_id del state no coincide con HMAC; se usa credencial del HMAC');
+    }
+
+    console.log('[shopify callback] OAuth app slot', oauthApp.appSlot, 'client_id', oauthApp.clientId.slice(-6));
+
     const shopInicio = sanitizeShopDomain(stateRow.shop_domain);
     if (shopInicio && shopInicio !== shop) {
       console.warn(
@@ -6860,8 +6901,8 @@ app.get('/api/shopify/callback', async (req, res) => {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        client_id: SHOPIFY_API_KEY,
-        client_secret: SHOPIFY_API_SECRET,
+        client_id: oauthApp.clientId,
+        client_secret: oauthApp.clientSecret,
         code,
       }),
     });
@@ -10226,13 +10267,19 @@ async function start() {
     rawShopifySecretEnv != null && String(rawShopifySecretEnv).includes(' '),
   );
 
+  logShopifyOAuthAppsStatus();
   if (shopifyConfigured()) {
     console.log(
-      '[shopify] OAuth configurado. SHOPIFY_REDIRECT_URI debe ser exactamente la URL permitida en Partner Dashboard (ej. https://kovo.services/api/shopify/callback):',
+      '[shopify] OAuth App 1 operativa. SHOPIFY_REDIRECT_URI debe coincidir con Partner Dashboard (ej. https://kovo.services/api/shopify/callback):',
       SHOPIFY_REDIRECT_URI,
     );
   } else {
-    console.warn('[shopify] OAuth no configurado. Faltan:', shopifyMissingEnvKeys().join(', '));
+    console.warn('[shopify] OAuth App 1 incompleta. Faltan:', shopifyMissingEnvKeys().join(', '));
+  }
+  if (!shopifyApp2Configured()) {
+    console.warn(
+      '[shopify] OAuth App 2 no configurada: define SHOPIFY_API_KEY_2 y SHOPIFY_API_SECRET_2 (kovo-2-publica). El botón Canales usa ?app=2.',
+    );
   }
 
   const cronTz = META_SNAPSHOT_TIMEZONE;
