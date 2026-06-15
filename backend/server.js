@@ -89,6 +89,7 @@ const {
   getMailTransportInfo,
 } = require('./mailService');
 const shopifyComplianceRoutes = require('./routes/shopify-compliance');
+const createShopifyV2Router = require('./routes/shopifyV2');
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
 const hasFrontendDist = fs.existsSync(staticDir);
 
@@ -885,6 +886,11 @@ function scopeToOrganization(req, res, next) {
   req.organizationId = req.user.organizationId;
   return requireAccess(req, res, next);
 }
+
+app.use(
+  '/api/shopify-v2',
+  createShopifyV2Router({ pool, verifyToken, scopeToOrganization, requireRole }),
+);
 
 /** Nombre de producto estable para guardar y buscar (minúsculas, sin acentos, espacios colapsados). */
 function normalizeCalculadoraProductName(name) {

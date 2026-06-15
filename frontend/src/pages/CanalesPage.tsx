@@ -5,6 +5,7 @@ import { useAuth } from '../auth/AuthContext';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge } from '../design-system/StatusBadge';
+import ShopifyConectarV2 from '../components/canales/ShopifyConectarV2';
 
 type ShopifyConnection = {
   status: string;
@@ -566,6 +567,8 @@ export default function CanalesPage() {
           ) : null}
         </div>
       </div>
+
+      <ShopifyConectarV2 />
     </>
   );
 }
