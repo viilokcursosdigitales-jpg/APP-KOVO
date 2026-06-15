@@ -27,6 +27,34 @@ function pickCredential(row, encryptedKey, plainKey) {
   return '';
 }
 
+/** Valida presencia de access token (texto plano legacy o AES-256-GCM). */
+function accessTokenIsPresentAndValid(stored) {
+  const s = String(stored ?? '').trim();
+  if (!s) return false;
+  if (s.startsWith('shpat_') || !s.includes(':')) return true;
+  try {
+    const decrypted = decryptShopifyToken(s);
+    if (!decrypted || decrypted === s) return false;
+    return Boolean(decrypted.trim());
+  } catch {
+    return false;
+  }
+}
+
+function pickAccessTokenField(row) {
+  if (!row || typeof row !== 'object') return null;
+  const candidates = [
+    row.access_token_encrypted,
+    row.access_token,
+    row.accessTokenEncrypted,
+    row.accessToken,
+  ];
+  for (const value of candidates) {
+    if (value != null && String(value).trim()) return String(value);
+  }
+  return null;
+}
+
 /**
  * @param {import('pg').Pool} pool
  * @param {number} organizationId
@@ -198,13 +226,19 @@ function createShopifyV2Router({ pool, verifyToken, scopeToOrganization, require
   });
 
   router.get('/estado', ...manageAuth, async (req, res) => {
+    const organizationId = Number(req.organizationId);
     try {
-      const organizationId = Number(req.organizationId);
+      if (!Number.isFinite(organizationId) || organizationId <= 0) {
+        return res.json({
+          conectado: false,
+          shopDomain: null,
+          status: null,
+          connectedAt: null,
+        });
+      }
+
       const { rows } = await pool.query(
-        `SELECT shop_domain, status, connected_at, access_token_encrypted, access_token
-         FROM shopify_connections_v2
-         WHERE organization_id = $1
-         LIMIT 1`,
+        `SELECT * FROM shopify_connections_v2 WHERE organization_id = $1 LIMIT 1`,
         [organizationId],
       );
       const row = rows[0];
@@ -217,11 +251,25 @@ function createShopifyV2Router({ pool, verifyToken, scopeToOrganization, require
         });
       }
 
-      const hasToken = Boolean(
-        (row.access_token_encrypted && String(row.access_token_encrypted).trim()) ||
-          (row.access_token && String(row.access_token).trim()),
-      );
-      const conectado = String(row.status || '').toLowerCase() === 'connected' && hasToken;
+      const status = String(row.status || '').toLowerCase();
+      const tokenRaw = pickAccessTokenField(row);
+      let conectado = false;
+
+      if (status === 'connected') {
+        if (!tokenRaw) {
+          conectado = false;
+        } else {
+          try {
+            conectado = accessTokenIsPresentAndValid(tokenRaw);
+          } catch (tokenErr) {
+            console.warn('[shopify-v2 estado] access token inválido', {
+              organizationId,
+              message: tokenErr && tokenErr.message,
+            });
+            conectado = false;
+          }
+        }
+      }
 
       return res.json({
         conectado,
@@ -230,7 +278,13 @@ function createShopifyV2Router({ pool, verifyToken, scopeToOrganization, require
         connectedAt: row.connected_at ? new Date(row.connected_at).toISOString() : null,
       });
     } catch (e) {
-      console.error('[shopify-v2 estado]', e);
+      console.error('[shopify-v2 estado] error', {
+        organizationId,
+        message: e && e.message,
+        code: e && e.code,
+        detail: e && e.detail,
+        stack: e && e.stack,
+      });
       return res.status(500).json({ error: 'No se pudo leer el estado de Shopify' });
     }
   });
