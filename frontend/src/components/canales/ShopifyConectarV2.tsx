@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { apiFetch } from '../../auth/api';
 import { useAuth } from '../../auth/AuthContext';
@@ -35,11 +35,15 @@ export default function ShopifyConectarV2() {
   const [connectLoading, setConnectLoading] = useState(false);
   const [toast, setToast] = useState<{ type: 'error' | 'success'; message: string } | null>(null);
   const [visualDisconnected, setVisualDisconnected] = useState(false);
+  const skipLoadAfterOAuthCleanupRef = useRef(false);
 
-  const loadEstado = useCallback(async () => {
+  const loadEstado = useCallback(async (opts?: { force?: boolean }) => {
     setLoadingEstado(true);
     try {
-      const res = await apiFetch('/api/shopify-v2/estado');
+      const path = opts?.force
+        ? `/api/shopify-v2/estado?_=${Date.now()}`
+        : '/api/shopify-v2/estado';
+      const res = await apiFetch(path);
       if (!res.ok) {
         setEstado(null);
         return;
@@ -58,23 +62,30 @@ export default function ShopifyConectarV2() {
   }, []);
 
   useEffect(() => {
-    void loadEstado();
-  }, [loadEstado]);
+    if (skipLoadAfterOAuthCleanupRef.current) {
+      skipLoadAfterOAuthCleanupRef.current = false;
+      return;
+    }
 
-  useEffect(() => {
     const flag = searchParams.get('shopify');
-    if (flag === 'conectado' || flag === 'error') {
-      void loadEstado();
+    const isOAuthReturn = flag === 'conectado' || flag === 'error';
+
+    if (isOAuthReturn) {
+      void loadEstado({ force: true });
       if (flag === 'conectado') {
         setToast({ type: 'success', message: 'Shopify conectado correctamente.' });
-      } else if (flag === 'error') {
+      } else {
         setToast({ type: 'error', message: 'No se pudo completar la conexión con Shopify.' });
       }
+      skipLoadAfterOAuthCleanupRef.current = true;
       const next = new URLSearchParams(searchParams);
       next.delete('shopify');
       setSearchParams(next, { replace: true });
+      return;
     }
-  }, [searchParams, setSearchParams, loadEstado]);
+
+    void loadEstado();
+  }, [loadEstado, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!toast) return undefined;
