@@ -24,7 +24,7 @@ function normalizeShopDomain(raw: string) {
 }
 
 export default function ShopifyConectarV2() {
-  const { canManageOrg } = useAuth();
+  const { canManageOrg, organization, isLoading, isAuthenticated } = useAuth();
   const [searchParams, setSearchParams] = useSearchParams();
   const [estado, setEstado] = useState<ShopifyV2Estado | null>(null);
   const [loadingEstado, setLoadingEstado] = useState(true);
@@ -37,31 +37,68 @@ export default function ShopifyConectarV2() {
   const [visualDisconnected, setVisualDisconnected] = useState(false);
   const skipLoadAfterOAuthCleanupRef = useRef(false);
 
-  const loadEstado = useCallback(async (opts?: { force?: boolean }) => {
+  const loadEstado = useCallback(async () => {
+    if (!organization?.id) {
+      console.log('[ShopifyConectarV2] GET /estado omitido: sin organization_id en sesión');
+      setLoadingEstado(false);
+      return;
+    }
+
     setLoadingEstado(true);
     try {
-      const path = opts?.force
-        ? `/api/shopify-v2/estado?_=${Date.now()}`
-        : '/api/shopify-v2/estado';
+      const path = `/api/shopify-v2/estado?_=${Date.now()}`;
       const res = await apiFetch(path);
-      if (!res.ok) {
+      const raw = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+
+      console.log('[ShopifyConectarV2] GET /estado response', {
+        httpStatus: res.status,
+        ok: res.ok,
+        sessionOrganizationId: organization.id,
+        payload: raw,
+      });
+
+      if (!res.ok || !raw) {
         setEstado(null);
         return;
       }
-      const data = (await res.json()) as ShopifyV2Estado;
+
+      const data: ShopifyV2Estado = {
+        conectado: raw.conectado === true,
+        shopDomain:
+          typeof raw.shopDomain === 'string'
+            ? raw.shopDomain
+            : typeof raw.shop_domain === 'string'
+              ? raw.shop_domain
+              : null,
+        status: typeof raw.status === 'string' ? raw.status : null,
+        connectedAt:
+          typeof raw.connectedAt === 'string'
+            ? raw.connectedAt
+            : typeof raw.connected_at === 'string'
+              ? raw.connected_at
+              : null,
+      };
+
       setEstado(data);
       setVisualDisconnected(false);
       if (data.shopDomain) {
         setShopDomainInput(data.shopDomain);
       }
-    } catch {
+    } catch (err) {
+      console.error('[ShopifyConectarV2] GET /estado error', err);
       setEstado(null);
     } finally {
       setLoadingEstado(false);
     }
-  }, []);
+  }, [organization]);
 
   useEffect(() => {
+    if (isLoading) return;
+    if (!isAuthenticated || !organization?.id) {
+      setLoadingEstado(false);
+      return;
+    }
+
     if (skipLoadAfterOAuthCleanupRef.current) {
       skipLoadAfterOAuthCleanupRef.current = false;
       return;
@@ -71,7 +108,7 @@ export default function ShopifyConectarV2() {
     const isOAuthReturn = flag === 'conectado' || flag === 'error';
 
     if (isOAuthReturn) {
-      void loadEstado({ force: true });
+      void loadEstado();
       if (flag === 'conectado') {
         setToast({ type: 'success', message: 'Shopify conectado correctamente.' });
       } else {
@@ -85,7 +122,7 @@ export default function ShopifyConectarV2() {
     }
 
     void loadEstado();
-  }, [loadEstado, searchParams, setSearchParams]);
+  }, [isLoading, isAuthenticated, organization, loadEstado, searchParams, setSearchParams]);
 
   useEffect(() => {
     if (!toast) return undefined;
