@@ -259,6 +259,44 @@ function effBadgeStyle(pct: number): { bg: string; color: string } {
   return { bg: C.badgeCoralBg, color: C.badgeCoralText };
 }
 
+function devolucionBadgeStyle(pct: number): { bg: string; color: string } {
+  if (pct >= 25) return { bg: C.badgeCoralBg, color: C.badgeCoralText };
+  if (pct >= 15) return { bg: C.badgeAmberBg, color: C.badgeAmberText };
+  return { bg: C.badgeGreenBg, color: C.badgeGreenText };
+}
+
+type ReturnStatsRow = {
+  label: string;
+  pedidos: number;
+  conGuia: number;
+  devueltos: number;
+  entregados: number;
+  devPct: number;
+};
+
+function aggregateReturnStats(rows: DropiRow[], labelFn: (r: DropiRow) => string): ReturnStatsRow[] {
+  const map = new Map<string, { pedidos: number; conGuia: number; dev: number; ent: number }>();
+  for (const r of rows) {
+    const label = labelFn(r).trim() || 'Sin dato';
+    if (!map.has(label)) map.set(label, { pedidos: 0, conGuia: 0, dev: 0, ent: 0 });
+    const acc = map.get(label)!;
+    acc.pedidos++;
+    if (r.numeroGuia) acc.conGuia++;
+    if (r.estatusNorm === 'DEVOLUCION') acc.dev++;
+    if (r.estatusNorm === 'ENTREGADO') acc.ent++;
+  }
+  return Array.from(map.entries())
+    .map(([label, v]) => ({
+      label,
+      pedidos: v.pedidos,
+      conGuia: v.conGuia,
+      devueltos: v.dev,
+      entregados: v.ent,
+      devPct: v.conGuia > 0 ? (v.dev / v.conGuia) * 100 : 0,
+    }))
+    .sort((a, b) => b.devPct - a.devPct || b.devueltos - a.devueltos || a.label.localeCompare(b.label, 'es'));
+}
+
 function marginBadgeStyle(pct: number): { bg: string; color: string } {
   if (pct >= 22) return { bg: C.badgeGreenBg, color: C.badgeGreenText };
   if (pct >= 15) return { bg: C.badgeAmberBg, color: C.badgeAmberText };
@@ -402,6 +440,7 @@ export default function ReporteDropiPage() {
   const [dateStart, setDateStart] = useState('');
   const [dateEnd, setDateEnd] = useState('');
   const [carrier, setCarrier] = useState('');
+  const [cityReportCarrier, setCityReportCarrier] = useState('');
   const [pdfLoading, setPdfLoading] = useState(false);
   const [productMenuOpen, setProductMenuOpen] = useState(false);
   const [productSearch, setProductSearch] = useState('');
@@ -574,6 +613,32 @@ export default function ReporteDropiPage() {
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [filteredRows]);
 
+  const carrierReturnStats = useMemo(
+    () => aggregateReturnStats(filteredRows, (r) => r.transportadora || 'Sin transportadora'),
+    [filteredRows],
+  );
+
+  const cityReportCarrierOptions = useMemo(() => {
+    const s = new Set<string>();
+    for (const r of filteredRows) {
+      if (r.transportadora) s.add(r.transportadora);
+    }
+    return Array.from(s).sort((a, b) => a.localeCompare(b, 'es'));
+  }, [filteredRows]);
+
+  const cityReturnStats = useMemo(() => {
+    const rows = cityReportCarrier
+      ? filteredRows.filter((r) => r.transportadora === cityReportCarrier)
+      : filteredRows;
+    return aggregateReturnStats(rows, (r) => r.ciudad || 'Sin ciudad');
+  }, [filteredRows, cityReportCarrier]);
+
+  useEffect(() => {
+    if (cityReportCarrier && !cityReportCarrierOptions.includes(cityReportCarrier)) {
+      setCityReportCarrier('');
+    }
+  }, [cityReportCarrier, cityReportCarrierOptions]);
+
   const doughnutCardBorder = useMemo(() => {
     if (typeof document === 'undefined') return '#ffffff';
     const v = getComputedStyle(document.documentElement).getPropertyValue('--color-bg-card').trim();
@@ -676,6 +741,7 @@ export default function ReporteDropiPage() {
         setDateStart('');
         setDateEnd('');
         setCarrier('');
+        setCityReportCarrier('');
         setProductMenuOpen(false);
         setProductSearch('');
       } catch {
@@ -1211,6 +1277,148 @@ export default function ReporteDropiPage() {
                 );
               })}
             </ul>
+          </div>
+        </section>
+        <section>
+          <div
+            style={{
+              display: 'flex',
+              flexWrap: 'wrap',
+              alignItems: 'flex-end',
+              justifyContent: 'space-between',
+              gap: 12,
+              marginBottom: 10,
+            }}
+          >
+            <div>
+              <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 4px' }}>% devoluciones por ciudad</h3>
+              <p style={{ fontSize: 12, color: ds.textSecondary, margin: 0, lineHeight: 1.45 }}>
+                Devueltos sobre pedidos con guía, agrupado por ciudad.
+              </p>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 200 }}>
+              <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Filtrar por transportadora</label>
+              <select
+                value={cityReportCarrier}
+                onChange={(e) => setCityReportCarrier(e.target.value)}
+                style={selectStyle()}
+              >
+                <option value="">Todas las transportadoras</option>
+                {cityReportCarrierOptions.map((c) => (
+                  <option key={c} value={c}>
+                    {c}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div style={tableWrapStyle()}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Ciudad', 'Pedidos', 'Con guía', 'Devueltos', 'Entregados', '% devoluciones', ''].map((h) => (
+                    <th key={h || 'bar'} style={thStyle()}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {cityReturnStats.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} style={{ ...tdStyle(), color: ds.textMuted, textAlign: 'center' }}>
+                      Sin datos para el filtro seleccionado.
+                    </td>
+                  </tr>
+                ) : (
+                  cityReturnStats.map((r) => {
+                    const st = devolucionBadgeStyle(r.devPct);
+                    return (
+                      <tr key={r.label}>
+                        <td style={tdStyle()}>{r.label}</td>
+                        <td style={tdStyle()}>{r.pedidos}</td>
+                        <td style={tdStyle()}>{r.conGuia}</td>
+                        <td style={tdStyle()}>
+                          <Badge bg={C.badgeCoralBg} color={C.badgeCoralText}>
+                            {r.devueltos}
+                          </Badge>
+                        </td>
+                        <td style={tdStyle()}>
+                          <Badge bg={C.badgeGreenBg} color={C.badgeGreenText}>
+                            {r.entregados}
+                          </Badge>
+                        </td>
+                        <td style={tdStyle()}>
+                          <Badge bg={st.bg} color={st.color}>
+                            {formatPct(r.devPct)}
+                          </Badge>
+                        </td>
+                        <td style={tdStyle()} width={100}>
+                          <MiniBar pct={Math.min(100, r.devPct)} color={C.estadoDevuelto} />
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+        <section>
+          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 4px' }}>% devoluciones por transportadora</h3>
+          <p style={{ fontSize: 12, color: ds.textSecondary, margin: '0 0 10px', lineHeight: 1.45 }}>
+            Devueltos sobre pedidos con guía, agrupado por transportadora.
+          </p>
+          <div style={tableWrapStyle()}>
+            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead>
+                <tr>
+                  {['Transportadora', 'Pedidos', 'Con guía', 'Devueltos', 'Entregados', '% devoluciones', ''].map((h) => (
+                    <th key={h || 'bar'} style={thStyle()}>
+                      {h}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {carrierReturnStats.length === 0 ? (
+                  <tr>
+                    <td colSpan={7} style={{ ...tdStyle(), color: ds.textMuted, textAlign: 'center' }}>
+                      Sin datos para el filtro seleccionado.
+                    </td>
+                  </tr>
+                ) : (
+                  carrierReturnStats.map((r) => {
+                    const st = devolucionBadgeStyle(r.devPct);
+                    return (
+                      <tr key={r.label}>
+                        <td style={tdStyle()}>{r.label}</td>
+                        <td style={tdStyle()}>{r.pedidos}</td>
+                        <td style={tdStyle()}>{r.conGuia}</td>
+                        <td style={tdStyle()}>
+                          <Badge bg={C.badgeCoralBg} color={C.badgeCoralText}>
+                            {r.devueltos}
+                          </Badge>
+                        </td>
+                        <td style={tdStyle()}>
+                          <Badge bg={C.badgeGreenBg} color={C.badgeGreenText}>
+                            {r.entregados}
+                          </Badge>
+                        </td>
+                        <td style={tdStyle()}>
+                          <Badge bg={st.bg} color={st.color}>
+                            {formatPct(r.devPct)}
+                          </Badge>
+                        </td>
+                        <td style={tdStyle()} width={100}>
+                          <MiniBar pct={Math.min(100, r.devPct)} color={C.estadoDevuelto} />
+                        </td>
+                      </tr>
+                    );
+                  })
+                )}
+              </tbody>
+            </table>
           </div>
         </section>
         <section>
