@@ -90,6 +90,7 @@ const {
 } = require('./mailService');
 const shopifyComplianceRoutes = require('./routes/shopify-compliance');
 const createShopifyV2Router = require('./routes/shopifyV2');
+const { getActiveShopifyConnection } = require('./shopifyActiveConnection');
 const staticDir = process.env.STATIC_DIR || path.join(__dirname, '..', 'frontend', 'dist');
 const hasFrontendDist = fs.existsSync(staticDir);
 
@@ -463,7 +464,7 @@ async function fetchShopifyTotalsByOrderIds(organizationId, orderIds) {
     ? [...new Set(orderIds.map((x) => Number(x)).filter((x) => Number.isFinite(x) && x > 0))]
     : [];
   if (!ids.length) return out;
-  const shop = await getActiveShopifyConnection(organizationId);
+  const shop = await getActiveShopifyConnection(pool,organizationId);
   if (!shop) return out;
   const CHUNK = 100;
   for (let i = 0; i < ids.length; i += CHUNK) {
@@ -4778,7 +4779,7 @@ app.get(
   requireModuleAccess('analisis_producto'),
   async (req, res) => {
     try {
-      const row = await getActiveShopifyConnection(req.organizationId);
+      const row = await getActiveShopifyConnection(pool,req.organizationId);
       if (!row) {
         return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
       }
@@ -5423,18 +5424,6 @@ app.delete('/api/meta/connections/:id', verifyToken, scopeToOrganization, async 
 
 async function cleanupShopifyOauthStates() {
   await pool.query(`DELETE FROM shopify_oauth_states WHERE expires_at < now()`);
-}
-
-async function getActiveShopifyConnection(organizationId) {
-  const { rows } = await pool.query(
-    `SELECT id, shop_domain, access_token, scope, status, installed_at, updated_at
-     FROM shopify_connections
-     WHERE organization_id = $1 AND status = 'connected'
-     ORDER BY id DESC
-     LIMIT 1`,
-    [organizationId],
-  );
-  return rows[0] || null;
 }
 
 /** Estados operativos unificados (Pedidos + Motico). */
@@ -7149,7 +7138,7 @@ function shopifyFormIngestCors(req, res, next) {
 }
 
 const moticoManualOrderDeps = () => ({
-  getActiveShopifyConnection,
+  getActiveShopifyConnection: (organizationId) => getActiveShopifyConnection(pool, organizationId),
   shopifyRequest,
   gananciaDiariaYmdKey,
 });
@@ -7395,7 +7384,7 @@ app.post('/api/hotmart/webhook', async (req, res) => {
 
 app.get('/api/shopify/connection', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const row = await getActiveShopifyConnection(req.organizationId);
+    const row = await getActiveShopifyConnection(pool,req.organizationId);
     if (!row) {
       return res.json({ status: 'disconnected', shop_domain: null, scope: null, installed_at: null });
     }
@@ -7427,7 +7416,7 @@ app.delete('/api/shopify/connection', verifyToken, scopeToOrganization, async (r
 
 app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const row = await getActiveShopifyConnection(req.organizationId);
+    const row = await getActiveShopifyConnection(pool,req.organizationId);
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
@@ -7694,7 +7683,7 @@ app.get('/api/shopify/orders/:orderId', verifyToken, scopeToOrganization, async 
         order,
       });
     }
-    const row = await getActiveShopifyConnection(req.organizationId);
+    const row = await getActiveShopifyConnection(pool,req.organizationId);
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
@@ -7871,7 +7860,7 @@ function gananciaDiariaParseMonthsQuery(q) {
 /** Ventas Shopify despachadas (estado KOVO) vs gasto Meta en el mismo día de calendario de la tienda. */
 app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const shopRow = await getActiveShopifyConnection(req.organizationId);
+    const shopRow = await getActiveShopifyConnection(pool,req.organizationId);
     if (!shopRow) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
@@ -8077,7 +8066,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       writeCachedJsonResponse(cacheKey, payload, 300_000);
       return res.json(payload);
     };
-    const shopRow = await getActiveShopifyConnection(req.organizationId);
+    const shopRow = await getActiveShopifyConnection(pool,req.organizationId);
     if (!shopRow) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
@@ -9750,7 +9739,7 @@ app.delete('/api/motico/manual-orders/:manualId', verifyToken, scopeToOrganizati
 
 app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const row = await getActiveShopifyConnection(req.organizationId);
+    const row = await getActiveShopifyConnection(pool,req.organizationId);
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
@@ -9978,7 +9967,7 @@ app.get('/api/shopify/dashboard', verifyToken, scopeToOrganization, async (req, 
 
 app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const row = await getActiveShopifyConnection(req.organizationId);
+    const row = await getActiveShopifyConnection(pool,req.organizationId);
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
@@ -10082,7 +10071,7 @@ app.get('/api/shopify/products', verifyToken, scopeToOrganization, async (req, r
 
 app.get('/api/shopify/products/:productId/variants', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const row = await getActiveShopifyConnection(req.organizationId);
+    const row = await getActiveShopifyConnection(pool,req.organizationId);
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
@@ -10116,7 +10105,7 @@ app.get('/api/shopify/products/:productId/variants', verifyToken, scopeToOrganiz
 
 app.get('/api/shopify/inventory', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const row = await getActiveShopifyConnection(req.organizationId);
+    const row = await getActiveShopifyConnection(pool,req.organizationId);
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
@@ -10133,7 +10122,7 @@ app.get('/api/shopify/inventory', verifyToken, scopeToOrganization, async (req, 
 
 app.get('/api/shopify/analytics', verifyToken, scopeToOrganization, async (req, res) => {
   try {
-    const row = await getActiveShopifyConnection(req.organizationId);
+    const row = await getActiveShopifyConnection(pool,req.organizationId);
     if (!row) {
       return res.status(400).json({ error: 'No hay tienda Shopify conectada', code: 'not_connected' });
     }
