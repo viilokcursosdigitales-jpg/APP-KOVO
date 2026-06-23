@@ -542,6 +542,24 @@ async function initDb(pool) {
      WHERE subscription_status IS NULL OR subscription_status <> 'active' OR subscription_expires_at IS NULL`,
   );
 
+  // Acceso Pro gratuito 1 año — carlitos.viilok@gmail.com (idempotente: no acorta si ya tiene ≥364 días vigentes)
+  await pool.query(
+    `UPDATE organizations o
+     SET subscription_status = 'active',
+         subscription_expires_at = now() + interval '365 days',
+         trial_started_at = COALESCE(o.trial_started_at, now()),
+         last_payment_at = COALESCE(o.last_payment_at, now())
+     FROM users u
+     WHERE u.organization_id = o.id
+       AND lower(trim(u.email)) = $1
+       AND (
+         o.subscription_expires_at IS NULL
+         OR o.subscription_expires_at <= now()
+         OR o.subscription_expires_at < now() + interval '364 days'
+       )`,
+    ['carlitos.viilok@gmail.com'],
+  );
+
   const { rows: orgs } = await pool.query('SELECT id FROM organizations');
   for (const o of orgs) {
     const c = await pool.query('SELECT COUNT(*)::int AS n FROM orders WHERE organization_id = $1', [
