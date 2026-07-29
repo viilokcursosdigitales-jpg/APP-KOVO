@@ -255,6 +255,7 @@ export default function KipsPage() {
   const [seriesData, setSeriesData] = useState<SeriesPayload | null>(null);
   const [campaigns, setCampaigns] = useState<InsightRow[]>([]);
   const [shopifyConnected, setShopifyConnected] = useState(false);
+  const [shopifyDomain, setShopifyDomain] = useState<string | null>(null);
   const [metaConnected, setMetaConnected] = useState(false);
   const [adminPercentInput] = useState(() => {
     try {
@@ -304,8 +305,13 @@ export default function KipsPage() {
       const insightsBody = (await insightsRes.json().catch(() => ({}))) as MetaInsightsPayload;
       setCampaigns(Array.isArray(insightsBody.rows) ? insightsBody.rows : []);
 
-      const shopBody = (await shopRes.json().catch(() => ({}))) as { connected?: boolean };
-      setShopifyConnected(Boolean(shopBody.connected));
+      const shopBody = (await shopRes.json().catch(() => ({}))) as {
+        status?: string;
+        shop_domain?: string | null;
+      };
+      const shopOk = shopRes.ok && shopBody.status === 'connected' && Boolean(shopBody.shop_domain);
+      setShopifyConnected(shopOk);
+      setShopifyDomain(shopOk ? shopBody.shop_domain ?? null : null);
 
       const metaBody = (await metaRes.json().catch(() => ({}))) as {
         connections?: { status?: string }[];
@@ -514,7 +520,9 @@ export default function KipsPage() {
               <StatusBadge variant="paused">Meta Ads sin conectar</StatusBadge>
             )}
             {shopifyConnected ? (
-              <StatusBadge variant="success">Shopify conectado</StatusBadge>
+              <StatusBadge variant="success">
+                Shopify conectado{shopifyDomain ? ` · ${shopifyDomain}` : ''}
+              </StatusBadge>
             ) : (
               <StatusBadge variant="paused">Shopify sin conectar</StatusBadge>
             )}
