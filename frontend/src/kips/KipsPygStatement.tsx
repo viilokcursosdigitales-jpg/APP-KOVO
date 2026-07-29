@@ -6,14 +6,16 @@ export type KipsPygInput = {
   ventasEntregadas: number;
   pedidosDespachados: number;
   pedidosConfirmados: number;
+  pedidosEntregados: number;
+  cantidadEntregada: number;
   costoProducto: number;
   costoEnvio: number;
   costoAdmin: number;
   gastoPublicitario: number;
   entregadosPct: number;
   confirmadosPct: number;
-  costoProductoPct: number;
-  costoEnvioPct: number;
+  costoProductoUnit: number;
+  costoEnvioPedido: number;
   costoAdminPct: number;
   currency: string | null;
 };
@@ -56,14 +58,16 @@ function buildPygRows(data: KipsPygInput): PygRow[] {
     ventasEntregadas,
     pedidosDespachados,
     pedidosConfirmados,
+    pedidosEntregados,
+    cantidadEntregada,
     costoProducto,
     costoEnvio,
     costoAdmin,
     gastoPublicitario,
     entregadosPct,
     confirmadosPct,
-    costoProductoPct,
-    costoEnvioPct,
+    costoProductoUnit,
+    costoEnvioPedido,
     costoAdminPct,
   } = data;
 
@@ -110,14 +114,14 @@ function buildPygRows(data: KipsPygInput): PygRow[] {
     },
     { concepto: 'COSTOS DIRECTOS', monto: null, pctBase: null, section: true },
     {
-      concepto: `Costo del producto (${costoProductoPct}%)`,
+      concepto: `Costo del producto (${money(costoProductoUnit, data.currency)}/u × ${Math.round(cantidadEntregada).toLocaleString('es-CO')} u.)`,
       monto: -costoProducto,
       pctBase: ventasEntregadas,
       sub: true,
       negative: true,
     },
     {
-      concepto: `Costo de envío (${costoEnvioPct}%)`,
+      concepto: `Costo de envío (${money(costoEnvioPedido, data.currency)}/ped. × ${Math.round(pedidosEntregados).toLocaleString('es-CO')} ped.)`,
       monto: -costoEnvio,
       pctBase: ventasEntregadas,
       sub: true,
@@ -185,7 +189,7 @@ export function KipsPygStatement({
   const margenNetoPct = data.ventasEntregadas > 0 ? (utilidadNeta / data.ventasEntregadas) * 100 : null;
 
   return (
-    <div style={{ ...cardBase }}>
+    <div style={{ ...cardBase, height: '100%', boxSizing: 'border-box' }}>
       <div style={{ display: 'flex', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12, marginBottom: 16 }}>
         <div>
           <div style={{ fontSize: 14, fontWeight: 800, color: ds.textPrimary }}>Estado de PyG</div>
@@ -312,9 +316,9 @@ export function KipsPygStatement({
           lineHeight: 1.5,
         }}
       >
-        El PyG usa ventas entregadas como base de ingresos ({data.entregadosPct}%), costos configurados (producto{' '}
-        {data.costoProductoPct}%, envío {data.costoEnvioPct}%, admin {data.costoAdminPct}%) y gasto publicitario del
-        periodo. Pedidos confirmados ({data.confirmadosPct}%) se muestran como referencia operativa.
+        Producto: {money(data.costoProductoUnit, data.currency)}/u · Envío: {money(data.costoEnvioPedido, data.currency)}
+        /ped. · Admin: {data.costoAdminPct}% s/ entregados · Confirmados: {data.confirmadosPct}% · Entregados:{' '}
+        {data.entregadosPct}%
       </div>
     </div>
   );

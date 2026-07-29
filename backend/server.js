@@ -202,7 +202,7 @@ const MODULE_CATALOG_FOR_API = [
   { id: 'planeacion_ventas', label: 'Planeación de Ventas', group: 'Marketing' },
   { id: 'comision_ventas', label: 'Comisión por Ventas', group: 'Marketing' },
   { id: 'estado_resultado_motico', label: 'Estado de resultado Motico', group: 'Marketing' },
-  { id: 'kips', label: 'KIPS', group: 'Marketing' },
+  { id: 'kips', label: 'Análisis de Campaña', group: 'Marketing' },
 ];
 
 const pool = createPool();

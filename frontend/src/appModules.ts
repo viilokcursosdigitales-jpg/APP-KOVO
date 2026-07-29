@@ -38,7 +38,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'planeacion_ventas', label: 'Planeación de Ventas', group: 'Marketing' },
   { id: 'comision_ventas', label: 'Comisión por venta', group: 'Marketing' },
   { id: 'estado_resultado_motico', label: 'Estado de resultado Motico', group: 'Marketing' },
-  { id: 'kips', label: 'KIPS', group: 'Marketing' },
+  { id: 'kips', label: 'Análisis de Campaña', group: 'Marketing' },
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
