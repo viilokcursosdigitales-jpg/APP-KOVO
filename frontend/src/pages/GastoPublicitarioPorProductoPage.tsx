@@ -7,13 +7,14 @@ import { PageHeader } from '../design-system/PageHeader';
 import { StatusBadge } from '../design-system/StatusBadge';
 import { alpha, ds } from '../design-system/ds';
 import {
+  IconCalendar,
   IconMegaphone,
   IconProduct,
   IconTarget,
   IconTrendingUp,
 } from '../design-system/icons';
 
-type PeriodKey = '7d' | '14d' | '30d' | 'custom';
+type PeriodKey = '7d' | '14d' | '30d' | 'year' | 'custom';
 
 type SeriesByProduct = {
   label?: string;
@@ -75,26 +76,57 @@ function toYmd(d: Date): string {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
-function defaultCustomRange(): { from: string; to: string } {
-  const to = new Date();
-  const from = new Date();
-  from.setDate(from.getDate() - 6);
-  return { from: toYmd(from), to: toYmd(to) };
+function defaultCustomRange(year = new Date().getFullYear()): { from: string; to: string } {
+  return yearBounds(year);
 }
 
-function monthsBetween(fromYmd: string, toYmdStr: string): string {
-  const months = new Set<string>();
-  const start = new Date(`${fromYmd}T12:00:00`);
-  const end = new Date(`${toYmdStr}T12:00:00`);
-  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime())) return '';
-  const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
-  const endMonth = new Date(end.getFullYear(), end.getMonth(), 1);
-  while (cursor <= endMonth) {
-    months.add(`${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}`);
-    cursor.setMonth(cursor.getMonth() + 1);
-  }
-  return [...months].sort().join(',');
+function yearOptions(): number[] {
+  const y = new Date().getFullYear();
+  return [y, y - 1, y - 2, y - 3];
 }
+
+function monthsForYear(year: number): string[] {
+  const now = new Date();
+  const maxMonth = year === now.getFullYear() ? now.getMonth() + 1 : 12;
+  const out: string[] = [];
+  for (let m = 1; m <= maxMonth; m++) {
+    out.push(`${year}-${String(m).padStart(2, '0')}`);
+  }
+  return out;
+}
+
+function yearBounds(year: number): { from: string; to: string } {
+  const now = new Date();
+  return {
+    from: `${year}-01-01`,
+    to: year === now.getFullYear() ? toYmd(now) : `${year}-12-31`,
+  };
+}
+
+function filterDaysForYear(days: SeriesDay[], year: number): SeriesDay[] {
+  const prefix = String(year);
+  return days.filter((d) => d.date.startsWith(prefix));
+}
+
+function allocateSpendByProduct(days: SeriesDay[]): Map<string, number> {
+  const spendByProduct = new Map<string, number>();
+  for (const d of days) {
+    const daySpend = Number(d.gasto_publicitario_total || 0);
+    if (daySpend <= 0) continue;
+    const byp = d.by_product && typeof d.by_product === 'object' ? d.by_product : {};
+    let totalVentas = 0;
+    for (const raw of Object.values(byp)) {
+      totalVentas += Number(raw.ventas_despachadas_total || 0);
+    }
+    if (totalVentas <= 0) continue;
+    for (const [key, raw] of Object.entries(byp)) {
+      const share = Number(raw.ventas_despachadas_total || 0) / totalVentas;
+      spendByProduct.set(key, (spendByProduct.get(key) || 0) + daySpend * share);
+    }
+  }
+  return spendByProduct;
+}
+
 
 function dayCountInclusive(fromYmd: string, toYmdStr: string): number {
   const start = new Date(`${fromYmd}T12:00:00`);
@@ -110,6 +142,7 @@ function metaPeriodForDayCount(days: number): '7d' | '14d' | '30d' {
 }
 
 function periodLen(period: PeriodKey, customFrom: string, customTo: string): number {
+  if (period === 'year') return 0;
   if (period === 'custom') return dayCountInclusive(customFrom, customTo);
   if (period === '14d') return 14;
   if (period === '30d') return 30;
@@ -123,6 +156,9 @@ function filterPeriodDays(
   customTo: string,
   offset = 0,
 ): SeriesDay[] {
+  if (period === 'year') {
+    return offset === 0 ? days : [];
+  }
   if (period === 'custom' && customFrom && customTo) {
     const count = dayCountInclusive(customFrom, customTo);
     const end = new Date(`${customTo}T12:00:00`);
@@ -200,7 +236,9 @@ function aggregateProducts(
   days: SeriesDay[],
   metaSpend: Record<string, number>,
   adminPct: number,
+  useMetaSpend: boolean,
 ): ProductRow[] {
+  const allocated = allocateSpendByProduct(days);
   const map = new Map<string, Omit<ProductRow, 'roas' | 'cpa' | 'netPct' | 'estado' | 'accion'>>();
   for (const d of days) {
     const byp = d.by_product && typeof d.by_product === 'object' ? d.by_product : {};
@@ -243,7 +281,10 @@ function aggregateProducts(
 
   const rows: ProductRow[] = [];
   for (const p of map.values()) {
-    p.gasto = p.productId != null ? Number(metaSpend[String(p.productId)] || 0) : 0;
+    p.gasto =
+      useMetaSpend && p.productId != null
+        ? Number(metaSpend[String(p.productId)] || 0)
+        : allocated.get(p.key) || 0;
     p.utilidad = p.facturacion - p.gasto - p.costoEntregado - p.flete - p.admin;
     p.roas = p.gasto > 0 ? p.facturacion / p.gasto : 0;
     p.cpa = p.pedidos > 0 ? p.gasto / p.pedidos : 0;
@@ -278,7 +319,8 @@ function roasColor(roas: number, avg: number): string {
   return ds.warningText;
 }
 
-function formatRangeLabel(period: PeriodKey, customFrom: string, customTo: string): string {
+function formatRangeLabel(period: PeriodKey, year: number, customFrom: string, customTo: string): string {
+  if (period === 'year') return `Año ${year}`;
   if (period === 'custom' && customFrom && customTo) {
     try {
       const fmt = new Intl.DateTimeFormat('es-CO', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -318,6 +360,7 @@ function ProductAvatar({ name, index }: { name: string; index: number }) {
 }
 
 export default function GastoPublicitarioPorProductoPage() {
+  const [year, setYear] = useState(() => new Date().getFullYear());
   const [period, setPeriod] = useState<PeriodKey>('7d');
   const [customFrom, setCustomFrom] = useState(() => defaultCustomRange().from);
   const [customTo, setCustomTo] = useState(() => defaultCustomRange().to);
@@ -342,37 +385,38 @@ export default function GastoPublicitarioPorProductoPage() {
   const adminPct = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
 
   const metaPeriodParam = useMemo(() => {
+    if (period === 'year') return '30d';
     if (period === 'custom') return metaPeriodForDayCount(dayCountInclusive(customFrom, customTo));
     if (period === '14d') return '14d';
     if (period === '30d') return '30d';
     return '7d';
   }, [period, customFrom, customTo]);
 
+  const useMetaSpend = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    if (year !== currentYear) return false;
+    if (period === 'year') return false;
+    if (period === 'custom') return dayCountInclusive(customFrom, customTo) <= 30;
+    return true;
+  }, [year, period, customFrom, customTo]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
     try {
-      let qs: string;
-      if (period === 'custom') {
-        const months = monthsBetween(customFrom, customTo);
-        qs = months ? `months=${encodeURIComponent(months)}` : 'meta_period=30d';
-      } else {
-        const monthsCount = period === '30d' ? 3 : 2;
-        const now = new Date();
-        const months: string[] = [];
-        for (let i = 0; i < monthsCount; i++) {
-          const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-          months.push(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`);
-        }
-        qs = `meta_period=${period === '7d' ? '7d' : '14d'}&months=${encodeURIComponent(months.join(','))}`;
-        if (period === '30d') qs = `meta_period=30d&months=${encodeURIComponent(months.join(','))}`;
+      const monthKeys = [...new Set([...monthsForYear(year), ...monthsForYear(year - 1)])].sort().join(',');
+      let qs = `months=${encodeURIComponent(monthKeys)}`;
+      if (useMetaSpend) {
+        qs += `&meta_period=${metaPeriodParam}`;
       }
 
       const [seriesRes, shopRes, metaRes, spendRes] = await Promise.all([
         apiFetch(`/api/ganancia-diaria/series?${qs}`),
         apiFetch('/api/shopify/connection'),
         apiFetch('/api/meta/connections'),
-        apiFetch(`/api/product-analytics/meta-spend?period=${metaPeriodParam}`),
+        useMetaSpend
+          ? apiFetch(`/api/product-analytics/meta-spend?period=${metaPeriodParam}`)
+          : Promise.resolve(null),
       ]);
 
       const seriesBody = (await seriesRes.json().catch(() => ({}))) as SeriesPayload;
@@ -386,8 +430,10 @@ export default function GastoPublicitarioPorProductoPage() {
       setCurrency((seriesBody.ventas_currency || 'COP').toUpperCase());
       setWarning(seriesBody.warning ?? null);
 
-      const spendBody = (await spendRes.json().catch(() => ({}))) as { product_spend?: Record<string, number> };
-      setMetaSpend(spendRes.ok && spendBody.product_spend ? spendBody.product_spend : {});
+      const spendBody = spendRes
+        ? ((await spendRes.json().catch(() => ({}))) as { product_spend?: Record<string, number> })
+        : {};
+      setMetaSpend(spendRes?.ok && spendBody.product_spend ? spendBody.product_spend : {});
 
       const shopBody = await shopRes.json().catch(() => ({}));
       setShopifyConnected(shopBody?.status === 'connected');
@@ -402,27 +448,42 @@ export default function GastoPublicitarioPorProductoPage() {
     } finally {
       setLoading(false);
     }
-  }, [period, customFrom, customTo, metaPeriodParam]);
+  }, [year, metaPeriodParam, useMetaSpend]);
 
   useEffect(() => {
     void load();
   }, [load]);
 
-  const currentDays = useMemo(
-    () => filterPeriodDays(allDays, period, customFrom, customTo, 0),
-    [allDays, period, customFrom, customTo],
-  );
-  const previousDays = useMemo(
-    () => filterPeriodDays(allDays, period, customFrom, customTo, 1),
-    [allDays, period, customFrom, customTo],
-  );
+  const yearDays = useMemo(() => filterDaysForYear(allDays, year), [allDays, year]);
+  const prevYearDays = useMemo(() => filterDaysForYear(allDays, year - 1), [allDays, year]);
+
+  const currentDays = useMemo(() => {
+    if (period === 'custom') {
+      const { from, to } = yearBounds(year);
+      const fromClamped = customFrom < from ? from : customFrom;
+      const toClamped = customTo > to ? to : customTo;
+      return filterPeriodDays(yearDays, period, fromClamped, toClamped, 0);
+    }
+    return filterPeriodDays(yearDays, period, customFrom, customTo, 0);
+  }, [yearDays, period, customFrom, customTo, year]);
+
+  const previousDays = useMemo(() => {
+    if (period === 'year') return prevYearDays;
+    if (period === 'custom') {
+      const { from, to } = yearBounds(year);
+      const fromClamped = customFrom < from ? from : customFrom;
+      const toClamped = customTo > to ? to : customTo;
+      return filterPeriodDays(yearDays, period, fromClamped, toClamped, 1);
+    }
+    return filterPeriodDays(yearDays, period, customFrom, customTo, 1);
+  }, [yearDays, prevYearDays, period, customFrom, customTo, year]);
 
   const products = useMemo(
-    () => aggregateProducts(currentDays, metaSpend, adminPct),
-    [currentDays, metaSpend, adminPct],
+    () => aggregateProducts(currentDays, metaSpend, adminPct, useMetaSpend),
+    [currentDays, metaSpend, adminPct, useMetaSpend],
   );
   const prevProducts = useMemo(
-    () => aggregateProducts(previousDays, metaSpend, adminPct),
+    () => aggregateProducts(previousDays, metaSpend, adminPct, false),
     [previousDays, metaSpend, adminPct],
   );
 
@@ -495,7 +556,21 @@ export default function GastoPublicitarioPorProductoPage() {
     [products, selectedProductKey],
   );
 
-  const periodSuffix = period === '7d' ? ' vs sem. ant.' : period === '14d' ? ' vs 14d ant.' : ' vs periodo ant.';
+  const periodSuffix =
+    period === 'year'
+      ? ` vs ${year - 1}`
+      : period === '7d'
+        ? ' vs sem. ant.'
+        : period === '14d'
+          ? ' vs 14d ant.'
+          : ' vs periodo ant.';
+
+  const handleYearChange = (nextYear: number) => {
+    setYear(nextYear);
+    const bounds = yearBounds(nextYear);
+    setCustomFrom(bounds.from);
+    setCustomTo(bounds.to);
+  };
 
   return (
     <div style={{ maxWidth: 1280, margin: '0 auto', padding: '0 4px 32px' }}>
@@ -521,10 +596,34 @@ export default function GastoPublicitarioPorProductoPage() {
       />
 
       <div style={{ ...cardBase, marginBottom: 16, padding: '14px 18px' }}>
+        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', marginBottom: 12 }}>
+          <span style={{ fontSize: 12, color: ds.textMuted, display: 'flex', alignItems: 'center', gap: 4 }}>
+            <IconCalendar size={14} /> Año
+          </span>
+          {yearOptions().map((y) => (
+            <button
+              key={y}
+              type="button"
+              onClick={() => handleYearChange(y)}
+              style={{
+                padding: '6px 12px',
+                borderRadius: 8,
+                border: `1px solid ${year === y ? ds.brand : ds.borderCard}`,
+                background: year === y ? ds.brandBg : ds.bgCard,
+                color: year === y ? ds.brand : ds.textSecondary,
+                fontSize: 12,
+                fontWeight: 600,
+                cursor: 'pointer',
+              }}
+            >
+              {y}
+            </button>
+          ))}
+        </div>
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ fontSize: 12, color: ds.textMuted }}>Periodo:</span>
-            {(['7d', '14d', '30d', 'custom'] as PeriodKey[]).map((p) => (
+            {(['7d', '14d', '30d', 'year', 'custom'] as PeriodKey[]).map((p) => (
               <button
                 key={p}
                 type="button"
@@ -540,7 +639,15 @@ export default function GastoPublicitarioPorProductoPage() {
                   cursor: 'pointer',
                 }}
               >
-                {p === '7d' ? '7 días' : p === '14d' ? '14 días' : p === '30d' ? '30 días' : 'Personalizado'}
+                {p === '7d'
+                  ? '7 días'
+                  : p === '14d'
+                    ? '14 días'
+                    : p === '30d'
+                      ? '30 días'
+                      : p === 'year'
+                        ? 'Año completo'
+                        : 'Personalizado'}
               </button>
             ))}
             {period === 'custom' ? (
@@ -548,6 +655,8 @@ export default function GastoPublicitarioPorProductoPage() {
                 <input
                   type="date"
                   value={customFrom}
+                  min={yearBounds(year).from}
+                  max={yearBounds(year).to}
                   onChange={(e) => setCustomFrom(e.target.value)}
                   style={{ padding: '5px 8px', borderRadius: 8, border: `1px solid ${ds.borderCard}`, fontSize: 12 }}
                 />
@@ -555,12 +664,16 @@ export default function GastoPublicitarioPorProductoPage() {
                 <input
                   type="date"
                   value={customTo}
+                  min={yearBounds(year).from}
+                  max={yearBounds(year).to}
                   onChange={(e) => setCustomTo(e.target.value)}
                   style={{ padding: '5px 8px', borderRadius: 8, border: `1px solid ${ds.borderCard}`, fontSize: 12 }}
                 />
               </div>
             ) : (
-              <span style={{ fontSize: 12, color: ds.textMuted }}>{formatRangeLabel(period, customFrom, customTo)}</span>
+              <span style={{ fontSize: 12, color: ds.textMuted }}>
+                {formatRangeLabel(period, year, customFrom, customTo)}
+              </span>
             )}
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
