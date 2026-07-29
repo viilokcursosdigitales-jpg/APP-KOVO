@@ -68,11 +68,10 @@ html[data-theme='dark'] {
   --color-border-side: #25262e;
   --color-border-row: #22232a;
 
-  /* Texto sin blancos: alineado al gris de nombres de módulos (sidebar inactivo). Jerarquía con tonos más apagados. */
-  --color-text-primary: #a1a1aa;
-  --color-text-secondary: #a1a1aa;
-  --color-text-muted: #8b8b96;
-  --color-text-hint: #6b6b78;
+  --color-text-primary: #ffffff;
+  --color-text-secondary: #f4f4f5;
+  --color-text-muted: #d4d4d8;
+  --color-text-hint: #a1a1aa;
 
   --color-success-bg: rgba(29, 158, 117, 0.15);
   --color-success-text: #5eb88a;

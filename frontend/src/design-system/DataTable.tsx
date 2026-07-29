@@ -85,7 +85,7 @@ export function Td({
     <td
       style={{
         fontSize: 12,
-        color: '#333333',
+        color: ds.textSecondary,
         padding: '12px 16px',
         borderBottom: isLast ? 'none' : `1px solid ${ds.borderRow}`,
         verticalAlign: 'middle' as const,
