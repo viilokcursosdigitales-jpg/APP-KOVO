@@ -1105,6 +1105,26 @@ export function MetaInsightsPanel({
 
   const periods: MetaInsightPeriod[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'este_ano', 'custom'];
 
+  const campaignLinkStats = useMemo(() => {
+    if (level !== 'campaigns' || !campaignProductLinksReady) return null;
+    const campaignRows = rows.filter((row) => {
+      const spendNum = Number(row.spend);
+      if (!Number.isFinite(spendNum) || spendNum <= 0) return false;
+      const st = String(row.status || '').toUpperCase();
+      if (campaignActivityFilter === 'active' && st !== 'ACTIVE') return false;
+      if (campaignActivityFilter === 'inactive' && st === 'ACTIVE') return false;
+      return true;
+    });
+    let linked = 0;
+    let unlinked = 0;
+    for (const row of campaignRows) {
+      const ids = campaignProductLinks[String(row.id)] || [];
+      if (ids.length > 0) linked += 1;
+      else unlinked += 1;
+    }
+    return { total: campaignRows.length, linked, unlinked };
+  }, [level, rows, campaignProductLinks, campaignProductLinksReady, campaignActivityFilter]);
+
   type MetricCard = { label: string; value: string; title?: string };
 
   const metricCards: MetricCard[] = useMemo(() => {
@@ -1355,6 +1375,55 @@ export function MetaInsightsPanel({
           <strong style={{ color: ds.dangerText }}>sin ningún producto Shopify asignado</strong> se resaltan en rojo hasta
           que vincules al menos uno en la columna Productos.
         </p>
+      ) : null}
+
+      {level === 'campaigns' && campaignLinkStats ? (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+            gap: 14,
+            marginBottom: 16,
+          }}
+        >
+          {[
+            {
+              label: 'Campañas en total',
+              value: formatNumber(campaignLinkStats.total),
+              hint: 'Con gasto en el período y según filtro activo/inactivo',
+              color: ds.textPrimary,
+              bg: ds.bgCard,
+            },
+            {
+              label: 'Vinculadas a Shopify',
+              value: formatNumber(campaignLinkStats.linked),
+              hint: 'Al menos un producto Shopify asignado',
+              color: ds.successText,
+              bg: ds.successBg,
+            },
+            {
+              label: 'Sin vincular',
+              value: formatNumber(campaignLinkStats.unlinked),
+              hint: 'Sin ningún producto Shopify asignado',
+              color: ds.dangerText,
+              bg: ds.dangerBg,
+            },
+          ].map((k) => (
+            <div
+              key={k.label}
+              title={k.hint}
+              style={{
+                background: k.bg,
+                borderRadius: 14,
+                padding: '16px 18px',
+                border: `1px solid ${ds.borderCard}`,
+              }}
+            >
+              <div style={{ fontSize: 11, fontWeight: 500, color: ds.textMuted, marginBottom: 6 }}>{k.label}</div>
+              <div style={{ fontSize: 28, fontWeight: 700, color: k.color, lineHeight: 1.1 }}>{k.value}</div>
+            </div>
+          ))}
+        </div>
       ) : null}
 
       {loading && !totals ? (
