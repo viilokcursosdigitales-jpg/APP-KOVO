@@ -34,6 +34,7 @@ const PedidosPorVariantePage = lazy(() => import('./pages/PedidosPorVariantePage
 const AdminUsersPage = lazy(() => import('./pages/AdminUsersPage'));
 const AdminDashboardContentPage = lazy(() => import('./pages/AdminDashboardContentPage'));
 const ReporteDropiPage = lazy(() => import('./pages/ReporteDropiPage'));
+const Reporte2DropiPage = lazy(() => import('./pages/Reporte2DropiPage'));
 const AdsFunnelPage = lazy(() => import('./pages/AdsFunnelPage'));
 const EstrategiaCreativaPage = lazy(() => import('./pages/EstrategiaCreativaPage'));
 const FinanzaPage = lazy(() => import('./pages/FinanzaPage'));
@@ -134,6 +135,7 @@ export default function App() {
             </Route>
             <Route path="/profile" element={<Profile />} />
             <Route path="/reporte-dropi" element={<ReporteDropiPage />} />
+            <Route path="/reporte-2-dropi" element={<Reporte2DropiPage />} />
             <Route path="/admin/users" element={<AdminUsersPage />} />
             <Route path="/admin/dashboard-content" element={<AdminDashboardContentPage />} />
             <Route element={<AdminRoute />}>

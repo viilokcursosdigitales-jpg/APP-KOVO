@@ -76,6 +76,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   ];
   const logistica: NavItem[] = [
     { to: '/reporte-dropi', label: 'Reporte Dropi', icon: <IconTruck />, moduleId: null },
+    { to: '/reporte-2-dropi', label: 'Reporte 2 Dropi', icon: <IconTruck />, moduleId: null },
     { to: '/estado-resultado-motico', label: 'Estado resultado Motico', icon: <IconTruck />, moduleId: 'estado_resultado_motico' },
   ];
   const finanzas: NavItem[] = [
