@@ -81,6 +81,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   const finanzas: NavItem[] = [
     { to: '/ganancia-diaria', label: 'Ganancia diaria', icon: <IconTrendingUp />, moduleId: 'ganancia_diaria' },
     { to: '/gasto-publicitario-por-mes', label: 'Gasto publicitario por mes', icon: <IconMegaphone />, moduleId: 'gasto_publicitario_por_mes' },
+    { to: '/gasto-publicitario-por-producto', label: 'Gasto publicitario por producto', icon: <IconProduct />, moduleId: 'gasto_publicitario_por_producto' },
     { to: '/kips', label: 'Análisis de Campaña', icon: <IconTarget />, moduleId: 'kips' },
     { to: '/comision-ventas', label: 'Comisión por venta', icon: <IconUsers />, moduleId: 'comision_ventas' },
     { to: '/calculadora-cod', label: 'Calculadora COD', icon: <IconCalculadora />, moduleId: 'calculadora_cod' },

@@ -18,6 +18,7 @@ export const APP_MODULE_IDS = [
   'estado_resultado_motico',
   'kips',
   'gasto_publicitario_por_mes',
+  'gasto_publicitario_por_producto',
 ] as const;
 
 export type AppModuleId = (typeof APP_MODULE_IDS)[number];
@@ -41,6 +42,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'estado_resultado_motico', label: 'Estado de resultado Motico', group: 'Marketing' },
   { id: 'kips', label: 'Análisis de Campaña', group: 'Marketing' },
   { id: 'gasto_publicitario_por_mes', label: 'Gasto publicitario por mes', group: 'Marketing' },
+  { id: 'gasto_publicitario_por_producto', label: 'Gasto publicitario por producto', group: 'Marketing' },
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
@@ -64,6 +66,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/estado-resultado-motico': 'estado_resultado_motico',
   '/kips': 'kips',
   '/gasto-publicitario-por-mes': 'gasto_publicitario_por_mes',
+  '/gasto-publicitario-por-producto': 'gasto_publicitario_por_producto',
 };
 
 const MODULE_TO_PATH: Record<AppModuleId, string> = {
@@ -85,6 +88,7 @@ const MODULE_TO_PATH: Record<AppModuleId, string> = {
   estado_resultado_motico: '/estado-resultado-motico',
   kips: '/kips',
   gasto_publicitario_por_mes: '/gasto-publicitario-por-mes',
+  gasto_publicitario_por_producto: '/gasto-publicitario-por-producto',
 };
 
 /** Orden para “primera pantalla” tras login o al bloquear una ruta. */

@@ -184,6 +184,7 @@ const CONFIGURABLE_MODULE_IDS = [
   'estado_resultado_motico',
   'kips',
   'gasto_publicitario_por_mes',
+  'gasto_publicitario_por_producto',
 ];
 
 const MODULE_CATALOG_FOR_API = [
@@ -205,6 +206,7 @@ const MODULE_CATALOG_FOR_API = [
   { id: 'estado_resultado_motico', label: 'Estado de resultado Motico', group: 'Marketing' },
   { id: 'kips', label: 'Análisis de Campaña', group: 'Marketing' },
   { id: 'gasto_publicitario_por_mes', label: 'Gasto publicitario por mes', group: 'Marketing' },
+  { id: 'gasto_publicitario_por_producto', label: 'Gasto publicitario por producto', group: 'Marketing' },
 ];
 
 const pool = createPool();
