@@ -16,6 +16,7 @@ export const APP_MODULE_IDS = [
   'planeacion_ventas',
   'comision_ventas',
   'estado_resultado_motico',
+  'kips',
 ] as const;
 
 export type AppModuleId = (typeof APP_MODULE_IDS)[number];
@@ -37,6 +38,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'planeacion_ventas', label: 'Planeación de Ventas', group: 'Marketing' },
   { id: 'comision_ventas', label: 'Comisión por venta', group: 'Marketing' },
   { id: 'estado_resultado_motico', label: 'Estado de resultado Motico', group: 'Marketing' },
+  { id: 'kips', label: 'KIPS', group: 'Marketing' },
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
@@ -58,6 +60,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/planeacion-ventas': 'planeacion_ventas',
   '/comision-ventas': 'comision_ventas',
   '/estado-resultado-motico': 'estado_resultado_motico',
+  '/kips': 'kips',
 };
 
 const MODULE_TO_PATH: Record<AppModuleId, string> = {
@@ -77,6 +80,7 @@ const MODULE_TO_PATH: Record<AppModuleId, string> = {
   planeacion_ventas: '/planeacion-ventas',
   comision_ventas: '/comision-ventas',
   estado_resultado_motico: '/estado-resultado-motico',
+  kips: '/kips',
 };
 
 /** Orden para “primera pantalla” tras login o al bloquear una ruta. */

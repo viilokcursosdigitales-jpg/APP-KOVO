@@ -80,6 +80,7 @@ function SidebarNav({ mobile }: { mobile: boolean }) {
   ];
   const finanzas: NavItem[] = [
     { to: '/ganancia-diaria', label: 'Ganancia diaria', icon: <IconTrendingUp />, moduleId: 'ganancia_diaria' },
+    { to: '/kips', label: 'KIPS', icon: <IconTarget />, moduleId: 'kips' },
     { to: '/comision-ventas', label: 'Comisión por venta', icon: <IconUsers />, moduleId: 'comision_ventas' },
     { to: '/calculadora-cod', label: 'Calculadora COD', icon: <IconCalculadora />, moduleId: 'calculadora_cod' },
   ];
