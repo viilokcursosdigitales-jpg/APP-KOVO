@@ -182,6 +182,7 @@ function datePresetFromDashboardPeriod(period) {
     '7d': 'last_7d',
     '14d': 'last_14d',
     '30d': 'last_30d',
+    este_ano: 'this_year',
     custom: 'last_7d',
   };
   return map[period] || 'last_7d';

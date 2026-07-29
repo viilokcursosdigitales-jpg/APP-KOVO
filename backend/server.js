@@ -1388,10 +1388,16 @@ async function loadMetaLatestDailySnapshot(organizationId) {
 }
 
 async function buildMetaSnapshotFallbackForPeriod(organizationId, period) {
-  const days = metaSnapshotRollingDaysForPeriod(period);
+  const periodNorm = String(period || '').trim().toLowerCase();
   const todayYmd = metaSnapshotTodayYmd(META_SNAPSHOT_TIMEZONE);
   let untilYmd = shiftYmdString(todayYmd, -1);
-  let sinceYmd = shiftYmdString(untilYmd, -(days - 1));
+  let sinceYmd;
+  if (periodNorm === 'este_ano') {
+    sinceYmd = `${todayYmd.slice(0, 4)}-01-01`;
+  } else {
+    const days = metaSnapshotRollingDaysForPeriod(period);
+    sinceYmd = shiftYmdString(untilYmd, -(days - 1));
+  }
   let rows = await loadMetaDailySnapshotsForRange(organizationId, sinceYmd, untilYmd);
   let usedLatestFallback = false;
   if (!rows.length) {
@@ -7439,7 +7445,7 @@ app.get('/api/shopify/orders', verifyToken, scopeToOrganization, async (req, res
     let min = typeof req.query.created_at_min === 'string' ? req.query.created_at_min.trim() : '';
     let max = typeof req.query.created_at_max === 'string' ? req.query.created_at_max.trim() : '';
     const metaPeriodRaw = typeof req.query.meta_period === 'string' ? req.query.meta_period.trim().toLowerCase() : '';
-    const metaPeriodAllowed = new Set(['hoy', 'ayer', '3d', '7d', '14d', '30d', 'custom']);
+    const metaPeriodAllowed = new Set(['hoy', 'ayer', '3d', '7d', '14d', '30d', 'este_ano', 'custom']);
     let shopCalendarTz = null;
     let metaPeriodApplied = null;
     if (metaPeriodRaw && metaPeriodAllowed.has(metaPeriodRaw)) {

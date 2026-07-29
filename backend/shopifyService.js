@@ -870,7 +870,7 @@ function utcMillisStartOfZonedCalendarDay(timeZone, y, m, d) {
 
 /**
  * Rango created_at para Shopify alineado al calendario de la tienda (como el admin de Shopify / Meta “hoy”).
- * @param {'hoy'|'ayer'|'3d'|'7d'|'14d'|'30d'|'custom'} period custom → últimos 7 días
+ * @param {'hoy'|'ayer'|'3d'|'7d'|'14d'|'30d'|'este_ano'|'custom'} period custom → últimos 7 días
  * @param {string} ianaTimezone ej. America/Bogota
  * @param {Date} [ref]
  * @returns {{ min: string, max: string }}
@@ -891,6 +891,9 @@ function shopifyOrderCreatedRangeForMetaPeriod(period, ianaTimezone, ref = new D
     const minMs = utcMillisStartOfZonedCalendarDay(tz, prev.y, prev.m, prev.d);
     const todayStart = utcMillisStartOfZonedCalendarDay(tz, Y, M, D);
     return { min: new Date(minMs).toISOString(), max: new Date(todayStart - 1).toISOString() };
+  }
+  if (period === 'este_ano') {
+    return shopifyInformativeOrdersRangeYearToDate(tz);
   }
 
   const rolling = { '3d': 3, '7d': 7, '14d': 14, '30d': 30 };

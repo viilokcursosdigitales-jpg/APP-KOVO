@@ -2,7 +2,7 @@
 
 import { formatMetaMoneyWhole } from './formatMetaMoney';
 
-export type PeriodKey = 'hoy' | 'ayer' | '3d' | '7d' | '14d' | '30d' | 'custom';
+export type PeriodKey = 'hoy' | 'ayer' | '3d' | '7d' | '14d' | '30d' | 'este_ano' | 'custom';
 export type ProductKey = 'all' | 'crema' | 'serum' | 'kit';
 
 export const PERIOD_LABELS: Record<PeriodKey, string> = {
@@ -12,6 +12,7 @@ export const PERIOD_LABELS: Record<PeriodKey, string> = {
   '7d': 'Últimos 7 días',
   '14d': 'Últimos 14 días',
   '30d': 'Últimos 30 días',
+  este_ano: 'Este año',
   custom: 'Rango personalizado',
 };
 
@@ -30,6 +31,7 @@ function periodFactor(p: PeriodKey): number {
     '7d': 0.58,
     '14d': 0.78,
     '30d': 1,
+    este_ano: 1.15,
     custom: 0.45,
   };
   return map[p];

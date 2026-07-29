@@ -48,7 +48,7 @@ function FiltersBar(props: {
   product: ProductKey;
   setProduct: (p: ProductKey) => void;
 }) {
-  const periods: PeriodKey[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'custom'];
+  const periods: PeriodKey[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'este_ano', 'custom'];
   return (
     <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 10, rowGap: 8 }}>
       <div
@@ -90,9 +90,11 @@ function FiltersBar(props: {
                 ? 'Hoy'
                 : key === 'ayer'
                   ? 'Ayer'
-                  : key === 'custom'
-                    ? 'Personalizado'
-                    : key.replace('d', ' días')}
+                  : key === 'este_ano'
+                    ? 'Este año'
+                    : key === 'custom'
+                      ? 'Personalizado'
+                      : key.replace('d', ' días')}
             </button>
           );
         })}

@@ -14,6 +14,7 @@ const PERIOD_LABELS: Record<MetaInsightPeriod, string> = {
   '7d': 'Últimos 7 días',
   '14d': 'Últimos 14 días',
   '30d': 'Últimos 30 días',
+  este_ano: 'Este año',
   custom: 'Personalizado',
 };
 
@@ -137,7 +138,7 @@ export function MetaFunnelPanel({
     void load();
   }, [load]);
 
-  const periods: MetaInsightPeriod[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'custom'];
+  const periods: MetaInsightPeriod[] = ['hoy', 'ayer', '3d', '7d', '14d', '30d', 'este_ano', 'custom'];
   const n = stages.length;
   const maxP = Math.max(...stages.map((s) => s.people), 1);
   const maxW = 360;
