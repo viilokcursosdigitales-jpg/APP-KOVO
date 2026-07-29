@@ -13,6 +13,7 @@ import {
   IconTarget,
   IconTrendingUp,
 } from '../design-system/icons';
+import { KipsPygStatement, type KipsPygInput } from '../kips/KipsPygStatement';
 
 type TabKey = 'resumen' | 'producto';
 type PeriodKey = '7d' | '14d' | '30d';
@@ -732,6 +733,34 @@ export default function KipsPage() {
       });
   }, [campaigns, totals]);
 
+  const pygData = useMemo<KipsPygInput>(
+    () => ({
+      ventasDespachadas: totals.ventas,
+      ventasEntregadas: totals.ventasEnt,
+      pedidosDespachados: totals.pedidos,
+      pedidosConfirmados: totals.pedidosConfirmados,
+      costoProducto: totals.costo,
+      costoEnvio: totals.flete,
+      costoAdmin: totals.admin,
+      gastoPublicitario: totals.spend,
+      entregadosPct,
+      confirmadosPct,
+      costoProductoPct,
+      costoEnvioPct,
+      costoAdminPct,
+      currency,
+    }),
+    [
+      totals,
+      entregadosPct,
+      confirmadosPct,
+      costoProductoPct,
+      costoEnvioPct,
+      costoAdminPct,
+      currency,
+    ],
+  );
+
   const chartW = 720;
   const chartH = 220;
 
@@ -1085,6 +1114,14 @@ export default function KipsPage() {
                 ))}
               </ul>
             </div>
+          </div>
+
+          <div style={{ marginBottom: 16 }}>
+            <KipsPygStatement
+              data={pygData}
+              periodLabel={formatRangeLabel(days)}
+              productLabel={tab === 'producto' ? selectedProduct?.label : undefined}
+            />
           </div>
 
           <div style={{ ...cardBase, marginBottom: 16 }}>
