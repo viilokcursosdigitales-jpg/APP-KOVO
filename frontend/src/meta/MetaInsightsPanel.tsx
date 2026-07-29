@@ -131,6 +131,7 @@ const META_INSIGHTS_CACHE_TTL_MS = 1000 * 60 * 10;
 
 /** Fila campaña sin producto Shopify vinculado (Campañas Meta → lista Campañas). */
 const CAMPAIGN_ROW_MISSING_PRODUCT_BG = 'rgba(58, 12, 16, 0.42)';
+const FILTER_PRODUCT_UNASSIGNED = '__unassigned__';
 
 type ShopifyOrderAttribution = {
   productIds?: number[];
@@ -934,6 +935,13 @@ export function MetaInsightsPanel({
       if (campaignActivityFilter === 'active' && st !== 'ACTIVE') return false;
       if (campaignActivityFilter === 'inactive' && st === 'ACTIVE') return false;
 
+      if (filterProductId === FILTER_PRODUCT_UNASSIGNED) {
+        if (!campaignProductLinksReady) return true;
+        const cid = level === 'campaigns' ? String(row.id) : String(row.campaignId || '');
+        if (!cid) return false;
+        return (campaignProductLinks[cid] || []).length === 0;
+      }
+
       if (!filterProductId.trim()) return true;
       const pid = Number.parseInt(filterProductId, 10);
       if (!Number.isFinite(pid)) return true;
@@ -942,7 +950,7 @@ export function MetaInsightsPanel({
       const linked = campaignProductLinks[cid] || [];
       return linked.includes(pid);
     });
-  }, [rows, campaignActivityFilter, filterProductId, level, campaignProductLinks]);
+  }, [rows, campaignActivityFilter, filterProductId, level, campaignProductLinks, campaignProductLinksReady]);
 
   /** Meta puede devolver filas con métricas en 0; la tabla solo lista las que tienen gasto &gt; 0 en el período. */
   const hasFetchedRowWithSpend = useMemo(
@@ -1258,7 +1266,11 @@ export function MetaInsightsPanel({
         <select
           value={filterProductId}
           onChange={(e) => setFilterProductId(e.target.value)}
-          title="Muestra solo filas cuya campaña tiene asociado este producto"
+          title={
+            filterProductId === FILTER_PRODUCT_UNASSIGNED
+              ? 'Solo campañas (o conjuntos/anuncios bajo campañas) sin producto Shopify vinculado'
+              : 'Muestra solo filas cuya campaña tiene asociado este producto'
+          }
           style={{
             padding: '8px 12px',
             borderRadius: 8,
@@ -1270,6 +1282,7 @@ export function MetaInsightsPanel({
           }}
         >
           <option value="">Todos los productos</option>
+          <option value={FILTER_PRODUCT_UNASSIGNED}>Sin producto Shopify asignado</option>
           {shopifyProducts.map((p) => (
             <option key={p.id} value={String(p.id)}>
               {p.title}
@@ -1440,8 +1453,8 @@ export function MetaInsightsPanel({
                     </>
                   ) : (
                     <>
-                      Hay datos con gasto en el período, pero ninguna fila coincide con activo/no activo, producto o
-                      cuenta elegidos — o el producto filtrado no está vinculado a campañas con gasto. Ajusta los filtros.
+                      Hay datos con gasto en el período, pero ninguna fila coincide con activo/no activo, producto, campañas
+                      sin vincular u otra cuenta elegida — ajusta los filtros.
                     </>
                   )}
                 </td>
