@@ -17,6 +17,7 @@ export const APP_MODULE_IDS = [
   'comision_ventas',
   'estado_resultado_motico',
   'kips',
+  'gasto_publicitario_por_mes',
 ] as const;
 
 export type AppModuleId = (typeof APP_MODULE_IDS)[number];
@@ -39,6 +40,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'comision_ventas', label: 'Comisión por venta', group: 'Marketing' },
   { id: 'estado_resultado_motico', label: 'Estado de resultado Motico', group: 'Marketing' },
   { id: 'kips', label: 'Análisis de Campaña', group: 'Marketing' },
+  { id: 'gasto_publicitario_por_mes', label: 'Gasto publicitario por mes', group: 'Marketing' },
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
@@ -61,6 +63,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/comision-ventas': 'comision_ventas',
   '/estado-resultado-motico': 'estado_resultado_motico',
   '/kips': 'kips',
+  '/gasto-publicitario-por-mes': 'gasto_publicitario_por_mes',
 };
 
 const MODULE_TO_PATH: Record<AppModuleId, string> = {
@@ -81,6 +84,7 @@ const MODULE_TO_PATH: Record<AppModuleId, string> = {
   comision_ventas: '/comision-ventas',
   estado_resultado_motico: '/estado-resultado-motico',
   kips: '/kips',
+  gasto_publicitario_por_mes: '/gasto-publicitario-por-mes',
 };
 
 /** Orden para “primera pantalla” tras login o al bloquear una ruta. */

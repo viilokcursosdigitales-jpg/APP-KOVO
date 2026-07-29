@@ -38,6 +38,7 @@ const AdsFunnelPage = lazy(() => import('./pages/AdsFunnelPage'));
 const EstrategiaCreativaPage = lazy(() => import('./pages/EstrategiaCreativaPage'));
 const FinanzaPage = lazy(() => import('./pages/FinanzaPage'));
 const KipsPage = lazy(() => import('./pages/KipsPage'));
+const GastoPublicitarioPorMesPage = lazy(() => import('./pages/GastoPublicitarioPorMesPage'));
 const ResetPassword = lazy(() => import('./pages/ResetPassword'));
 const Settings = lazy(() => import('./pages/Settings'));
 const AdminMetaConnectPage = lazy(() => import('./pages/AdminMetaConnectPage'));
@@ -120,6 +121,7 @@ export default function App() {
               <Route path="/canales" element={<CanalesPage />} />
               <Route path="/ganancia-diaria" element={<GananciaDiariaPage />} />
               <Route path="/kips" element={<KipsPage />} />
+              <Route path="/gasto-publicitario-por-mes" element={<GastoPublicitarioPorMesPage />} />
               <Route path="/calculadora-cod" element={<CalculadoraCodPage />} />
               <Route path="/comision-ventas" element={<ComisionVentasPage />} />
               <Route path="/estado-resultado-motico" element={<EstadoResultadoMoticoPage />} />
