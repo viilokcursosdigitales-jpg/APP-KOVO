@@ -16,7 +16,7 @@ import {
 import { KipsPygStatement, type KipsPygInput } from '../kips/KipsPygStatement';
 
 type TabKey = 'resumen' | 'producto';
-type PeriodKey = '7d' | '14d' | '30d' | 'custom';
+type PeriodKey = '7d' | '14d' | '30d' | 'este_ano' | 'custom';
 
 type SeriesDay = {
   date: string;
@@ -98,6 +98,25 @@ function defaultCustomRange(): { from: string; to: string } {
   const from = new Date();
   from.setDate(from.getDate() - 6);
   return { from: toYmd(from), to: toYmd(to) };
+}
+
+function monthsForCurrentYear(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const maxMonth = now.getMonth() + 1;
+  const out: string[] = [];
+  for (let m = 1; m <= maxMonth; m++) {
+    out.push(`${y}-${String(m).padStart(2, '0')}`);
+  }
+  return out.join(',');
+}
+
+function currentYearBounds(): { from: string; to: string } {
+  const now = new Date();
+  return {
+    from: `${now.getFullYear()}-01-01`,
+    to: toYmd(now),
+  };
 }
 
 function monthsBetween(fromYmd: string, toYmdStr: string): string {
@@ -500,6 +519,7 @@ export default function KipsPage() {
   );
 
   const metaPeriodParam = useMemo(() => {
+    if (period === 'este_ano') return '30d';
     if (period === 'custom') return metaPeriodForDayCount(dayCountInclusive(customFrom, customTo));
     return period;
   }, [period, customFrom, customTo]);
@@ -562,6 +582,9 @@ export default function KipsPage() {
       if (period === 'custom') {
         const months = monthsBetween(customFrom, customTo);
         if (months) qs.set('months', months);
+      } else if (period === 'este_ano') {
+        const months = monthsForCurrentYear();
+        if (months) qs.set('months', months);
       } else {
         qs.set('meta_period', period);
       }
@@ -613,7 +636,10 @@ export default function KipsPage() {
 
   const rawDays = useMemo(() => {
     let days = seriesData?.days ?? [];
-    if (period === 'custom' && customFrom && customTo) {
+    if (period === 'este_ano') {
+      const { from, to } = currentYearBounds();
+      days = days.filter((d) => d.date >= from && d.date <= to);
+    } else if (period === 'custom' && customFrom && customTo) {
       days = days.filter((d) => d.date >= customFrom && d.date <= customTo);
     }
     return [...days].sort((a, b) => a.date.localeCompare(b.date));
@@ -656,7 +682,7 @@ export default function KipsPage() {
       flete += d.flete;
       admin += d.admin;
     }
-    if (tab === 'producto' && selectedProduct?.product_id != null) {
+    if (tab === 'producto' && selectedProduct?.product_id != null && period !== 'este_ano') {
       const metaSpend = metaSpendByProduct[String(selectedProduct.product_id)];
       if (metaSpend != null && Number.isFinite(Number(metaSpend))) {
         spend = Number(metaSpend);
@@ -851,7 +877,7 @@ export default function KipsPage() {
         <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, alignItems: 'center', justifyContent: 'space-between' }}>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
             <span style={{ fontSize: 12, color: ds.textMuted }}>Periodo:</span>
-            {(['7d', '14d', '30d', 'custom'] as PeriodKey[]).map((p) => (
+            {(['7d', '14d', '30d', 'este_ano', 'custom'] as PeriodKey[]).map((p) => (
               <button
                 key={p}
                 type="button"
@@ -867,7 +893,15 @@ export default function KipsPage() {
                   cursor: 'pointer',
                 }}
               >
-                {p === '7d' ? '7 días' : p === '14d' ? '14 días' : p === '30d' ? '30 días' : 'Personalizado'}
+                {p === '7d'
+                  ? '7 días'
+                  : p === '14d'
+                    ? '14 días'
+                    : p === '30d'
+                      ? '30 días'
+                      : p === 'este_ano'
+                        ? 'Este año'
+                        : 'Personalizado'}
               </button>
             ))}
             {period === 'custom' ? (
