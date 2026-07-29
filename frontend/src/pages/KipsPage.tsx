@@ -95,6 +95,64 @@ const cardBase: CSSProperties = {
 };
 
 const GOAL_PRESETS = [15, 20, 25, 30] as const;
+const KIPS_CONFIRMADOS_KEY = 'kovo_kips_confirmados_pct';
+const KIPS_ENTREGADOS_KEY = 'kovo_kips_entregados_pct';
+const DEFAULT_CONVERSION_PCT = 80;
+
+function clampPct(n: number): number {
+  if (!Number.isFinite(n)) return 0;
+  return Math.min(100, Math.max(0, n));
+}
+
+function parseRateInput(raw: string, fallback = DEFAULT_CONVERSION_PCT): number {
+  const n = parsePercentInput(raw);
+  return n > 0 ? clampPct(n) : fallback;
+}
+
+type AdjustedDayMetrics = {
+  ventas: number;
+  ventasEntregadas: number;
+  pedidos: number;
+  pedidosConfirmados: number;
+  costo: number;
+  flete: number;
+  spend: number;
+  admin: number;
+  utilidad: number | null;
+};
+
+function adjustDayMetrics(
+  d: SeriesDay,
+  confirmadosPct: number,
+  entregadosPct: number,
+  adminPercent: number,
+  comparable: boolean | undefined,
+): AdjustedDayMetrics {
+  const ventas = Number(d.ventas_despachadas_total || 0);
+  const pedidos = Number(d.ventas_despachadas_pedidos || 0);
+  const spend = Number(d.gasto_publicitario_total || 0);
+  const costoFull = Number(d.costo_producto_entregado_total || d.costo_producto_total || 0);
+  const fleteFull = Number(d.costo_flete_promedio_total || 0);
+  const entRate = entregadosPct / 100;
+  const confRate = confirmadosPct / 100;
+  const ventasEntregadas = ventas * entRate;
+  const pedidosConfirmados = pedidos * confRate;
+  const costo = costoFull * entRate;
+  const flete = fleteFull * entRate;
+  const admin = ventasEntregadas * (adminPercent / 100);
+  const utilidad = comparable ? ventasEntregadas - spend - costo - flete - admin : null;
+  return {
+    ventas,
+    ventasEntregadas,
+    pedidos,
+    pedidosConfirmados,
+    costo,
+    flete,
+    spend,
+    admin,
+    utilidad,
+  };
+}
 
 function money(n: number, currency?: string | null): string {
   if (!Number.isFinite(n)) return '—';
@@ -126,17 +184,11 @@ function parsePercentInput(raw: string): number {
   return n;
 }
 
-function utilidadDia(row: SeriesDay, comparable: boolean | undefined, adminPercent: number): number | null {
-  if (!comparable || row.utilidad == null || !Number.isFinite(row.utilidad)) return null;
-  const ve = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
-  return row.utilidad - ve * (adminPercent / 100);
-}
-
-function dynamicRoasTarget(ventas: number, baseCost: number, goalPct: number): number {
-  if (ventas <= 0) return 0;
-  const spendNeeded = ventas * (1 - goalPct / 100) - baseCost;
+function dynamicRoasTarget(ventasEntregadas: number, baseCost: number, goalPct: number): number {
+  if (ventasEntregadas <= 0) return 0;
+  const spendNeeded = ventasEntregadas * (1 - goalPct / 100) - baseCost;
   if (spendNeeded <= 0) return 0;
-  return ventas / spendNeeded;
+  return ventasEntregadas / spendNeeded;
 }
 
 function classifyEstado(roas: number, roasTarget: number, netPct: number | null, goalPct: number): DayMetrics['estado'] {
@@ -293,8 +345,38 @@ export default function KipsPage() {
       return '0';
     }
   });
+  const [confirmadosPct, setConfirmadosPct] = useState(() => {
+    try {
+      return parseRateInput(localStorage.getItem(KIPS_CONFIRMADOS_KEY) ?? String(DEFAULT_CONVERSION_PCT));
+    } catch {
+      return DEFAULT_CONVERSION_PCT;
+    }
+  });
+  const [entregadosPct, setEntregadosPct] = useState(() => {
+    try {
+      return parseRateInput(localStorage.getItem(KIPS_ENTREGADOS_KEY) ?? String(DEFAULT_CONVERSION_PCT));
+    } catch {
+      return DEFAULT_CONVERSION_PCT;
+    }
+  });
 
   const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(KIPS_CONFIRMADOS_KEY, String(confirmadosPct));
+    } catch {
+      /* noop */
+    }
+  }, [confirmadosPct]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(KIPS_ENTREGADOS_KEY, String(entregadosPct));
+    } catch {
+      /* noop */
+    }
+  }, [entregadosPct]);
   const currency = seriesData?.ventas_currency || seriesData?.meta_currency || 'USD';
   const comparable = seriesData?.ganancia_comparable;
 
@@ -373,34 +455,33 @@ export default function KipsPage() {
     return aggregateProductDays(rawDays, productKey, pid, adminPercent);
   }, [rawDays, productKey, tab, adminPercent, selectedProduct?.product_id]);
 
-  const prevDays = useMemo(() => {
+  const adjustedDays = useMemo(() => {
+    return days.map((d) => adjustDayMetrics(d, confirmadosPct, entregadosPct, adminPercent, comparable));
+  }, [days, confirmadosPct, entregadosPct, adminPercent, comparable]);
+
+  const prevAdjustedDays = useMemo(() => {
     const len = days.length;
     if (len < 2) return [];
     const half = Math.floor(len / 2);
-    return days.slice(0, half);
-  }, [days]);
-
-  const currentDays = useMemo(() => {
-    const len = days.length;
-    if (len < 2) return days;
-    const half = Math.floor(len / 2);
-    return days.slice(half);
-  }, [days]);
+    return days.slice(0, half).map((d) => adjustDayMetrics(d, confirmadosPct, entregadosPct, adminPercent, comparable));
+  }, [days, confirmadosPct, entregadosPct, adminPercent, comparable]);
 
   const totals = useMemo(() => {
     let ventas = 0;
     let ventasEnt = 0;
     let pedidos = 0;
+    let pedidosConfirmados = 0;
     let spend = 0;
     let costo = 0;
     let flete = 0;
-    for (const d of days) {
-      ventas += Number(d.ventas_despachadas_total || 0);
-      ventasEnt += Number(d.ventas_entregadas_total || ventas);
-      pedidos += Number(d.ventas_despachadas_pedidos || 0);
-      spend += Number(d.gasto_publicitario_total || 0);
-      costo += Number(d.costo_producto_entregado_total || d.costo_producto_total || 0);
-      flete += Number(d.costo_flete_promedio_total || 0);
+    for (const d of adjustedDays) {
+      ventas += d.ventas;
+      ventasEnt += d.ventasEntregadas;
+      pedidos += d.pedidos;
+      pedidosConfirmados += d.pedidosConfirmados;
+      spend += d.spend;
+      costo += d.costo;
+      flete += d.flete;
     }
     if (tab === 'producto' && selectedProduct?.product_id != null) {
       const metaSpend = metaSpendByProduct[String(selectedProduct.product_id)];
@@ -410,54 +491,63 @@ export default function KipsPage() {
     }
     const admin = ventasEnt * (adminPercent / 100);
     const baseCost = costo + flete + admin;
-    const utilidad = comparable ? ventas - spend - baseCost : null;
-    const roas = spend > 0 ? ventas / spend : 0;
-    const roasTarget = dynamicRoasTarget(ventas, baseCost, goalPct);
-    const netPct = utilidad != null && ventas > 0 ? (utilidad / ventas) * 100 : null;
-    const cpa = pedidos > 0 ? spend / pedidos : 0;
-    return { ventas, ventasEnt, pedidos, spend, costo, flete, admin, baseCost, utilidad, roas, roasTarget, netPct, cpa };
-  }, [days, adminPercent, comparable, goalPct, tab, selectedProduct?.product_id, metaSpendByProduct]);
+    const utilidad = comparable ? ventasEnt - spend - baseCost : null;
+    const roas = spend > 0 ? ventasEnt / spend : 0;
+    const roasTarget = dynamicRoasTarget(ventasEnt, baseCost, goalPct);
+    const netPct = utilidad != null && ventasEnt > 0 ? (utilidad / ventasEnt) * 100 : null;
+    const cpa = pedidosConfirmados > 0 ? spend / pedidosConfirmados : 0;
+    return {
+      ventas,
+      ventasEnt,
+      pedidos,
+      pedidosConfirmados,
+      spend,
+      costo,
+      flete,
+      admin,
+      baseCost,
+      utilidad,
+      roas,
+      roasTarget,
+      netPct,
+      cpa,
+    };
+  }, [adjustedDays, adminPercent, comparable, goalPct, tab, selectedProduct?.product_id, metaSpendByProduct]);
 
   const prevTotals = useMemo(() => {
-    let ventas = 0;
+    let ventasEnt = 0;
     let spend = 0;
-    let pedidos = 0;
-    for (const d of prevDays) {
-      ventas += Number(d.ventas_despachadas_total || 0);
-      spend += Number(d.gasto_publicitario_total || 0);
-      pedidos += Number(d.ventas_despachadas_pedidos || 0);
+    let pedidosConfirmados = 0;
+    for (const d of prevAdjustedDays) {
+      ventasEnt += d.ventasEntregadas;
+      spend += d.spend;
+      pedidosConfirmados += d.pedidosConfirmados;
     }
-    const roas = spend > 0 ? ventas / spend : 0;
-    const cpa = pedidos > 0 ? spend / pedidos : 0;
-    return { ventas, spend, roas, cpa, pedidos };
-  }, [prevDays]);
+    const roas = spend > 0 ? ventasEnt / spend : 0;
+    const cpa = pedidosConfirmados > 0 ? spend / pedidosConfirmados : 0;
+    return { ventasEnt, spend, roas, cpa, pedidosConfirmados };
+  }, [prevAdjustedDays]);
 
   const dayMetrics: DayMetrics[] = useMemo(() => {
-    return days.map((d) => {
-      const ventas = Number(d.ventas_despachadas_total || 0);
-      const ventasEnt = Number(d.ventas_entregadas_total || ventas);
-      const pedidos = Number(d.ventas_despachadas_pedidos || 0);
-      const spend = Number(d.gasto_publicitario_total || 0);
-      const costo = Number(d.costo_producto_entregado_total || d.costo_producto_total || 0);
-      const flete = Number(d.costo_flete_promedio_total || 0);
-      const admin = ventasEnt * (adminPercent / 100);
-      const baseCost = costo + flete + admin;
-      const utilidad = utilidadDia(d, comparable, adminPercent);
-      const roas = spend > 0 ? ventas / spend : 0;
-      const roasTarget = dynamicRoasTarget(ventas, baseCost, goalPct);
-      const netPct = utilidad != null && ventas > 0 ? (utilidad / ventas) * 100 : null;
-      const cpa = pedidos > 0 ? spend / pedidos : 0;
+    return days.map((d, i) => {
+      const adj = adjustedDays[i] ?? adjustDayMetrics(d, confirmadosPct, entregadosPct, adminPercent, comparable);
+      const baseCost = adj.costo + adj.flete + adj.admin;
+      const roas = adj.spend > 0 ? adj.ventasEntregadas / adj.spend : 0;
+      const roasTarget = dynamicRoasTarget(adj.ventasEntregadas, baseCost, goalPct);
+      const netPct =
+        adj.utilidad != null && adj.ventasEntregadas > 0 ? (adj.utilidad / adj.ventasEntregadas) * 100 : null;
+      const cpa = adj.pedidosConfirmados > 0 ? adj.spend / adj.pedidosConfirmados : 0;
       const estado = classifyEstado(roas, roasTarget, netPct, goalPct);
       return {
         date: d.date,
-        spend,
-        ventas,
-        ventasEntregadas: ventasEnt,
-        pedidos,
-        costo,
-        flete,
-        admin,
-        utilidad,
+        spend: adj.spend,
+        ventas: adj.ventas,
+        ventasEntregadas: adj.ventasEntregadas,
+        pedidos: adj.pedidosConfirmados,
+        costo: adj.costo,
+        flete: adj.flete,
+        admin: adj.admin,
+        utilidad: adj.utilidad,
         roas,
         roasTarget,
         netPct,
@@ -465,7 +555,7 @@ export default function KipsPage() {
         estado,
       };
     });
-  }, [days, adminPercent, comparable, goalPct]);
+  }, [days, adjustedDays, confirmadosPct, entregadosPct, adminPercent, comparable, goalPct]);
 
   const scalingChart = useMemo(() => {
     let cumSpend = 0;
@@ -474,7 +564,7 @@ export default function KipsPage() {
     const points: { cumSpend: number; roas: number; roasTarget: number; netPct: number }[] = [];
     for (const m of dayMetrics) {
       cumSpend += m.spend;
-      cumVentas += m.ventas;
+      cumVentas += m.ventasEntregadas;
       cumBase += m.costo + m.flete + m.admin;
       const roas = cumSpend > 0 ? cumVentas / cumSpend : 0;
       const roasTarget = dynamicRoasTarget(cumVentas, cumBase, goalPct);
@@ -515,7 +605,7 @@ export default function KipsPage() {
       isOptimal,
       optimalNetPct: optimal?.netPct ?? 0,
       optimalRoas: optimal?.roas ?? 0,
-      optimalPurchases: Math.round(pedidos * 1.15),
+      optimalPurchases: Math.round(totals.pedidosConfirmados * 1.15),
       maxNetPct: Math.max(...scalingChart.points.map((p) => p.netPct), 0),
       recommendations,
     };
@@ -738,8 +828,8 @@ export default function KipsPage() {
               icon={<IconCart />}
               value={
                 <>
-                  {totals.pedidos.toLocaleString('es-CO')}
-                  {deltaTag(totals.pedidos, prevTotals.pedidos)}
+                  {Math.round(totals.pedidosConfirmados).toLocaleString('es-CO')}
+                  {deltaTag(totals.pedidosConfirmados, prevTotals.pedidosConfirmados)}
                 </>
               }
             />
@@ -758,8 +848,91 @@ export default function KipsPage() {
               variant="conversion"
               label="Pedidos confirmados"
               icon={<IconShare />}
-              value={totals.pedidos.toLocaleString('es-CO')}
+              value={Math.round(totals.pedidosConfirmados).toLocaleString('es-CO')}
             />
+          </div>
+
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+              gap: 14,
+              marginBottom: 16,
+            }}
+          >
+            <div style={cardBase}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: ds.textPrimary, marginBottom: 12 }}>
+                % de pedidos confirmados
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={confirmadosPct}
+                  onChange={(e) => setConfirmadosPct(clampPct(Number(e.target.value)))}
+                  style={{
+                    width: 72,
+                    padding: '6px 8px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    fontSize: 14,
+                    fontWeight: 600,
+                  }}
+                />
+                <span style={{ fontSize: 13, color: ds.textMuted }}>%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={confirmadosPct}
+                onChange={(e) => setConfirmadosPct(Number(e.target.value))}
+                style={{ width: '100%', accentColor: ds.brand }}
+              />
+              <div style={{ fontSize: 12, color: ds.textMuted, marginTop: 8 }}>
+                Afecta compras, pedidos confirmados y CPA
+              </div>
+            </div>
+
+            <div style={cardBase}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: ds.textPrimary, marginBottom: 12 }}>
+                % de pedidos entregados
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={1}
+                  value={entregadosPct}
+                  onChange={(e) => setEntregadosPct(clampPct(Number(e.target.value)))}
+                  style={{
+                    width: 72,
+                    padding: '6px 8px',
+                    borderRadius: 8,
+                    border: `1px solid ${ds.borderCard}`,
+                    fontSize: 14,
+                    fontWeight: 600,
+                  }}
+                />
+                <span style={{ fontSize: 13, color: ds.textMuted }}>%</span>
+              </div>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={entregadosPct}
+                onChange={(e) => setEntregadosPct(Number(e.target.value))}
+                style={{ width: '100%', accentColor: ds.brand }}
+              />
+              <div style={{ fontSize: 12, color: ds.textMuted, marginTop: 8 }}>
+                Afecta ventas entregadas, costos, ROAS y utilidad neta
+              </div>
+            </div>
           </div>
 
           <div
