@@ -106,6 +106,29 @@ type InsightRow = {
   level: string;
 };
 
+function isMetaEntityActive(status: string): boolean {
+  return String(status || '').trim().toUpperCase() === 'ACTIVE';
+}
+
+function rowHasSpend(row: InsightRow): boolean {
+  const spendNum = Number(row.spend);
+  return Number.isFinite(spendNum) && spendNum > 0;
+}
+
+function rowMatchesActivityFilter(row: InsightRow, filter: CampaignActivityFilter): boolean {
+  const active = isMetaEntityActive(row.status);
+  if (filter === 'active') return active;
+  if (filter === 'inactive') return !active;
+  return true;
+}
+
+/** Las campañas inactivas suelen tener gasto 0 en el periodo; no exigir gasto en ese filtro. */
+function rowPassesActivitySpendGate(row: InsightRow, filter: CampaignActivityFilter): boolean {
+  if (!rowMatchesActivityFilter(row, filter)) return false;
+  if (filter === 'inactive') return true;
+  return rowHasSpend(row);
+}
+
 type Totals = {
   impressions: number;
   clicks: number;
@@ -928,12 +951,7 @@ export function MetaInsightsPanel({
 
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
-      const spendNum = Number(row.spend);
-      if (!Number.isFinite(spendNum) || spendNum <= 0) return false;
-
-      const st = String(row.status || '').toUpperCase();
-      if (campaignActivityFilter === 'active' && st !== 'ACTIVE') return false;
-      if (campaignActivityFilter === 'inactive' && st === 'ACTIVE') return false;
+      if (!rowPassesActivitySpendGate(row, campaignActivityFilter)) return false;
 
       if (filterProductId === FILTER_PRODUCT_UNASSIGNED) {
         if (!campaignProductLinksReady) return true;
@@ -952,7 +970,12 @@ export function MetaInsightsPanel({
     });
   }, [rows, campaignActivityFilter, filterProductId, level, campaignProductLinks, campaignProductLinksReady]);
 
-  /** Meta puede devolver filas con métricas en 0; la tabla solo lista las que tienen gasto &gt; 0 en el período. */
+  const hasRowsForActivityFilter = useMemo(
+    () => rows.some((row) => rowPassesActivitySpendGate(row, campaignActivityFilter)),
+    [rows, campaignActivityFilter],
+  );
+
+  /** Meta puede devolver filas con métricas en 0; activas/todas requieren gasto &gt; 0 en el período. */
   const hasFetchedRowWithSpend = useMemo(
     () =>
       rows.some((row) => {
@@ -1107,14 +1130,7 @@ export function MetaInsightsPanel({
 
   const campaignLinkStats = useMemo(() => {
     if (level !== 'campaigns' || !campaignProductLinksReady) return null;
-    const campaignRows = rows.filter((row) => {
-      const spendNum = Number(row.spend);
-      if (!Number.isFinite(spendNum) || spendNum <= 0) return false;
-      const st = String(row.status || '').toUpperCase();
-      if (campaignActivityFilter === 'active' && st !== 'ACTIVE') return false;
-      if (campaignActivityFilter === 'inactive' && st === 'ACTIVE') return false;
-      return true;
-    });
+    const campaignRows = rows.filter((row) => rowPassesActivitySpendGate(row, campaignActivityFilter));
     let linked = 0;
     let unlinked = 0;
     for (const row of campaignRows) {
@@ -1268,7 +1284,11 @@ export function MetaInsightsPanel({
         <select
           value={campaignActivityFilter}
           onChange={(e) => setCampaignActivityFilter(e.target.value as CampaignActivityFilter)}
-          title="Filtra por estado efectivo en Meta (campaña, conjunto o anuncio según la pestaña). La tabla solo incluye líneas con gasto publicitario &gt; 0 en el período seleccionado arriba."
+          title={
+            campaignActivityFilter === 'inactive'
+              ? 'Muestra campañas/conjuntos/anuncios no activos (pausados, archivados, etc.), aunque no tengan gasto en el periodo'
+              : 'Filtra por estado efectivo en Meta. Activas y «todas» solo incluyen filas con gasto > 0 en el periodo.'
+          }
           style={{
             padding: '8px 12px',
             borderRadius: 8,
@@ -1390,7 +1410,10 @@ export function MetaInsightsPanel({
             {
               label: 'Campañas en total',
               value: formatNumber(campaignLinkStats.total),
-              hint: 'Con gasto en el período y según filtro activo/inactivo',
+              hint:
+                campaignActivityFilter === 'inactive'
+                  ? 'Campañas no activas (incluye las sin gasto en el periodo)'
+                  : 'Con gasto en el período y según filtro activo/inactivo',
               color: ds.textPrimary,
               bg: ds.bgCard,
             },
@@ -1515,7 +1538,12 @@ export function MetaInsightsPanel({
                       No hay filas con datos de insights en este período (puede que no haya entregas o que el token no
                       tenga permisos).
                     </>
-                  ) : !hasFetchedRowWithSpend ? (
+                  ) : !hasRowsForActivityFilter && campaignActivityFilter === 'inactive' ? (
+                    <>
+                      No hay campañas, conjuntos o anuncios inactivos en la(s) cuenta(s) seleccionada(s). Prueba «Todas» o
+                      cambia de cuenta.
+                    </>
+                  ) : !hasFetchedRowWithSpend && campaignActivityFilter !== 'inactive' ? (
                     <>
                       Ningún registro tiene gasto publicitario en el período seleccionado. Cambia las fechas, la cuenta u
                       otra vista (campaña / conjunto / anuncio).
