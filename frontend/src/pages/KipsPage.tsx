@@ -49,6 +49,8 @@ type SeriesPayload = {
   meta_currency?: string | null;
   ganancia_comparable?: boolean;
   product_options?: { key: string; label: string; product_id: number | null }[];
+  product_id_applied?: number | null;
+  warning?: string | null;
   error?: string;
 };
 
@@ -205,10 +207,34 @@ function linePath(values: number[], width: number, height: number, padY = 12): s
     .join(' ');
 }
 
-function aggregateProductDays(days: SeriesDay[], productKey: string, adminPercent: number): SeriesDay[] {
-  if (!productKey) return days;
+function findProductInDay(
+  byProduct: SeriesDay['by_product'],
+  productKey: string,
+  productId: number | null,
+) {
+  if (!byProduct || typeof byProduct !== 'object') return null;
+  if (productKey && byProduct[productKey]) return byProduct[productKey];
+  if (productId != null) {
+    const pidKey = `p:${productId}`;
+    if (byProduct[pidKey]) return byProduct[pidKey];
+    const idKey = String(productId);
+    if (byProduct[idKey]) return byProduct[idKey];
+    for (const row of Object.values(byProduct)) {
+      if (row && Number(row.product_id) === productId) return row;
+    }
+  }
+  return null;
+}
+
+function aggregateProductDays(
+  days: SeriesDay[],
+  productKey: string,
+  productId: number | null,
+  adminPercent: number,
+): SeriesDay[] {
+  if (!productKey && productId == null) return days;
   return days.map((d) => {
-    const p = d.by_product?.[productKey];
+    const p = findProductInDay(d.by_product, productKey, productId);
     if (!p) {
       return {
         ...d,
@@ -218,6 +244,8 @@ function aggregateProductDays(days: SeriesDay[], productKey: string, adminPercen
         costo_producto_total: 0,
         costo_producto_entregado_total: 0,
         costo_flete_promedio_total: 0,
+        gasto_publicitario_total: 0,
+        utilidad: null,
       };
     }
     const ventas = Number(p.ventas_despachadas_total || 0);
@@ -257,6 +285,7 @@ export default function KipsPage() {
   const [shopifyConnected, setShopifyConnected] = useState(false);
   const [shopifyDomain, setShopifyDomain] = useState<string | null>(null);
   const [metaConnected, setMetaConnected] = useState(false);
+  const [metaSpendByProduct, setMetaSpendByProduct] = useState<Record<string, number>>({});
   const [adminPercentInput] = useState(() => {
     try {
       return localStorage.getItem('kovo_ganancia_admin_percent') || '0';
@@ -282,13 +311,13 @@ export default function KipsPage() {
     setError(null);
     try {
       const qs = new URLSearchParams({ meta_period: period });
-      if (selectedProduct?.product_id) qs.set('product_id', String(selectedProduct.product_id));
 
-      const [seriesRes, insightsRes, shopRes, metaRes] = await Promise.all([
+      const [seriesRes, insightsRes, shopRes, metaRes, spendRes] = await Promise.all([
         apiFetch(`/api/ganancia-diaria/series?${qs}`),
         apiFetch(`/api/meta/insights?level=campaigns&period=${period}`),
         apiFetch('/api/shopify/connection'),
         apiFetch('/api/meta/connections'),
+        apiFetch(`/api/product-analytics/meta-spend?period=${period}`),
       ]);
 
       const seriesBody = (await seriesRes.json().catch(() => ({}))) as SeriesPayload;
@@ -304,6 +333,9 @@ export default function KipsPage() {
 
       const insightsBody = (await insightsRes.json().catch(() => ({}))) as MetaInsightsPayload;
       setCampaigns(Array.isArray(insightsBody.rows) ? insightsBody.rows : []);
+
+      const spendBody = (await spendRes.json().catch(() => ({}))) as { product_spend?: Record<string, number> };
+      setMetaSpendByProduct(spendRes.ok && spendBody.product_spend ? spendBody.product_spend : {});
 
       const shopBody = (await shopRes.json().catch(() => ({}))) as {
         status?: string;
@@ -323,7 +355,7 @@ export default function KipsPage() {
     } finally {
       setLoading(false);
     }
-  }, [period, selectedProduct?.product_id, selectedProductId]);
+  }, [period]);
 
   useEffect(() => {
     void load();
@@ -335,9 +367,11 @@ export default function KipsPage() {
   }, [seriesData]);
 
   const days = useMemo(() => {
-    if (tab === 'resumen' || !productKey) return rawDays;
-    return aggregateProductDays(rawDays, productKey, adminPercent);
-  }, [rawDays, productKey, tab, adminPercent]);
+    if (tab === 'resumen') return rawDays;
+    const pid = selectedProduct?.product_id ?? null;
+    if (!productKey && pid == null) return rawDays;
+    return aggregateProductDays(rawDays, productKey, pid, adminPercent);
+  }, [rawDays, productKey, tab, adminPercent, selectedProduct?.product_id]);
 
   const prevDays = useMemo(() => {
     const len = days.length;
@@ -368,6 +402,12 @@ export default function KipsPage() {
       costo += Number(d.costo_producto_entregado_total || d.costo_producto_total || 0);
       flete += Number(d.costo_flete_promedio_total || 0);
     }
+    if (tab === 'producto' && selectedProduct?.product_id != null) {
+      const metaSpend = metaSpendByProduct[String(selectedProduct.product_id)];
+      if (metaSpend != null && Number.isFinite(Number(metaSpend))) {
+        spend = Number(metaSpend);
+      }
+    }
     const admin = ventasEnt * (adminPercent / 100);
     const baseCost = costo + flete + admin;
     const utilidad = comparable ? ventas - spend - baseCost : null;
@@ -376,7 +416,7 @@ export default function KipsPage() {
     const netPct = utilidad != null && ventas > 0 ? (utilidad / ventas) * 100 : null;
     const cpa = pedidos > 0 ? spend / pedidos : 0;
     return { ventas, ventasEnt, pedidos, spend, costo, flete, admin, baseCost, utilidad, roas, roasTarget, netPct, cpa };
-  }, [days, adminPercent, comparable, goalPct]);
+  }, [days, adminPercent, comparable, goalPct, tab, selectedProduct?.product_id, metaSpendByProduct]);
 
   const prevTotals = useMemo(() => {
     let ventas = 0;
@@ -614,6 +654,20 @@ export default function KipsPage() {
         <div style={{ ...cardBase, color: ds.dangerText }}>{error}</div>
       ) : (
         <>
+          {seriesData?.warning ? (
+            <div
+              style={{
+                ...cardBase,
+                marginBottom: 16,
+                padding: '12px 16px',
+                background: ds.warningBg,
+                color: ds.warningText,
+                fontSize: 13,
+              }}
+            >
+              {seriesData.warning}
+            </div>
+          ) : null}
           <div
             style={{
               marginBottom: 8,
