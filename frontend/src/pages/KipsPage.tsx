@@ -97,17 +97,36 @@ const cardBase: CSSProperties = {
 const GOAL_PRESETS = [15, 20, 25, 30] as const;
 const KIPS_CONFIRMADOS_KEY = 'kovo_kips_confirmados_pct';
 const KIPS_ENTREGADOS_KEY = 'kovo_kips_entregados_pct';
+const KIPS_COSTO_PRODUCTO_KEY = 'kovo_kips_costo_producto_pct';
+const KIPS_COSTO_ENVIO_KEY = 'kovo_kips_costo_envio_pct';
+const KIPS_COSTO_ADMIN_KEY = 'kovo_kips_costo_admin_pct';
 const DEFAULT_CONVERSION_PCT = 80;
+const DEFAULT_COSTO_PRODUCTO_PCT = 30;
+const DEFAULT_COSTO_ENVIO_PCT = 30;
+const DEFAULT_COSTO_ADMIN_PCT = 2;
 
 function clampPct(n: number): number {
   if (!Number.isFinite(n)) return 0;
   return Math.min(100, Math.max(0, n));
 }
 
-function parseRateInput(raw: string, fallback = DEFAULT_CONVERSION_PCT): number {
-  const n = parsePercentInput(raw);
-  return n > 0 ? clampPct(n) : fallback;
+function parsePercentInput(raw: string): number {
+  const n = Number.parseFloat(String(raw || '').replace(',', '.'));
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return n;
 }
+
+function parseStoredPct(raw: string | null, fallback: number): number {
+  if (raw == null || raw.trim() === '') return fallback;
+  const n = parsePercentInput(raw);
+  return Number.isFinite(n) ? clampPct(n) : fallback;
+}
+
+type KipsCostRates = {
+  costoProductoPct: number;
+  costoEnvioPct: number;
+  costoAdminPct: number;
+};
 
 type AdjustedDayMetrics = {
   ventas: number;
@@ -125,21 +144,19 @@ function adjustDayMetrics(
   d: SeriesDay,
   confirmadosPct: number,
   entregadosPct: number,
-  adminPercent: number,
+  costRates: KipsCostRates,
   comparable: boolean | undefined,
 ): AdjustedDayMetrics {
   const ventas = Number(d.ventas_despachadas_total || 0);
   const pedidos = Number(d.ventas_despachadas_pedidos || 0);
   const spend = Number(d.gasto_publicitario_total || 0);
-  const costoFull = Number(d.costo_producto_entregado_total || d.costo_producto_total || 0);
-  const fleteFull = Number(d.costo_flete_promedio_total || 0);
   const entRate = entregadosPct / 100;
   const confRate = confirmadosPct / 100;
   const ventasEntregadas = ventas * entRate;
   const pedidosConfirmados = pedidos * confRate;
-  const costo = costoFull * entRate;
-  const flete = fleteFull * entRate;
-  const admin = ventasEntregadas * (adminPercent / 100);
+  const costo = ventasEntregadas * (costRates.costoProductoPct / 100);
+  const flete = ventasEntregadas * (costRates.costoEnvioPct / 100);
+  const admin = ventasEntregadas * (costRates.costoAdminPct / 100);
   const utilidad = comparable ? ventasEntregadas - spend - costo - flete - admin : null;
   return {
     ventas,
@@ -178,10 +195,51 @@ function roasFmt(n: number): string {
   return n.toFixed(2);
 }
 
-function parsePercentInput(raw: string): number {
-  const n = Number.parseFloat(String(raw || '').replace(',', '.'));
-  if (!Number.isFinite(n) || n < 0) return 0;
-  return n;
+function KipsPctControl({
+  label,
+  hint,
+  value,
+  onChange,
+}: {
+  label: string;
+  hint: string;
+  value: number;
+  onChange: (n: number) => void;
+}) {
+  return (
+    <div style={cardBase}>
+      <div style={{ fontSize: 13, fontWeight: 700, color: ds.textPrimary, marginBottom: 12 }}>{label}</div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
+        <input
+          type="number"
+          min={0}
+          max={100}
+          step={0.1}
+          value={value}
+          onChange={(e) => onChange(clampPct(Number(e.target.value)))}
+          style={{
+            width: 72,
+            padding: '6px 8px',
+            borderRadius: 8,
+            border: `1px solid ${ds.borderCard}`,
+            fontSize: 14,
+            fontWeight: 600,
+          }}
+        />
+        <span style={{ fontSize: 13, color: ds.textMuted }}>%</span>
+      </div>
+      <input
+        type="range"
+        min={0}
+        max={100}
+        step={0.5}
+        value={value}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{ width: '100%', accentColor: ds.brand }}
+      />
+      <div style={{ fontSize: 12, color: ds.textMuted, marginTop: 8 }}>{hint}</div>
+    </div>
+  );
 }
 
 function dynamicRoasTarget(ventasEntregadas: number, baseCost: number, goalPct: number): number {
@@ -282,7 +340,6 @@ function aggregateProductDays(
   days: SeriesDay[],
   productKey: string,
   productId: number | null,
-  adminPercent: number,
 ): SeriesDay[] {
   if (!productKey && productId == null) return days;
   return days.map((d) => {
@@ -302,14 +359,10 @@ function aggregateProductDays(
     }
     const ventas = Number(p.ventas_despachadas_total || 0);
     const ventasEnt = Number(p.ventas_entregadas_total || ventas);
-    const costo = Number(p.costo_producto_entregado_total || p.costo_producto_total || 0);
-    const flete = Number(p.costo_flete_promedio_total || 0);
-    const admin = ventasEnt * (adminPercent / 100);
     const daySpend = Number(d.gasto_publicitario_total || 0);
     const dayVentas = Number(d.ventas_despachadas_total || 0);
     const share = dayVentas > 0 ? ventas / dayVentas : 0;
     const spend = daySpend * share;
-    const utilidad = ventas - spend - costo - flete - admin;
     return {
       date: d.date,
       ventas_despachadas_total: ventas,
@@ -317,10 +370,10 @@ function aggregateProductDays(
       ventas_despachadas_pedidos: Number(p.ventas_despachadas_pedidos || 0),
       cantidad_producto_total: 0,
       costo_producto_total: Number(p.costo_producto_total || 0),
-      costo_producto_entregado_total: costo,
-      costo_flete_promedio_total: flete,
+      costo_producto_entregado_total: Number(p.costo_producto_entregado_total || p.costo_producto_total || 0),
+      costo_flete_promedio_total: Number(p.costo_flete_promedio_total || 0),
       gasto_publicitario_total: spend,
-      utilidad,
+      utilidad: null,
     };
   });
 }
@@ -338,29 +391,46 @@ export default function KipsPage() {
   const [shopifyDomain, setShopifyDomain] = useState<string | null>(null);
   const [metaConnected, setMetaConnected] = useState(false);
   const [metaSpendByProduct, setMetaSpendByProduct] = useState<Record<string, number>>({});
-  const [adminPercentInput] = useState(() => {
-    try {
-      return localStorage.getItem('kovo_ganancia_admin_percent') || '0';
-    } catch {
-      return '0';
-    }
-  });
   const [confirmadosPct, setConfirmadosPct] = useState(() => {
     try {
-      return parseRateInput(localStorage.getItem(KIPS_CONFIRMADOS_KEY) ?? String(DEFAULT_CONVERSION_PCT));
+      return parseStoredPct(localStorage.getItem(KIPS_CONFIRMADOS_KEY), DEFAULT_CONVERSION_PCT);
     } catch {
       return DEFAULT_CONVERSION_PCT;
     }
   });
   const [entregadosPct, setEntregadosPct] = useState(() => {
     try {
-      return parseRateInput(localStorage.getItem(KIPS_ENTREGADOS_KEY) ?? String(DEFAULT_CONVERSION_PCT));
+      return parseStoredPct(localStorage.getItem(KIPS_ENTREGADOS_KEY), DEFAULT_CONVERSION_PCT);
     } catch {
       return DEFAULT_CONVERSION_PCT;
     }
   });
+  const [costoProductoPct, setCostoProductoPct] = useState(() => {
+    try {
+      return parseStoredPct(localStorage.getItem(KIPS_COSTO_PRODUCTO_KEY), DEFAULT_COSTO_PRODUCTO_PCT);
+    } catch {
+      return DEFAULT_COSTO_PRODUCTO_PCT;
+    }
+  });
+  const [costoEnvioPct, setCostoEnvioPct] = useState(() => {
+    try {
+      return parseStoredPct(localStorage.getItem(KIPS_COSTO_ENVIO_KEY), DEFAULT_COSTO_ENVIO_PCT);
+    } catch {
+      return DEFAULT_COSTO_ENVIO_PCT;
+    }
+  });
+  const [costoAdminPct, setCostoAdminPct] = useState(() => {
+    try {
+      return parseStoredPct(localStorage.getItem(KIPS_COSTO_ADMIN_KEY), DEFAULT_COSTO_ADMIN_PCT);
+    } catch {
+      return DEFAULT_COSTO_ADMIN_PCT;
+    }
+  });
 
-  const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
+  const costRates = useMemo<KipsCostRates>(
+    () => ({ costoProductoPct, costoEnvioPct, costoAdminPct }),
+    [costoProductoPct, costoEnvioPct, costoAdminPct],
+  );
 
   useEffect(() => {
     try {
@@ -377,6 +447,30 @@ export default function KipsPage() {
       /* noop */
     }
   }, [entregadosPct]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(KIPS_COSTO_PRODUCTO_KEY, String(costoProductoPct));
+    } catch {
+      /* noop */
+    }
+  }, [costoProductoPct]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(KIPS_COSTO_ENVIO_KEY, String(costoEnvioPct));
+    } catch {
+      /* noop */
+    }
+  }, [costoEnvioPct]);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(KIPS_COSTO_ADMIN_KEY, String(costoAdminPct));
+    } catch {
+      /* noop */
+    }
+  }, [costoAdminPct]);
   const currency = seriesData?.ventas_currency || seriesData?.meta_currency || 'USD';
   const comparable = seriesData?.ganancia_comparable;
 
@@ -452,19 +546,21 @@ export default function KipsPage() {
     if (tab === 'resumen') return rawDays;
     const pid = selectedProduct?.product_id ?? null;
     if (!productKey && pid == null) return rawDays;
-    return aggregateProductDays(rawDays, productKey, pid, adminPercent);
-  }, [rawDays, productKey, tab, adminPercent, selectedProduct?.product_id]);
+    return aggregateProductDays(rawDays, productKey, pid);
+  }, [rawDays, productKey, tab, selectedProduct?.product_id]);
 
   const adjustedDays = useMemo(() => {
-    return days.map((d) => adjustDayMetrics(d, confirmadosPct, entregadosPct, adminPercent, comparable));
-  }, [days, confirmadosPct, entregadosPct, adminPercent, comparable]);
+    return days.map((d) => adjustDayMetrics(d, confirmadosPct, entregadosPct, costRates, comparable));
+  }, [days, confirmadosPct, entregadosPct, costRates, comparable]);
 
   const prevAdjustedDays = useMemo(() => {
     const len = days.length;
     if (len < 2) return [];
     const half = Math.floor(len / 2);
-    return days.slice(0, half).map((d) => adjustDayMetrics(d, confirmadosPct, entregadosPct, adminPercent, comparable));
-  }, [days, confirmadosPct, entregadosPct, adminPercent, comparable]);
+    return days
+      .slice(0, half)
+      .map((d) => adjustDayMetrics(d, confirmadosPct, entregadosPct, costRates, comparable));
+  }, [days, confirmadosPct, entregadosPct, costRates, comparable]);
 
   const totals = useMemo(() => {
     let ventas = 0;
@@ -474,6 +570,7 @@ export default function KipsPage() {
     let spend = 0;
     let costo = 0;
     let flete = 0;
+    let admin = 0;
     for (const d of adjustedDays) {
       ventas += d.ventas;
       ventasEnt += d.ventasEntregadas;
@@ -482,6 +579,7 @@ export default function KipsPage() {
       spend += d.spend;
       costo += d.costo;
       flete += d.flete;
+      admin += d.admin;
     }
     if (tab === 'producto' && selectedProduct?.product_id != null) {
       const metaSpend = metaSpendByProduct[String(selectedProduct.product_id)];
@@ -489,8 +587,8 @@ export default function KipsPage() {
         spend = Number(metaSpend);
       }
     }
-    const admin = ventasEnt * (adminPercent / 100);
-    const baseCost = costo + flete + admin;
+    const adminTotal = admin;
+    const baseCost = costo + flete + adminTotal;
     const utilidad = comparable ? ventasEnt - spend - baseCost : null;
     const roas = spend > 0 ? ventasEnt / spend : 0;
     const roasTarget = dynamicRoasTarget(ventasEnt, baseCost, goalPct);
@@ -504,7 +602,7 @@ export default function KipsPage() {
       spend,
       costo,
       flete,
-      admin,
+      admin: adminTotal,
       baseCost,
       utilidad,
       roas,
@@ -512,7 +610,7 @@ export default function KipsPage() {
       netPct,
       cpa,
     };
-  }, [adjustedDays, adminPercent, comparable, goalPct, tab, selectedProduct?.product_id, metaSpendByProduct]);
+  }, [adjustedDays, comparable, goalPct, tab, selectedProduct?.product_id, metaSpendByProduct]);
 
   const prevTotals = useMemo(() => {
     let ventasEnt = 0;
@@ -530,7 +628,7 @@ export default function KipsPage() {
 
   const dayMetrics: DayMetrics[] = useMemo(() => {
     return days.map((d, i) => {
-      const adj = adjustedDays[i] ?? adjustDayMetrics(d, confirmadosPct, entregadosPct, adminPercent, comparable);
+      const adj = adjustedDays[i] ?? adjustDayMetrics(d, confirmadosPct, entregadosPct, costRates, comparable);
       const baseCost = adj.costo + adj.flete + adj.admin;
       const roas = adj.spend > 0 ? adj.ventasEntregadas / adj.spend : 0;
       const roasTarget = dynamicRoasTarget(adj.ventasEntregadas, baseCost, goalPct);
@@ -555,7 +653,7 @@ export default function KipsPage() {
         estado,
       };
     });
-  }, [days, adjustedDays, confirmadosPct, entregadosPct, adminPercent, comparable, goalPct]);
+  }, [days, adjustedDays, confirmadosPct, entregadosPct, costRates, comparable, goalPct]);
 
   const scalingChart = useMemo(() => {
     let cumSpend = 0;
@@ -855,84 +953,41 @@ export default function KipsPage() {
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+              gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
               gap: 14,
               marginBottom: 16,
             }}
           >
-            <div style={cardBase}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: ds.textPrimary, marginBottom: 12 }}>
-                % de pedidos confirmados
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={confirmadosPct}
-                  onChange={(e) => setConfirmadosPct(clampPct(Number(e.target.value)))}
-                  style={{
-                    width: 72,
-                    padding: '6px 8px',
-                    borderRadius: 8,
-                    border: `1px solid ${ds.borderCard}`,
-                    fontSize: 14,
-                    fontWeight: 600,
-                  }}
-                />
-                <span style={{ fontSize: 13, color: ds.textMuted }}>%</span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={1}
-                value={confirmadosPct}
-                onChange={(e) => setConfirmadosPct(Number(e.target.value))}
-                style={{ width: '100%', accentColor: ds.brand }}
-              />
-              <div style={{ fontSize: 12, color: ds.textMuted, marginTop: 8 }}>
-                Afecta compras, pedidos confirmados y CPA
-              </div>
-            </div>
-
-            <div style={cardBase}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: ds.textPrimary, marginBottom: 12 }}>
-                % de pedidos entregados
-              </div>
-              <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 10 }}>
-                <input
-                  type="number"
-                  min={0}
-                  max={100}
-                  step={1}
-                  value={entregadosPct}
-                  onChange={(e) => setEntregadosPct(clampPct(Number(e.target.value)))}
-                  style={{
-                    width: 72,
-                    padding: '6px 8px',
-                    borderRadius: 8,
-                    border: `1px solid ${ds.borderCard}`,
-                    fontSize: 14,
-                    fontWeight: 600,
-                  }}
-                />
-                <span style={{ fontSize: 13, color: ds.textMuted }}>%</span>
-              </div>
-              <input
-                type="range"
-                min={0}
-                max={100}
-                step={1}
-                value={entregadosPct}
-                onChange={(e) => setEntregadosPct(Number(e.target.value))}
-                style={{ width: '100%', accentColor: ds.brand }}
-              />
-              <div style={{ fontSize: 12, color: ds.textMuted, marginTop: 8 }}>
-                Afecta ventas entregadas, costos, ROAS y utilidad neta
-              </div>
-            </div>
+            <KipsPctControl
+              label="% de pedidos confirmados"
+              hint="Afecta compras, pedidos confirmados y CPA"
+              value={confirmadosPct}
+              onChange={setConfirmadosPct}
+            />
+            <KipsPctControl
+              label="% de pedidos entregados"
+              hint="Base de ventas entregadas para costos y utilidad"
+              value={entregadosPct}
+              onChange={setEntregadosPct}
+            />
+            <KipsPctControl
+              label="Costo del producto"
+              hint="% sobre ventas entregadas (por defecto 30%)"
+              value={costoProductoPct}
+              onChange={setCostoProductoPct}
+            />
+            <KipsPctControl
+              label="Costo de envío"
+              hint="% sobre ventas entregadas (por defecto 30%)"
+              value={costoEnvioPct}
+              onChange={setCostoEnvioPct}
+            />
+            <KipsPctControl
+              label="Costo administrativo"
+              hint="% sobre ventas entregadas (por defecto 2%)"
+              value={costoAdminPct}
+              onChange={setCostoAdminPct}
+            />
           </div>
 
           <div
@@ -984,7 +1039,8 @@ export default function KipsPage() {
               <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 4 }}>ROAS objetivo dinámico</div>
               <div style={{ fontSize: 36, fontWeight: 700, color: ds.brand, lineHeight: 1 }}>{roasFmt(totals.roasTarget)}</div>
               <div style={{ fontSize: 12, color: ds.textMuted, marginTop: 8 }}>
-                Para alcanzar {goalPct}% de utilidad neta con la estructura de costos actual
+                Para alcanzar {goalPct}% de utilidad neta (producto {costoProductoPct}% + envío {costoEnvioPct}% + admin{' '}
+                {costoAdminPct}% sobre entregados)
               </div>
             </div>
 
