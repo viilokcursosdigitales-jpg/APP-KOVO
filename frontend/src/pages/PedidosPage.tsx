@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
-import { markGananciaSeriesStale } from '../utils/gananciaSeriesCache';
 import { ds } from '../design-system/ds';
 import { KpiCard } from '../design-system/KpiCard';
 import { DataTable, Th, Td, tableBase } from '../design-system/DataTable';
@@ -858,7 +857,6 @@ export default function PedidosPage() {
       total_a_pagar_override?: number | null;
     };
     setShopifyError('');
-    markGananciaSeriesStale();
     setShopifyOrders((prev) =>
       prev.map((o) => {
         if (o.id !== orderId) return o;

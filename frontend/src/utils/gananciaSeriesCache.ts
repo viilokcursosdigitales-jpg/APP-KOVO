@@ -13,7 +13,6 @@ export function markGananciaSeriesStale(): void {
     /* noop */
   }
   clearApiGetCache('/api/ganancia-diaria');
-  clearApiGetCache('/api/shopify');
 }
 
 export function isGananciaSeriesStale(): boolean {
