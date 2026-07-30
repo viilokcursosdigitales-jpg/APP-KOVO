@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
+import { parseMoneyAmount } from '../utils/moneyParse';
 import { markGananciaSeriesStale } from '../utils/gananciaSeriesCache';
 import { ds } from '../design-system/ds';
 import { labelStyle } from './authStyles';
@@ -174,9 +175,7 @@ function computeAnticipoAmountFromOrder(
 }
 
 function parseNonNegativeDecimalInput(value: string): number | null {
-  const n = Number.parseFloat(String(value).replace(',', '.'));
-  if (!Number.isFinite(n) || n < 0) return null;
-  return n;
+  return parseMoneyAmount(value);
 }
 
 function formatMoneyAmount(n: number, currency: string): string {
@@ -477,13 +476,13 @@ export default function PedidosOrderEditPage() {
     setError('');
     setSuccess('');
     try {
-      const price = Number.parseFloat(String(draft.price).replace(',', '.'));
-      if (!Number.isFinite(price) || price < 0) {
+      const price = parseMoneyAmount(draft.price);
+      if (price == null) {
         setError('Precio no válido');
         return;
       }
-      const anticipo = Number.parseFloat(String(draft.anticipo).replace(',', '.'));
-      if (!Number.isFinite(anticipo) || anticipo < 0) {
+      const anticipo = parseMoneyAmount(draft.anticipo);
+      if (anticipo == null) {
         setError('Pago anticipado no válido');
         return;
       }

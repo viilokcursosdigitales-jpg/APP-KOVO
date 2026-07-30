@@ -5658,11 +5658,45 @@ function shopifyDefaultTotalAPagar(o) {
 }
 
 /**
+ * Parsea montos en formato colombiano (119.000) o decimal (119000 / 119,50).
+ * @param {unknown} raw
+ * @returns {number|null}
+ */
+function parseMoneyAmount(raw) {
+  if (raw == null || raw === '') return null;
+  if (typeof raw === 'number' && Number.isFinite(raw)) return raw >= 0 ? raw : null;
+  if (typeof raw !== 'string') return null;
+  const t = String(raw).trim().replace(/[$\s]/g, '');
+  if (!t) return null;
+  if (/^\d{1,3}(\.\d{3})+$/.test(t)) {
+    const n = Number.parseFloat(t.replace(/\./g, ''));
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+  if (t.includes(',') && t.includes('.')) {
+    const lastDot = t.lastIndexOf('.');
+    const lastComma = t.lastIndexOf(',');
+    const n =
+      lastComma > lastDot
+        ? Number.parseFloat(t.replace(/\./g, '').replace(',', '.'))
+        : Number.parseFloat(t.replace(/,/g, ''));
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+  if (t.includes(',')) {
+    const n = Number.parseFloat(t.replace(/\./g, '').replace(',', '.'));
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  }
+  const n = Number.parseFloat(t.replace(/,/g, ''));
+  return Number.isFinite(n) && n >= 0 ? n : null;
+}
+
+/**
  * Lee price_override de KOVO (NULL/vacío = usar total Shopify).
  */
 function readPriceOverrideValue(raw) {
   if (raw == null) return null;
   if (typeof raw === 'string' && raw.trim() === '') return null;
+  const parsed = parseMoneyAmount(raw);
+  if (parsed != null) return parsed;
   const n = Number(raw);
   if (!Number.isFinite(n) || n < 0) return null;
   return n;
@@ -5679,6 +5713,8 @@ function resolveOrderRevenueAmount(order, localFields) {
   if (ovLocal != null) return ovLocal;
   const ovOrder = readPriceOverrideValue(order?.price_override);
   if (ovOrder != null) return ovOrder;
+  const baseParsed = parseMoneyAmount(order?.shopifyTotal ?? order?.total ?? '0');
+  if (baseParsed != null) return baseParsed;
   const baseRaw = Number.parseFloat(String(order?.shopifyTotal ?? order?.total ?? '0').replace(',', '.'));
   if (Number.isFinite(baseRaw) && baseRaw >= 0) return baseRaw;
   return NaN;
@@ -6668,13 +6704,13 @@ function gananciaMergeProductDay(innerMap, contrib) {
     };
     cur.label = row.label || cur.label;
     if (row.product_id != null) cur.product_id = row.product_id;
-    cur.ventas_despachadas += row.ventas_despachadas;
-    cur.ventas_entregadas += row.ventas_entregadas;
-    cur.costo_producto += row.costo_producto;
-    cur.costo_entregado += row.costo_entregado;
-    cur.flete += row.flete;
-    cur.qty += row.qty;
-    cur.pedidos += row.pedidos;
+    cur.ventas_despachadas += Number(row.ventas_despachadas) || 0;
+    cur.ventas_entregadas += Number(row.ventas_entregadas) || 0;
+    cur.costo_producto += Number(row.costo_producto) || 0;
+    cur.costo_entregado += Number(row.costo_entregado) || 0;
+    cur.flete += Number(row.flete) || 0;
+    cur.qty += Number(row.qty) || 0;
+    cur.pedidos += Number(row.pedidos) || 0;
     innerMap.set(pk, cur);
   }
 }
@@ -8288,8 +8324,9 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       if (excludeFin.has(fs)) continue;
       const amt = resolveOrderRevenueAmount(o, lf);
       if (!Number.isFinite(amt) || amt < 0) continue;
-      ventasByDay.set(key, (ventasByDay.get(key) || 0) + amt);
-      pedidosByDay.set(key, (pedidosByDay.get(key) || 0) + 1);
+      const amtN = Number(amt);
+      ventasByDay.set(key, (Number(ventasByDay.get(key)) || 0) + amtN);
+      pedidosByDay.set(key, (Number(pedidosByDay.get(key)) || 0) + 1);
       const qtyOrder = effectiveOrderProductQuantityForGanancia(o, lf);
       qtyByDay.set(key, (qtyByDay.get(key) || 0) + qtyOrder);
       const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, lf));
@@ -8323,8 +8360,9 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       if (excludeFin.has(fs)) continue;
       const amt = resolveOrderRevenueAmount(o, null);
       if (!Number.isFinite(amt) || amt < 0) continue;
-      ventasByDay.set(key, (ventasByDay.get(key) || 0) + amt);
-      pedidosByDay.set(key, (pedidosByDay.get(key) || 0) + 1);
+      const amtN = Number(amt);
+      ventasByDay.set(key, (Number(ventasByDay.get(key)) || 0) + amtN);
+      pedidosByDay.set(key, (Number(pedidosByDay.get(key)) || 0) + 1);
       const qtyOrder = effectiveOrderProductQuantityForGanancia(o, null);
       qtyByDay.set(key, (qtyByDay.get(key) || 0) + qtyOrder);
       const costs = calculateOrderManualCosts(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, null));
@@ -8800,8 +8838,8 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       if (body.price_override !== undefined) {
         if (body.price_override === null) price_override = null;
         else {
-          const n = Number(body.price_override);
-          if (!Number.isFinite(n) || n < 0) {
+          const n = parseMoneyAmount(body.price_override);
+          if (n == null) {
             return res.status(400).json({ error: 'Precio no válido' });
           }
           price_override = n;
@@ -9076,8 +9114,8 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
     if (body.price_override !== undefined) {
       if (body.price_override === null) price_override = null;
       else {
-        const n = Number(body.price_override);
-        if (!Number.isFinite(n) || n < 0) {
+        const n = parseMoneyAmount(body.price_override);
+        if (n == null) {
           return res.status(400).json({ error: 'Precio no válido' });
         }
         price_override = n;

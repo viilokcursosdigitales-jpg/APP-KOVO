@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { apiFetch } from '../auth/api';
 import { markGananciaSeriesStale } from '../utils/gananciaSeriesCache';
 import { ds } from '../design-system/ds';
 import { KpiCard } from '../design-system/KpiCard';
