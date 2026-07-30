@@ -6593,7 +6593,7 @@ function calculateOrderMoticoFreightCost(order, pricingMap, titleToProductIdMap)
 
 /**
  * Reparte ventas, costos y flete del pedido entre productos (líneas) por participación en ingreso de líneas.
- * Devuelve Map productKey -> acumulados para agregar por día.
+ * @param {object|null|undefined} orderLocalFields fila `shopify_order_local_fields` (incl. price_override).
  */
 function gananciaProductContributionsForOrder(order, pricingMap, titleToProductIdMap, orderLocalFields) {
   const amt = resolveOrderRevenueAmount(order, orderLocalFields);
@@ -8423,7 +8423,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         key,
         (costoFletePromedioByDay.get(key) || 0) + costs.avgFreightCost,
       );
-      const pack = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, lf));
+      const pack = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap, lf);
       if (pack) gananciaMergeProductDay(touchDayProducts(key), pack.contrib);
     }
     for (const o of manualRows) {
