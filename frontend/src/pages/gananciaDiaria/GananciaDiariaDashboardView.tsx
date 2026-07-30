@@ -1696,9 +1696,11 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                                 gastoMetaRow
                               : null;
                           const utilidadRow = utilidadMostradaPorDia(row, comparable, adminPercent);
-                          const qty = row.cantidad_producto_total || 0;
+                          const pedidosRow = row.ventas_despachadas_pedidos || 0;
                           const utilidadUnitRow =
-                            utilidadRow != null && qty > 0 ? Math.round((utilidadRow / qty) * 100) / 100 : null;
+                            utilidadRow != null && pedidosRow > 0
+                              ? Math.round((utilidadRow / pedidosRow) * 100) / 100
+                              : null;
                           const dayEstado = classifyDayEstado(utilidadRow, ventasEntregadasRow, goalPct);
                           const utilidadUnitStyle: CSSProperties =
                             utilidadUnitRow == null
@@ -1738,7 +1740,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                               <td style={dailyTdRight}>{fmt(row.ventas_despachadas_total)}</td>
                               <td style={dailyTdRight}>{fmt(ventasEntregadasRow)}</td>
                               <td style={dailyTdRight}>{row.ventas_despachadas_pedidos}</td>
-                              <td style={dailyTdRight}>{Number(qty).toLocaleString('es-CO')}</td>
+                              <td style={dailyTdRight}>{Number(row.cantidad_producto_total || 0).toLocaleString('es-CO')}</td>
                               <td style={dailyTdRight}>{fmt(gastoAdminRow)}</td>
                               <td style={dailyTdRight}>{fmt(row.costo_producto_total || 0)}</td>
                               <td style={dailyTdRight}>{fmt(costoProductoEntregadoRow)}</td>
@@ -1786,8 +1788,8 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                               true,
                             )}
                           >
-                            {totals.utilidadNeta != null && totals.cantidadProducto > 0
-                              ? fmt(Math.round((totals.utilidadNeta / totals.cantidadProducto) * 100) / 100)
+                            {totals.utilidadNeta != null && totals.pedidos > 0
+                              ? fmt(Math.round((totals.utilidadNeta / totals.pedidos) * 100) / 100)
                               : '—'}
                           </td>
                           <td style={{ ...dailyTdRight, fontWeight: 700 }}>{fmt(totals.ventas)}</td>

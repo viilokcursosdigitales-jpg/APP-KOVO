@@ -230,7 +230,7 @@ export function enrichProductRows(
     const pedidos = extra?.pedidos ?? 0;
     const cantidad = extra?.cantidad ?? 0;
     const utilidadUnitaria =
-      row.utilidad != null && cantidad > 0 ? Math.round((row.utilidad / cantidad) * 100) / 100 : null;
+      row.utilidad != null && pedidos > 0 ? Math.round((row.utilidad / pedidos) * 100) / 100 : null;
     const cpa = pedidos > 0 && row.gastoPublicitario > 0 ? row.gastoPublicitario / pedidos : null;
     const estado = classifyProductEstado(row.utilidad, row.utilidadPct, goalPct);
     const prevVentas = prevSeriesMap.get(row.key)?.ventas ?? 0;
