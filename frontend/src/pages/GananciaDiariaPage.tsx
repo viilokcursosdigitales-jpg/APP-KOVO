@@ -734,6 +734,12 @@ export default function GananciaDiariaPage() {
     };
   }, [prevPeriodDays, comparable, adminPercent]);
 
+  const productComplementaryDetail = useMemo(() => {
+    const raw = seriesData?.product_complementary_detail;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    return raw;
+  }, [seriesData?.product_complementary_detail]);
+
   return (
     <GananciaDiariaDashboardView
       seriesLoading={seriesLoading}
@@ -767,7 +773,7 @@ export default function GananciaDiariaPage() {
       prevPeriodDays={prevPeriodDays}
       prevPeriodDaysAllProducts={prevPeriodDaysAllProducts}
       productAnalysisRows={productAnalysisRows}
-      productComplementaryDetail={seriesData?.product_complementary_detail ?? {}}
+      productComplementaryDetail={productComplementaryDetail}
       totals={totals}
       prevTotals={prevTotals}
       selectedRangeDates={selectedRangeDates}

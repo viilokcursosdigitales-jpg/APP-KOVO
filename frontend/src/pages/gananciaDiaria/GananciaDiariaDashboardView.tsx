@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode, RefObject } from 'react';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -589,7 +589,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
     prevPeriodDays,
     prevPeriodDaysAllProducts,
     productAnalysisRows,
-    productComplementaryDetail,
+    productComplementaryDetail = {},
     totals,
     prevTotals,
     selectedRangeDates,
@@ -624,11 +624,17 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
     rows: ComplementaryProductDetail[];
   } | null>(null);
 
+  const complementaryByProductId = useMemo(() => {
+    const raw = productComplementaryDetail;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
+    return raw;
+  }, [productComplementaryDetail]);
+
   const openComplementaryModal = (row: EnrichedProductRow) => {
     const pid = row.product_id;
     if (pid == null || !Number.isFinite(pid)) return;
-    const rows = productComplementaryDetail[String(pid)] ?? [];
-    if (!rows.length) return;
+    const rows = complementaryByProductId[String(pid)];
+    if (!Array.isArray(rows) || !rows.length) return;
     setComplementaryModal({ label: row.label, rows });
   };
 
@@ -1233,9 +1239,11 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                       </thead>
                       <tbody>
                         {enrichedProducts.map((row) => {
+                          const complementaries = complementaryByProductId[String(row.product_id ?? '')];
                           const hasComplementaries =
                             row.product_id != null &&
-                            (productComplementaryDetail[String(row.product_id)]?.length ?? 0) > 0;
+                            Array.isArray(complementaries) &&
+                            complementaries.length > 0;
                           const utilidadUnitStyle: CSSProperties =
                             row.utilidadUnitaria == null
                               ? tdRight

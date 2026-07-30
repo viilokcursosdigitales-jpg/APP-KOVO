@@ -70,13 +70,22 @@ class RouteErrorBoundary extends Component<{ children: ReactNode }, { hasError: 
     if (!this.state.hasError) return this.props.children;
     return (
       <div style={{ maxWidth: 640, margin: '40px auto', padding: 16 }}>
-        <h2 style={{ margin: '0 0 8px' }}>No se pudo abrir el editor del pedido</h2>
+        <h2 style={{ margin: '0 0 8px' }}>No se pudo cargar esta vista</h2>
         <p style={{ margin: '0 0 12px', color: '#475569' }}>
-          Ocurrió un error inesperado en esta vista. Puedes volver a Pedidos e intentar de nuevo.
+          Ocurrió un error inesperado. Puedes recargar la página o volver al inicio.
         </p>
-        <a href="/pedidos" style={{ color: '#2563eb', fontWeight: 600 }}>
-          Volver a Pedidos
-        </a>
+        <div style={{ display: 'flex', gap: 12 }}>
+          <button
+            type="button"
+            onClick={() => window.location.reload()}
+            style={{ color: '#2563eb', fontWeight: 600, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}
+          >
+            Recargar
+          </button>
+          <a href="/inicio" style={{ color: '#2563eb', fontWeight: 600 }}>
+            Volver al inicio
+          </a>
+        </div>
       </div>
     );
   }
@@ -121,7 +130,11 @@ export default function App() {
               <Route path="/indicadores-marketing" element={<MarketingIndicatorsPage />} />
               <Route path="/gasto-publicitario" element={<GastoPublicitarioPage />} />
               <Route path="/canales" element={<CanalesPage />} />
-              <Route path="/ganancia-diaria" element={<GananciaDiariaPage />} />
+              <Route path="/ganancia-diaria" element={
+                <RouteErrorBoundary>
+                  <GananciaDiariaPage />
+                </RouteErrorBoundary>
+              } />
               <Route path="/kips" element={<KipsPage />} />
               <Route path="/gasto-publicitario-por-mes" element={<GastoPublicitarioPorMesPage />} />
               <Route path="/gasto-publicitario-por-producto" element={<GastoPublicitarioPorProductoPage />} />

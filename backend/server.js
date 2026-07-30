@@ -6912,7 +6912,9 @@ async function loadMetaCampaignPrimaryProductIds(organizationId) {
       }
     }
   } catch (e) {
-    if (!(e && e.code === '42P01')) throw e;
+    if (e && e.code === '42P01') return set;
+    console.error('[ganancia-diaria] loadMetaCampaignPrimaryProductIds:', e);
+    return set;
   }
   return set;
 }
