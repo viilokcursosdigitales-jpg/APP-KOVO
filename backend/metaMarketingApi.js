@@ -560,6 +560,64 @@ async function fetchAccountAggregatedInsights(actId, accessToken, datePreset, ap
   return { ok: true, funnel, error: null };
 }
 
+function totalsFromInsightRow(ins) {
+  const impressions = parseNum(ins.impressions);
+  const clicks = parseNum(ins.clicks);
+  const spend = parseNum(ins.spend);
+  const purchases = purchaseCountFromActions(ins.actions);
+  const revenue = purchaseValueFromActionValues(ins.action_values);
+  const cpm = parseNum(ins.cpm);
+  const cpc = parseNum(ins.cpc);
+  const ctr = parseNum(ins.ctr);
+  const roas = spend > 0 && revenue > 0 ? revenue / spend : 0;
+  const cpa = purchases > 0 ? spend / purchases : 0;
+  return { impressions, clicks, spend, purchases, revenue, cpm, cpc, ctr, roas, cpa };
+}
+
+/** Total de cuenta para un date_preset (misma fuente que el total del Administrador de anuncios). */
+async function fetchAccountInsightsTotalsForPreset(actId, accessToken, datePreset, apiOptions = {}) {
+  const v = getGraphVersion();
+  const id = normalizeActId(actId);
+  if (!id) {
+    return { ok: false, error: 'ID de cuenta no válido', totals: null };
+  }
+  const fields = `${INSIGHT_FIELDS},actions,action_values`;
+  const url = `https://graph.facebook.com/${v}/${id}/insights?date_preset=${encodeURIComponent(datePreset)}&fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(accessToken)}`;
+  const { ok, data } = await graphFetchJson(url, { ...apiOptions, accessToken });
+  if (!ok || !data || !Array.isArray(data.data) || !data.data[0]) {
+    const msg = (data && data.error && data.error.message) || 'Sin datos de insights para esta cuenta';
+    return { ok: false, error: msg, totals: null };
+  }
+  return { ok: true, totals: totalsFromInsightRow(data.data[0]), error: null };
+}
+
+async function fetchAccountTotalsForAdAccountsPreset(actIds, accessToken, datePreset, apiOptions = {}) {
+  const partialErrors = [];
+  const merged = { impressions: 0, clicks: 0, spend: 0, purchases: 0, revenue: 0 };
+  let anyOk = false;
+  for (const raw of actIds) {
+    const id = normalizeActId(raw);
+    const r = await fetchAccountInsightsTotalsForPreset(id, accessToken, datePreset, apiOptions);
+    if (!r.ok) {
+      partialErrors.push({ adAccountId: id, error: r.error || 'Error' });
+      continue;
+    }
+    anyOk = true;
+    const t = r.totals;
+    merged.impressions += t.impressions;
+    merged.clicks += t.clicks;
+    merged.spend += t.spend;
+    merged.purchases += t.purchases;
+    merged.revenue += t.revenue;
+  }
+  merged.cpm = merged.impressions > 0 ? (merged.spend / merged.impressions) * 1000 : 0;
+  merged.cpc = merged.clicks > 0 ? merged.spend / merged.clicks : 0;
+  merged.ctr = merged.impressions > 0 ? (merged.clicks / merged.impressions) * 100 : 0;
+  merged.roas = merged.spend > 0 && merged.revenue > 0 ? merged.revenue / merged.spend : 0;
+  merged.cpa = merged.purchases > 0 ? merged.spend / merged.purchases : 0;
+  return { totals: merged, partialErrors, ok: anyOk };
+}
+
 function mergeFunnelPayloads(payloads) {
   if (!payloads || payloads.length === 0) return null;
   const keys = payloads[0].stages.map((s) => s.key);
@@ -925,6 +983,7 @@ module.exports = {
   fetchInsightsForAdAccount,
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
+  fetchAccountTotalsForAdAccountsPreset,
   fetchMergedDailyInsightsForAdAccounts,
   mergeFunnelPayloads,
   fetchAccountSpendForTimeRange,

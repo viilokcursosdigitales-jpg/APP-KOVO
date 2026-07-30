@@ -122,10 +122,17 @@ function rowMatchesActivityFilter(row: InsightRow, filter: CampaignActivityFilte
   return true;
 }
 
-/** Las campañas inactivas suelen tener gasto 0 en el periodo; no exigir gasto en ese filtro. */
-function rowPassesActivitySpendGate(row: InsightRow, filter: CampaignActivityFilter): boolean {
+function rowPassesActivitySpendGate(
+  row: InsightRow,
+  filter: CampaignActivityFilter,
+  period: MetaInsightPeriod,
+): boolean {
   if (!rowMatchesActivityFilter(row, filter)) return false;
   if (filter === 'inactive') return true;
+  if (filter === 'active' && period !== 'hoy') {
+    // En periodos pasados Meta incluye entidades con gasto aunque hoy estén pausadas.
+    return rowHasSpend(row);
+  }
   return rowHasSpend(row);
 }
 
@@ -145,6 +152,7 @@ type MetaInsightsCacheEntry = {
   updatedAt: number;
   rows: InsightRow[];
   totals: Totals | null;
+  accountTotals: Totals | null;
   partialErrors: { adAccountId: string; error: string }[];
   meta: { datePreset: string; fetchedAt: string } | null;
 };
@@ -732,11 +740,12 @@ export function MetaInsightsPanel({
   const [code, setCode] = useState<string | null>(null);
   const [rows, setRows] = useState<InsightRow[]>([]);
   const [totals, setTotals] = useState<Totals | null>(null);
+  const [accountTotals, setAccountTotals] = useState<Totals | null>(null);
   const [partialErrors, setPartialErrors] = useState<{ adAccountId: string; error: string }[]>([]);
   const [meta, setMeta] = useState<{ datePreset: string; fetchedAt: string } | null>(null);
   const [accountOptions, setAccountOptions] = useState<{ id: string; name: string }[]>([]);
   const [filterActId, setFilterActId] = useState('');
-  const [campaignActivityFilter, setCampaignActivityFilter] = useState<CampaignActivityFilter>('active');
+  const [campaignActivityFilter, setCampaignActivityFilter] = useState<CampaignActivityFilter>('all');
   const [filterProductId, setFilterProductId] = useState('');
   const [campaignProductLinks, setCampaignProductLinks] = useState<Record<string, number[]>>({});
   const [campaignProductLinksReady, setCampaignProductLinksReady] = useState(false);
@@ -951,7 +960,7 @@ export function MetaInsightsPanel({
 
   const filteredRows = useMemo(() => {
     return rows.filter((row) => {
-      if (!rowPassesActivitySpendGate(row, campaignActivityFilter)) return false;
+      if (!rowPassesActivitySpendGate(row, campaignActivityFilter, period)) return false;
 
       if (filterProductId === FILTER_PRODUCT_UNASSIGNED) {
         if (!campaignProductLinksReady) return true;
@@ -968,11 +977,11 @@ export function MetaInsightsPanel({
       const linked = campaignProductLinks[cid] || [];
       return linked.includes(pid);
     });
-  }, [rows, campaignActivityFilter, filterProductId, level, campaignProductLinks, campaignProductLinksReady]);
+  }, [rows, campaignActivityFilter, filterProductId, level, campaignProductLinks, campaignProductLinksReady, period]);
 
   const hasRowsForActivityFilter = useMemo(
-    () => rows.some((row) => rowPassesActivitySpendGate(row, campaignActivityFilter)),
-    [rows, campaignActivityFilter],
+    () => rows.some((row) => rowPassesActivitySpendGate(row, campaignActivityFilter, period)),
+    [rows, campaignActivityFilter, period],
   );
 
   /** Meta puede devolver filas con métricas en 0; activas/todas requieren gasto &gt; 0 en el período. */
@@ -1020,9 +1029,9 @@ export function MetaInsightsPanel({
   /** Numerador ROAS Shopify en tarjetas = ventas enlazadas a filas visibles (gasto &gt; 0 del período). */
   const shopifyVentasForRoasCard = shopifyPedidosAvailable ? shopifyVentasAttributedVisible : shopifyVentasTotalAttributed;
 
-  /** Agregaciones KPI = filas de la tabla (dedupe en nivel anuncio). Todas llevan gasto &gt; 0. */
+  /** KPIs de tarjetas: total de cuenta Meta (como Ads Manager) si no hay filtro de producto; si no, suma de filas visibles. */
   const displayTotals = useMemo(() => {
-    const base = tableRows.reduce(
+    const fromTable = tableRows.reduce(
       (acc, x) => ({
         impressions: acc.impressions + x.impressions,
         clicks: acc.clicks + x.clicks,
@@ -1032,13 +1041,17 @@ export function MetaInsightsPanel({
       }),
       { impressions: 0, clicks: 0, spend: 0, purchases: 0, revenue: 0 },
     );
+    const base =
+      !filterProductId && accountTotals && Number.isFinite(accountTotals.spend)
+        ? accountTotals
+        : fromTable;
     const cpm = base.impressions > 0 ? (base.spend / base.impressions) * 1000 : 0;
     const cpc = base.clicks > 0 ? base.spend / base.clicks : 0;
     const ctr = base.impressions > 0 ? (base.clicks / base.impressions) * 100 : 0;
     const roas = base.spend > 0 && base.revenue > 0 ? base.revenue / base.spend : 0;
     const cpa = base.purchases > 0 ? base.spend / base.purchases : 0;
     return { ...base, cpm, cpc, ctr, roas, cpa };
-  }, [tableRows]);
+  }, [tableRows, accountTotals, filterProductId]);
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     const cacheKey = `${level}|${period}|${filterActId || 'all'}`;
@@ -1047,6 +1060,7 @@ export function MetaInsightsPanel({
       hydratedCacheKeyRef.current = cacheKey;
       setRows(Array.isArray(cached.rows) ? cached.rows : []);
       setTotals(cached.totals ?? null);
+      setAccountTotals(cached.accountTotals ?? null);
       setPartialErrors(Array.isArray(cached.partialErrors) ? cached.partialErrors : []);
       setMeta(cached.meta ?? null);
       setLoading(false);
@@ -1072,6 +1086,7 @@ export function MetaInsightsPanel({
         code?: string;
         rows?: InsightRow[];
         totals?: Totals;
+        accountTotals?: Totals;
         partialErrors?: { adAccountId: string; error: string }[];
         datePreset?: string;
         fetchedAt?: string;
@@ -1081,12 +1096,14 @@ export function MetaInsightsPanel({
         setCode(typeof data.code === 'string' ? data.code : null);
         setRows([]);
         setTotals(null);
+        setAccountTotals(null);
         setPartialErrors([]);
         setMeta(null);
         return;
       }
       setRows(Array.isArray(data.rows) ? data.rows : []);
       setTotals(data.totals ?? null);
+      setAccountTotals(data.accountTotals ?? data.totals ?? null);
       setPartialErrors(Array.isArray(data.partialErrors) ? data.partialErrors : []);
       setMeta(
         data.datePreset && data.fetchedAt
@@ -1096,6 +1113,7 @@ export function MetaInsightsPanel({
       writeMetaInsightsCache(cacheKey, {
         rows: Array.isArray(data.rows) ? data.rows : [],
         totals: data.totals ?? null,
+        accountTotals: data.accountTotals ?? data.totals ?? null,
         partialErrors: Array.isArray(data.partialErrors) ? data.partialErrors : [],
         meta:
           data.datePreset && data.fetchedAt
@@ -1114,6 +1132,7 @@ export function MetaInsightsPanel({
         setError('Error de red al consultar Meta');
         setRows([]);
         setTotals(null);
+        setAccountTotals(null);
       }
     } finally {
       if (!opts?.silent) setLoading(false);
@@ -1130,7 +1149,7 @@ export function MetaInsightsPanel({
 
   const campaignLinkStats = useMemo(() => {
     if (level !== 'campaigns' || !campaignProductLinksReady) return null;
-    const campaignRows = rows.filter((row) => rowPassesActivitySpendGate(row, campaignActivityFilter));
+    const campaignRows = rows.filter((row) => rowPassesActivitySpendGate(row, campaignActivityFilter, period));
     let linked = 0;
     let unlinked = 0;
     for (const row of campaignRows) {
@@ -1139,7 +1158,7 @@ export function MetaInsightsPanel({
       else unlinked += 1;
     }
     return { total: campaignRows.length, linked, unlinked };
-  }, [level, rows, campaignProductLinks, campaignProductLinksReady, campaignActivityFilter]);
+  }, [level, rows, campaignProductLinks, campaignProductLinksReady, campaignActivityFilter, period]);
 
   type MetricCard = { label: string; value: string; title?: string };
 
@@ -1169,7 +1188,14 @@ export function MetaInsightsPanel({
 
     cards.push(
       { label: 'CPA', value: displayTotals.purchases > 0 ? formatMoney2(displayTotals.cpa) : '—' },
-      { label: 'Gasto', value: formatMoney2(displayTotals.spend) },
+      {
+        label: 'Gasto',
+        value: formatMoney2(displayTotals.spend),
+        title:
+          !filterProductId && accountTotals
+            ? 'Total a nivel cuenta publicitaria (misma fuente que el Administrador de anuncios de Meta). La tabla puede desglosar por campaña.'
+            : 'Suma del gasto de las filas visibles en la tabla.',
+      },
       { label: 'CPM', value: formatMoney2(displayTotals.cpm) },
       { label: 'CPC', value: formatMoney2(displayTotals.cpc) },
       { label: 'CTR', value: formatPct(displayTotals.ctr) },
@@ -1182,6 +1208,8 @@ export function MetaInsightsPanel({
     shopifyPedidosAvailable,
     shopifyComprasCardValue,
     shopifyVentasForRoasCard,
+    accountTotals,
+    filterProductId,
   ]);
 
   const levelTabs: { id: InsightLevel; label: string }[] = [
@@ -1287,7 +1315,9 @@ export function MetaInsightsPanel({
           title={
             campaignActivityFilter === 'inactive'
               ? 'Muestra campañas/conjuntos/anuncios no activos (pausados, archivados, etc.), aunque no tengan gasto en el periodo'
-              : 'Filtra por estado efectivo en Meta. Activas y «todas» solo incluyen filas con gasto > 0 en el periodo.'
+              : period !== 'hoy' && campaignActivityFilter === 'active'
+                ? 'En periodos pasados incluye cualquier fila con gasto en el rango, igual que el Administrador de anuncios de Meta'
+                : 'Filtra por estado efectivo en Meta. «Todas» incluye filas con gasto > 0 en el periodo.'
           }
           style={{
             padding: '8px 12px',
@@ -1299,9 +1329,9 @@ export function MetaInsightsPanel({
             color: ds.textPrimary,
           }}
         >
+          <option value="all">{activityFilterCopy.all}</option>
           <option value="active">{activityFilterCopy.active}</option>
           <option value="inactive">{activityFilterCopy.inactive}</option>
-          <option value="all">{activityFilterCopy.all}</option>
         </select>
         <select
           value={filterProductId}

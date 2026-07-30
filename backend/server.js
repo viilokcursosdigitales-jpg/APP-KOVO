@@ -33,6 +33,7 @@ const {
   fetchInsightsForAdAccount,
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
+  fetchAccountTotalsForAdAccountsPreset,
   fetchMergedDailyInsightsForAdAccounts,
   fetchTotalSpendForAdAccountsTimeRange,
   fetchDailySpendByDayForAdAccountsTimeRange,
@@ -1460,6 +1461,7 @@ function insightsPayloadFromSnapshot(snap, level, period, datePreset, actIds) {
     adAccountId: actIds && actIds.length === 1 ? actIds[0] : null,
     fetchedAt: snap.fetchedAt || new Date().toISOString(),
     totals: snap.totals,
+    accountTotals: snap.totals,
     rows: [],
     partialErrors: [
       {
@@ -1569,6 +1571,11 @@ async function fetchLiveMetaInsightsPayload(organizationId, row, level, period, 
   return runWithMetaApiContext(metaApiCtxFromRow(row, organizationId), async () => {
     const allRows = [];
     const partialErrors = [];
+    const [accountTotalsRes] = await Promise.all([
+      fetchAccountTotalsForAdAccountsPreset(actIds, row.access_token, datePreset),
+    ]);
+    for (const pe of accountTotalsRes.partialErrors || []) partialErrors.push(pe);
+
     for (const actId of actIds) {
       const norm = normalizeActId(actId);
       const r = await fetchInsightsForAdAccount(norm, row.access_token, level, datePreset);
@@ -1594,10 +1601,15 @@ async function fetchLiveMetaInsightsPayload(organizationId, row, level, period, 
     totals.roas = totals.spend > 0 && totals.revenue > 0 ? totals.revenue / totals.spend : 0;
     totals.cpa = totals.purchases > 0 ? totals.spend / totals.purchases : 0;
 
+    const accountTotals =
+      accountTotalsRes.ok && accountTotalsRes.totals ? accountTotalsRes.totals : null;
+
     if (allRows.length === 0) {
       const snap = await buildMetaSnapshotFallbackForPeriod(organizationId, period);
       if (snap.ok) {
-        return insightsPayloadFromSnapshot(snap, level, period, datePreset, actIds);
+        const payload = insightsPayloadFromSnapshot(snap, level, period, datePreset, actIds);
+        if (accountTotals) payload.accountTotals = accountTotals;
+        return payload;
       }
     }
 
@@ -1610,6 +1622,7 @@ async function fetchLiveMetaInsightsPayload(organizationId, row, level, period, 
       adAccountId: actIds.length === 1 ? actIds[0] : null,
       fetchedAt: new Date().toISOString(),
       totals,
+      accountTotals,
       rows: allRows,
       partialErrors,
     };
@@ -7939,14 +7952,16 @@ function gananciaDiariaWindowFromMetaPeriod(periodRaw, todayYmd) {
   const period = String(periodRaw || '').trim().toLowerCase();
   let days = 0;
   if (period === 'hoy') days = 1;
-  else if (period === 'ayer') days = 2;
+  else if (period === 'ayer') days = 1;
   else if (period === '3d') days = 3;
   else if (period === '7d') days = 7;
   else if (period === '14d') days = 14;
   else if (period === '30d') days = 30;
   if (!days) return null;
-  const until = gananciaDiariaYmdKey(todayYmd);
-  const since = shiftYmdString(until, -(days - 1));
+  const until =
+    period === 'ayer' ? shiftYmdString(gananciaDiariaYmdKey(todayYmd), -1) : gananciaDiariaYmdKey(todayYmd);
+  const since =
+    period === 'ayer' ? until : shiftYmdString(until, -(days - 1));
   return { since, until, days };
 }
 
