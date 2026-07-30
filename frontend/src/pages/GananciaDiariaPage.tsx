@@ -329,9 +329,10 @@ function aggregateProductAnalysis(
       const roasTotal = comparable && r.gastoAds > 0 ? r.ventasTotales / r.gastoAds : null;
       const roasDespachado = comparable && r.gastoAds > 0 ? r.ventasDespachadas / r.gastoAds : null;
       const gastoAdmin = r.ventasTotales * (adminPercent / 100);
+      const pidFromKey = key.startsWith('p:') ? Number.parseInt(key.slice(2), 10) : NaN;
       return {
         key,
-        product_id: Number.isFinite(pid) && pid > 0 ? pid : null,
+        product_id: Number.isFinite(pidFromKey) && pidFromKey > 0 ? pidFromKey : null,
         label: r.label,
         ventasTotales: r.ventasTotales,
         ventasDespachadas: r.ventasDespachadas,
