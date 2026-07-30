@@ -443,6 +443,49 @@ async function fetchInsightsForAdAccount(actId, accessToken, level, datePreset, 
   return { ok: true, rows, error: null, fb: null };
 }
 
+/** Catálogo completo de campañas (sin filtrar por gasto del período). */
+async function fetchCampaignCatalogForAdAccount(actId, accessToken, apiOptions = {}) {
+  const v = getGraphVersion();
+  const id = normalizeActId(actId);
+  if (!id) {
+    return { ok: false, rows: [], error: 'ID de cuenta publicitaria no válido' };
+  }
+  const fields = 'id,name,status,effective_status';
+  const base = `https://graph.facebook.com/${v}/${id}/campaigns?fields=${encodeURIComponent(fields)}&limit=100&access_token=${encodeURIComponent(accessToken)}`;
+  const r = await fetchAllGraphPages(base, { ...apiOptions, accessToken });
+  if (!r.ok) {
+    const fb = r.data && r.data.error;
+    return {
+      ok: false,
+      rows: [],
+      error: (fb && fb.message) || 'Error al leer campañas',
+      fb,
+    };
+  }
+  const acctName = await fetchAccountName(id, accessToken, apiOptions);
+  const rows = r.items.map((entity) => normalizeEntity(entity, 'campaigns', id, acctName));
+  return { ok: true, rows, error: null, fb: null };
+}
+
+/**
+ * @param {string[]} actIds
+ * @param {string} accessToken
+ */
+async function fetchCampaignCatalogForAdAccounts(actIds, accessToken, apiOptions = {}) {
+  const allRows = [];
+  const partialErrors = [];
+  for (const actId of actIds || []) {
+    const norm = normalizeActId(actId);
+    const r = await fetchCampaignCatalogForAdAccount(norm, accessToken, apiOptions);
+    if (!r.ok) {
+      partialErrors.push({ adAccountId: norm, error: r.error || 'Error al leer catálogo de campañas' });
+      continue;
+    }
+    allRows.push(...(r.rows || []));
+  }
+  return { ok: allRows.length > 0 || partialErrors.length === 0, rows: allRows, partialErrors };
+}
+
 /**
  * @param {string[]} selectedRaw
  * @param {{ id: string }[]} accountsFromApi
@@ -1043,6 +1086,8 @@ module.exports = {
   listAdAccounts,
   verifySystemUserMetaToken,
   fetchInsightsForAdAccount,
+  fetchCampaignCatalogForAdAccount,
+  fetchCampaignCatalogForAdAccounts,
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
   fetchAccountTotalsForAdAccountsPreset,

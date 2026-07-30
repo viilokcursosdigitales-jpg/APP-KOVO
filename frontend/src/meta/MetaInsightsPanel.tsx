@@ -136,6 +136,52 @@ function rowPassesActivitySpendGate(
   return rowHasSpend(row);
 }
 
+const FILTER_PRODUCT_UNASSIGNED = '__unassigned__';
+
+function mergeCampaignCatalogWithPeriodInsights(catalog: InsightRow[], periodRows: InsightRow[]): InsightRow[] {
+  const byId = new Map<string, InsightRow>();
+  for (const r of catalog) {
+    const id = String(r.id || '').trim();
+    if (!id) continue;
+    byId.set(id, { ...r });
+  }
+  for (const r of periodRows) {
+    const id = String(r.id || '').trim();
+    if (!id) continue;
+    const prev = byId.get(id);
+    byId.set(
+      id,
+      prev
+        ? { ...prev, ...r, name: r.name || prev.name, status: r.status || prev.status, adAccountName: r.adAccountName || prev.adAccountName }
+        : r,
+    );
+  }
+  return [...byId.values()];
+}
+
+function campaignIdForProductLinkFilter(row: InsightRow, level: InsightLevel): string {
+  return level === 'campaigns' ? String(row.id) : String(row.campaignId || '');
+}
+
+function rowMatchesProductLinkFilter(
+  row: InsightRow,
+  level: InsightLevel,
+  filterProductId: string,
+  campaignProductLinks: Record<string, number[]>,
+  campaignProductLinksReady: boolean,
+): boolean {
+  if (!filterProductId.trim()) return true;
+  const cid = campaignIdForProductLinkFilter(row, level);
+  if (!cid) return false;
+  if (filterProductId === FILTER_PRODUCT_UNASSIGNED) {
+    if (!campaignProductLinksReady) return true;
+    return (campaignProductLinks[cid] || []).length === 0;
+  }
+  const pid = Number.parseInt(filterProductId, 10);
+  if (!Number.isFinite(pid)) return true;
+  return (campaignProductLinks[cid] || []).includes(pid);
+}
+
 type Totals = {
   impressions: number;
   clicks: number;
@@ -151,6 +197,7 @@ type Totals = {
 type MetaInsightsCacheEntry = {
   updatedAt: number;
   rows: InsightRow[];
+  allCampaignRows?: InsightRow[];
   totals: Totals | null;
   accountTotals: Totals | null;
   partialErrors: { adAccountId: string; error: string }[];
@@ -162,7 +209,6 @@ const META_INSIGHTS_CACHE_TTL_MS = 1000 * 60 * 10;
 
 /** Fila campaña sin producto Shopify vinculado (Campañas Meta → lista Campañas). */
 const CAMPAIGN_ROW_MISSING_PRODUCT_BG = 'rgba(58, 12, 16, 0.42)';
-const FILTER_PRODUCT_UNASSIGNED = '__unassigned__';
 
 type ShopifyOrderAttribution = {
   productIds?: number[];
@@ -739,6 +785,7 @@ export function MetaInsightsPanel({
   const [error, setError] = useState<string | null>(null);
   const [code, setCode] = useState<string | null>(null);
   const [rows, setRows] = useState<InsightRow[]>([]);
+  const [allCampaignRows, setAllCampaignRows] = useState<InsightRow[]>([]);
   const [totals, setTotals] = useState<Totals | null>(null);
   const [accountTotals, setAccountTotals] = useState<Totals | null>(null);
   const [partialErrors, setPartialErrors] = useState<{ adAccountId: string; error: string }[]>([]);
@@ -959,25 +1006,42 @@ export function MetaInsightsPanel({
   }, [loadShopifyPedidosCounts]);
 
   const filteredRows = useMemo(() => {
+    const productLinkFilterActive = Boolean(filterProductId.trim());
+
+    if (productLinkFilterActive && level === 'campaigns' && allCampaignRows.length > 0) {
+      const merged = mergeCampaignCatalogWithPeriodInsights(allCampaignRows, rows);
+      return merged.filter((row) => {
+        if (!rowMatchesActivityFilter(row, campaignActivityFilter)) return false;
+        return rowMatchesProductLinkFilter(
+          row,
+          level,
+          filterProductId,
+          campaignProductLinks,
+          campaignProductLinksReady,
+        );
+      });
+    }
+
     return rows.filter((row) => {
       if (!rowPassesActivitySpendGate(row, campaignActivityFilter, period)) return false;
-
-      if (filterProductId === FILTER_PRODUCT_UNASSIGNED) {
-        if (!campaignProductLinksReady) return true;
-        const cid = level === 'campaigns' ? String(row.id) : String(row.campaignId || '');
-        if (!cid) return false;
-        return (campaignProductLinks[cid] || []).length === 0;
-      }
-
-      if (!filterProductId.trim()) return true;
-      const pid = Number.parseInt(filterProductId, 10);
-      if (!Number.isFinite(pid)) return true;
-      const cid = level === 'campaigns' ? String(row.id) : String(row.campaignId || '');
-      if (!cid) return false;
-      const linked = campaignProductLinks[cid] || [];
-      return linked.includes(pid);
+      return rowMatchesProductLinkFilter(
+        row,
+        level,
+        filterProductId,
+        campaignProductLinks,
+        campaignProductLinksReady,
+      );
     });
-  }, [rows, campaignActivityFilter, filterProductId, level, campaignProductLinks, campaignProductLinksReady, period]);
+  }, [
+    rows,
+    allCampaignRows,
+    campaignActivityFilter,
+    filterProductId,
+    level,
+    campaignProductLinks,
+    campaignProductLinksReady,
+    period,
+  ]);
 
   const hasRowsForActivityFilter = useMemo(
     () => rows.some((row) => rowPassesActivitySpendGate(row, campaignActivityFilter, period)),
@@ -1059,6 +1123,7 @@ export function MetaInsightsPanel({
     if (cached && hydratedCacheKeyRef.current !== cacheKey && !opts?.silent) {
       hydratedCacheKeyRef.current = cacheKey;
       setRows(Array.isArray(cached.rows) ? cached.rows : []);
+      setAllCampaignRows(Array.isArray(cached.allCampaignRows) ? cached.allCampaignRows : []);
       setTotals(cached.totals ?? null);
       setAccountTotals(cached.accountTotals ?? null);
       setPartialErrors(Array.isArray(cached.partialErrors) ? cached.partialErrors : []);
@@ -1085,6 +1150,7 @@ export function MetaInsightsPanel({
         error?: string;
         code?: string;
         rows?: InsightRow[];
+        allCampaignRows?: InsightRow[];
         totals?: Totals;
         accountTotals?: Totals;
         partialErrors?: { adAccountId: string; error: string }[];
@@ -1095,6 +1161,7 @@ export function MetaInsightsPanel({
         setError(typeof data.error === 'string' ? data.error : 'No se pudieron cargar las métricas');
         setCode(typeof data.code === 'string' ? data.code : null);
         setRows([]);
+        setAllCampaignRows([]);
         setTotals(null);
         setAccountTotals(null);
         setPartialErrors([]);
@@ -1102,6 +1169,9 @@ export function MetaInsightsPanel({
         return;
       }
       setRows(Array.isArray(data.rows) ? data.rows : []);
+      if (level === 'campaigns') {
+        setAllCampaignRows(Array.isArray(data.allCampaignRows) ? data.allCampaignRows : []);
+      }
       setTotals(data.totals ?? null);
       setAccountTotals(data.accountTotals ?? data.totals ?? null);
       setPartialErrors(Array.isArray(data.partialErrors) ? data.partialErrors : []);
@@ -1112,6 +1182,7 @@ export function MetaInsightsPanel({
       );
       writeMetaInsightsCache(cacheKey, {
         rows: Array.isArray(data.rows) ? data.rows : [],
+        allCampaignRows: level === 'campaigns' && Array.isArray(data.allCampaignRows) ? data.allCampaignRows : undefined,
         totals: data.totals ?? null,
         accountTotals: data.accountTotals ?? data.totals ?? null,
         partialErrors: Array.isArray(data.partialErrors) ? data.partialErrors : [],
@@ -1149,7 +1220,8 @@ export function MetaInsightsPanel({
 
   const campaignLinkStats = useMemo(() => {
     if (level !== 'campaigns' || !campaignProductLinksReady) return null;
-    const campaignRows = rows.filter((row) => rowPassesActivitySpendGate(row, campaignActivityFilter, period));
+    const source = allCampaignRows.length > 0 ? allCampaignRows : rows;
+    const campaignRows = source.filter((row) => rowMatchesActivityFilter(row, campaignActivityFilter));
     let linked = 0;
     let unlinked = 0;
     for (const row of campaignRows) {
@@ -1158,7 +1230,7 @@ export function MetaInsightsPanel({
       else unlinked += 1;
     }
     return { total: campaignRows.length, linked, unlinked };
-  }, [level, rows, campaignProductLinks, campaignProductLinksReady, campaignActivityFilter, period]);
+  }, [level, allCampaignRows, rows, campaignProductLinks, campaignProductLinksReady, campaignActivityFilter]);
 
   type MetricCard = { label: string; value: string; title?: string };
 
@@ -1338,8 +1410,10 @@ export function MetaInsightsPanel({
           onChange={(e) => setFilterProductId(e.target.value)}
           title={
             filterProductId === FILTER_PRODUCT_UNASSIGNED
-              ? 'Solo campañas (o conjuntos/anuncios bajo campañas) sin producto Shopify vinculado'
-              : 'Muestra solo filas cuya campaña tiene asociado este producto'
+              ? 'Todas las campañas sin producto Shopify (incluye las sin gasto en el período seleccionado)'
+              : filterProductId
+                ? 'Todas las campañas vinculadas a este producto (incluye las sin gasto en el período)'
+                : 'Muestra solo filas cuya campaña tiene asociado este producto'
           }
           style={{
             padding: '8px 12px',
@@ -1441,23 +1515,25 @@ export function MetaInsightsPanel({
               label: 'Campañas en total',
               value: formatNumber(campaignLinkStats.total),
               hint:
-                campaignActivityFilter === 'inactive'
-                  ? 'Campañas no activas (incluye las sin gasto en el periodo)'
-                  : 'Con gasto en el período y según filtro activo/inactivo',
+                allCampaignRows.length > 0
+                  ? 'Todas las campañas de la cuenta (sin depender del gasto del período)'
+                  : campaignActivityFilter === 'inactive'
+                    ? 'Campañas no activas (incluye las sin gasto en el periodo)'
+                    : 'Con gasto en el período y según filtro activo/inactivo',
               color: ds.textPrimary,
               bg: ds.bgCard,
             },
             {
               label: 'Vinculadas a Shopify',
               value: formatNumber(campaignLinkStats.linked),
-              hint: 'Al menos un producto Shopify asignado',
+              hint: 'Campañas con al menos un producto Shopify asignado (catálogo completo)',
               color: ds.successText,
               bg: ds.successBg,
             },
             {
               label: 'Sin vincular',
               value: formatNumber(campaignLinkStats.unlinked),
-              hint: 'Sin ningún producto Shopify asignado',
+              hint: 'Campañas sin producto Shopify asignado (catálogo completo)',
               color: ds.dangerText,
               bg: ds.dangerBg,
             },

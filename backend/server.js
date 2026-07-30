@@ -31,6 +31,7 @@ const {
   listAdAccounts,
   verifySystemUserMetaToken,
   fetchInsightsForAdAccount,
+  fetchCampaignCatalogForAdAccounts,
   filterValidAdAccountIds,
   fetchFunnelForAdAccounts,
   fetchAccountTotalsForAdAccountsPreset,
@@ -1573,10 +1574,15 @@ async function fetchLiveMetaInsightsPayload(organizationId, row, level, period, 
   return runWithMetaApiContext(metaApiCtxFromRow(row, organizationId), async () => {
     const allRows = [];
     const partialErrors = [];
-    const [accountTotalsRes] = await Promise.all([
+    const fetchCatalog = level === 'campaigns';
+    const [accountTotalsRes, catalogRes] = await Promise.all([
       fetchAccountTotalsForAdAccountsPreset(actIds, row.access_token, datePreset),
+      fetchCatalog
+        ? fetchCampaignCatalogForAdAccounts(actIds, row.access_token)
+        : Promise.resolve({ ok: true, rows: [], partialErrors: [] }),
     ]);
     for (const pe of accountTotalsRes.partialErrors || []) partialErrors.push(pe);
+    for (const pe of catalogRes.partialErrors || []) partialErrors.push(pe);
 
     for (const actId of actIds) {
       const norm = normalizeActId(actId);
@@ -1611,6 +1617,9 @@ async function fetchLiveMetaInsightsPayload(organizationId, row, level, period, 
       if (snap.ok) {
         const payload = insightsPayloadFromSnapshot(snap, level, period, datePreset, actIds);
         if (accountTotals) payload.accountTotals = accountTotals;
+        if (fetchCatalog && Array.isArray(catalogRes.rows) && catalogRes.rows.length) {
+          payload.allCampaignRows = catalogRes.rows;
+        }
         return payload;
       }
     }
@@ -1626,6 +1635,7 @@ async function fetchLiveMetaInsightsPayload(organizationId, row, level, period, 
       totals,
       accountTotals,
       rows: allRows,
+      allCampaignRows: fetchCatalog && Array.isArray(catalogRes.rows) ? catalogRes.rows : [],
       partialErrors,
     };
   });
