@@ -4624,18 +4624,20 @@ app.get(
 app.get('/api/meta/campaign-product-links', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT meta_campaign_id, product_ids FROM meta_campaign_product_links WHERE organization_id = $1`,
+      `SELECT meta_campaign_id, product_ids, complementary_product_ids
+       FROM meta_campaign_product_links WHERE organization_id = $1`,
       [req.organizationId],
     );
     const links = {};
+    const linkDetails = {};
     for (const row of r.rows) {
-      const raw = row.product_ids;
-      const ids = Array.isArray(raw) ? raw : [];
-      links[String(row.meta_campaign_id)] = ids
-        .map((x) => Number.parseInt(String(x), 10))
-        .filter((n) => Number.isFinite(n));
+      const cid = String(row.meta_campaign_id);
+      const product_ids = parseJsonProductIdList(row.product_ids);
+      const complementary_product_ids = parseJsonProductIdList(row.complementary_product_ids);
+      links[cid] = product_ids;
+      linkDetails[cid] = { product_ids, complementary_product_ids };
     }
-    res.json({ links });
+    res.json({ links, linkDetails });
   } catch (e) {
     if (e && e.code === '42P01') {
       return res.status(503).json({
@@ -4655,26 +4657,30 @@ app.put('/api/meta/campaign-product-links', verifyToken, scopeToOrganization, as
     if (!cid) {
       return res.status(400).json({ error: 'meta_campaign_id requerido' });
     }
-    const raw = req.body?.product_ids;
-    const arr = Array.isArray(raw) ? raw : [];
-    const product_ids = [];
-    const seen = new Set();
-    for (const x of arr) {
-      const n = Number.parseInt(String(x), 10);
-      if (!Number.isFinite(n) || seen.has(n)) continue;
-      seen.add(n);
-      product_ids.push(n);
-      if (product_ids.length >= 80) break;
-    }
+    const product_ids = parseJsonProductIdList(req.body?.product_ids).slice(0, 80);
+    const complementary_product_ids = parseJsonProductIdList(req.body?.complementary_product_ids).slice(0, 80);
+    const primarySet = new Set(product_ids);
+    const complementaryFiltered = complementary_product_ids.filter((n) => !primarySet.has(n));
     await pool.query(
-      `INSERT INTO meta_campaign_product_links (organization_id, meta_campaign_id, product_ids, updated_at)
-       VALUES ($1, $2, $3::jsonb, now())
+      `INSERT INTO meta_campaign_product_links (organization_id, meta_campaign_id, product_ids, complementary_product_ids, updated_at)
+       VALUES ($1, $2, $3::jsonb, $4::jsonb, now())
        ON CONFLICT (organization_id, meta_campaign_id) DO UPDATE SET
          product_ids = EXCLUDED.product_ids,
+         complementary_product_ids = EXCLUDED.complementary_product_ids,
          updated_at = now()`,
-      [req.organizationId, cid, JSON.stringify(product_ids)],
+      [
+        req.organizationId,
+        cid,
+        JSON.stringify(product_ids),
+        JSON.stringify(complementaryFiltered),
+      ],
     );
-    res.json({ ok: true, meta_campaign_id: cid, product_ids });
+    res.json({
+      ok: true,
+      meta_campaign_id: cid,
+      product_ids,
+      complementary_product_ids: complementaryFiltered,
+    });
   } catch (e) {
     if (e && e.code === '42P01') {
       return res.status(503).json({
@@ -6907,45 +6913,79 @@ function mergeGananciaProductSliceInto(target, source, share = 1, opts = {}) {
   if (addPedidos) target.pedidos += (Number(source.pedidos) || 0) * s;
 }
 
-async function loadMetaCampaignPrimaryProductIds(organizationId) {
-  const set = new Set();
+function parseJsonProductIdList(raw) {
+  const arr = Array.isArray(raw) ? raw : [];
+  const out = [];
+  const seen = new Set();
+  for (const x of arr) {
+    const n = Number.parseInt(String(x), 10);
+    if (!Number.isFinite(n) || n <= 0 || seen.has(n)) continue;
+    seen.add(n);
+    out.push(n);
+  }
+  return out;
+}
+
+async function loadMetaCampaignProductLinkConfig(organizationId) {
+  const primaryProductIds = new Set();
+  const complementaryProductIds = new Set();
+  /** @type {Map<number, number>} */
+  const complementaryToPrimary = new Map();
   try {
     const linksRows = await pool.query(
-      `SELECT product_ids FROM meta_campaign_product_links WHERE organization_id = $1`,
+      `SELECT product_ids, complementary_product_ids FROM meta_campaign_product_links WHERE organization_id = $1`,
       [organizationId],
     );
     for (const r of linksRows.rows) {
-      const ids = Array.isArray(r.product_ids) ? r.product_ids : [];
-      for (const x of ids) {
-        const n = Number.parseInt(String(x), 10);
-        if (Number.isFinite(n) && n > 0) set.add(n);
+      const primaries = parseJsonProductIdList(r.product_ids);
+      const comps = parseJsonProductIdList(r.complementary_product_ids);
+      const defaultPrimary = primaries[0] ?? null;
+      for (const p of primaries) primaryProductIds.add(p);
+      for (const c of comps) {
+        if (primaryProductIds.has(c)) continue;
+        complementaryProductIds.add(c);
+        if (defaultPrimary != null && !complementaryToPrimary.has(c)) {
+          complementaryToPrimary.set(c, defaultPrimary);
+        }
       }
     }
   } catch (e) {
-    if (e && e.code === '42P01') return set;
-    console.error('[ganancia-diaria] loadMetaCampaignPrimaryProductIds:', e);
-    return set;
+    if (e && e.code === '42P01') {
+      return { primaryProductIds, complementaryProductIds, complementaryToPrimary };
+    }
+    console.error('[ganancia-diaria] loadMetaCampaignProductLinkConfig:', e);
+    return { primaryProductIds, complementaryProductIds, complementaryToPrimary };
   }
-  return set;
+  return { primaryProductIds, complementaryProductIds, complementaryToPrimary };
 }
 
-/** Agrupa complementarios del pedido dentro del producto principal vinculado a campaña Meta. */
-function rollupOrderContribToPrimaryProducts(contrib, primaryProductIds) {
+/** @deprecated use loadMetaCampaignProductLinkConfig */
+async function loadMetaCampaignPrimaryProductIds(organizationId) {
+  const cfg = await loadMetaCampaignProductLinkConfig(organizationId);
+  return cfg.primaryProductIds;
+}
+
+/** Agrupa complementarios (explícitos o del pedido) dentro del producto principal vinculado a campaña Meta. */
+function rollupOrderContribToPrimaryProducts(contrib, linkConfig) {
+  const primaryProductIds = linkConfig?.primaryProductIds;
+  const complementaryProductIds = linkConfig?.complementaryProductIds || new Set();
+  const complementaryToPrimary = linkConfig?.complementaryToPrimary || new Map();
   if (!contrib || !(contrib instanceof Map) || !primaryProductIds || primaryProductIds.size === 0) {
     return { contrib, complementaryAllocations: [] };
   }
+
   const primaries = [];
-  const complementaries = [];
+  const explicitComps = [];
+  const implicitComps = [];
   for (const [pk, row] of contrib) {
     const pid = row.product_id != null ? Number(row.product_id) : null;
-    if (pid && primaryProductIds.has(pid)) primaries.push([pk, row]);
-    else complementaries.push([pk, row]);
+    if (pid && complementaryProductIds.has(pid)) explicitComps.push([pk, row]);
+    else if (pid && primaryProductIds.has(pid)) primaries.push([pk, row]);
+    else implicitComps.push([pk, row]);
   }
-  if (!complementaries.length) {
+
+  if (!explicitComps.length && !implicitComps.length) {
     return { contrib, complementaryAllocations: [] };
-  }
-  if (!primaries.length) {
-    return { contrib: new Map(), complementaryAllocations: [] };
   }
 
   const out = new Map();
@@ -6953,30 +6993,69 @@ function rollupOrderContribToPrimaryProducts(contrib, primaryProductIds) {
     out.set(pk, cloneGananciaProductSlice(row));
   }
 
-  let totalPrimaryVd = 0;
-  for (const [, row] of out) totalPrimaryVd += row.ventas_despachadas;
+  const ensurePrimaryTarget = (primaryPid, hintLabel) => {
+    const nPid = Number(primaryPid);
+    if (!Number.isFinite(nPid) || nPid <= 0) return null;
+    const mergeKey = `p:${nPid}`;
+    if (!out.has(mergeKey)) {
+      out.set(mergeKey, {
+        label: String(hintLabel || `Producto ${nPid}`),
+        product_id: nPid,
+        ventas_despachadas: 0,
+        ventas_entregadas: 0,
+        costo_producto: 0,
+        costo_entregado: 0,
+        flete: 0,
+        qty: 0,
+        pedidos: 0,
+      });
+    }
+    return out.get(mergeKey);
+  };
 
   const complementaryAllocations = [];
-  for (const [, comp] of complementaries) {
-    if (primaries.length === 1) {
-      const primaryPid = primaries[0][1].product_id;
-      const [, target] = [...out.entries()][0];
-      mergeGananciaProductSliceInto(target, comp, 1, { addPedidos: false });
-      complementaryAllocations.push({ primaryPid, comp: cloneGananciaProductSlice(comp), share: 1 });
-    } else {
-      for (const [, primaryRow] of primaries) {
-        const primaryPid = primaryRow.product_id;
-        const share =
-          totalPrimaryVd > 0 ? primaryRow.ventas_despachadas / totalPrimaryVd : 1 / primaries.length;
-        const target = [...out.values()].find((r) => Number(r.product_id) === Number(primaryPid));
-        if (target) mergeGananciaProductSliceInto(target, comp, share, { addPedidos: false });
-        complementaryAllocations.push({
-          primaryPid,
-          comp: cloneGananciaProductSlice(comp),
-          share,
-        });
+
+  const rollCompIntoPrimary = (comp, targetPid, share, addPedidos) => {
+    const primaryRow = primaries.find(([, r]) => Number(r.product_id) === Number(targetPid))?.[1];
+    const target = ensurePrimaryTarget(targetPid, primaryRow?.label);
+    if (!target) return;
+    mergeGananciaProductSliceInto(target, comp, share, { addPedidos });
+    complementaryAllocations.push({
+      primaryPid: targetPid,
+      comp: cloneGananciaProductSlice(comp),
+      share,
+    });
+  };
+
+  for (const [, comp] of explicitComps) {
+    const compPid = comp.product_id != null ? Number(comp.product_id) : null;
+    let targetPid = compPid ? complementaryToPrimary.get(compPid) : null;
+    if (targetPid != null && !primaryProductIds.has(Number(targetPid))) targetPid = null;
+    if (targetPid == null && primaries.length === 1) targetPid = primaries[0][1].product_id;
+    if (targetPid == null) continue;
+    const addPedidos = primaries.length === 0;
+    rollCompIntoPrimary(comp, targetPid, 1, addPedidos);
+  }
+
+  if (implicitComps.length && (primaries.length || out.size)) {
+    let totalPrimaryVd = 0;
+    for (const [, row] of primaries) totalPrimaryVd += row.ventas_despachadas;
+    for (const [, comp] of implicitComps) {
+      if (primaries.length === 1) {
+        rollCompIntoPrimary(comp, primaries[0][1].product_id, 1, false);
+      } else if (primaries.length > 1) {
+        for (const [, primaryRow] of primaries) {
+          const primaryPid = primaryRow.product_id;
+          const share =
+            totalPrimaryVd > 0 ? primaryRow.ventas_despachadas / totalPrimaryVd : 1 / primaries.length;
+          rollCompIntoPrimary(comp, primaryPid, share, false);
+        }
       }
     }
+  }
+
+  if (!out.size) {
+    return { contrib: new Map(), complementaryAllocations };
   }
 
   let pedidosAssigned = false;
@@ -6984,7 +7063,7 @@ function rollupOrderContribToPrimaryProducts(contrib, primaryProductIds) {
     if (!pedidosAssigned && row.pedidos > 0) {
       row.pedidos = 1;
       pedidosAssigned = true;
-    } else {
+    } else if (pedidosAssigned) {
       row.pedidos = 0;
     }
   }
@@ -8603,7 +8682,8 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       }
     })();
 
-    const primaryProductIds = await loadMetaCampaignPrimaryProductIds(req.organizationId);
+    const linkConfig = await loadMetaCampaignProductLinkConfig(req.organizationId);
+    const primaryProductIds = linkConfig.primaryProductIds;
     /** @type {Map<number, Map<string, object>>} */
     const complementaryDetailGlobal = new Map();
 
@@ -8676,7 +8756,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       );
       const pack = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap, lf);
       if (pack) {
-        const rolled = rollupOrderContribToPrimaryProducts(pack.contrib, primaryProductIds);
+        const rolled = rollupOrderContribToPrimaryProducts(pack.contrib, linkConfig);
         for (const alloc of rolled.complementaryAllocations) {
           accumulateComplementaryDetailGlobal(
             complementaryDetailGlobal,
@@ -8723,7 +8803,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       );
       const packM = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, null));
       if (packM) {
-        const rolled = rollupOrderContribToPrimaryProducts(packM.contrib, primaryProductIds);
+        const rolled = rollupOrderContribToPrimaryProducts(packM.contrib, linkConfig);
         for (const alloc of rolled.complementaryAllocations) {
           accumulateComplementaryDetailGlobal(
             complementaryDetailGlobal,

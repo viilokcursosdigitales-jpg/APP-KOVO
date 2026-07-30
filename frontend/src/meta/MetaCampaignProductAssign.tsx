@@ -1,36 +1,54 @@
 import { useCallback, useEffect, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
+import {
+  type CampaignProductLinkDetail,
+  EMPTY_CAMPAIGN_LINK,
+  campaignLinkHasAnyProduct,
+} from './campaignProductLinks';
 
 export type ShopifyProductOption = { id: number; title: string };
 
 export function MetaCampaignProductAssign({
   campaignId,
-  productIds,
+  linkDetail,
   products,
   shopifyOk,
   onUpdate,
 }: {
   campaignId: string;
-  productIds: number[];
+  linkDetail: CampaignProductLinkDetail;
   products: ShopifyProductOption[];
   shopifyOk: boolean;
-  onUpdate: (campaignId: string, ids: number[]) => void;
+  onUpdate: (campaignId: string, detail: CampaignProductLinkDetail) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<number[]>([]);
+  const [draftPrimary, setDraftPrimary] = useState<number[]>([]);
+  const [draftComplementary, setDraftComplementary] = useState<number[]>([]);
   const [saving, setSaving] = useState(false);
   const [err, setErr] = useState('');
 
   useEffect(() => {
     if (open) {
-      setDraft([...productIds]);
+      setDraftPrimary([...(linkDetail.product_ids || [])]);
+      setDraftComplementary([...(linkDetail.complementary_product_ids || [])]);
       setErr('');
     }
-  }, [open, productIds]);
+  }, [open, linkDetail]);
 
-  const toggle = (id: number) => {
-    setDraft((d) => (d.includes(id) ? d.filter((x) => x !== id) : [...d, id]));
+  const togglePrimary = (id: number) => {
+    setDraftPrimary((d) => {
+      const next = d.includes(id) ? d.filter((x) => x !== id) : [...d, id];
+      if (next.includes(id)) {
+        setDraftComplementary((c) => c.filter((x) => x !== id));
+      }
+      return next;
+    });
+  };
+
+  const toggleComplementary = (id: number) => {
+    if (draftPrimary.includes(id)) return;
+    setDraftComplementary((d) => (d.includes(id) ? d.filter((x) => x !== id) : [...d, id]));
   };
 
   const save = useCallback(async () => {
@@ -39,35 +57,100 @@ export function MetaCampaignProductAssign({
     try {
       const res = await apiFetch('/api/meta/campaign-product-links', {
         method: 'PUT',
-        body: JSON.stringify({ meta_campaign_id: campaignId, product_ids: draft }),
+        body: JSON.stringify({
+          meta_campaign_id: campaignId,
+          product_ids: draftPrimary,
+          complementary_product_ids: draftComplementary,
+        }),
       });
-      const j = (await res.json().catch(() => ({}))) as { error?: string };
+      const j = (await res.json().catch(() => ({}))) as {
+        error?: string;
+        product_ids?: number[];
+        complementary_product_ids?: number[];
+      };
       if (!res.ok) {
         setErr(typeof j.error === 'string' ? j.error : 'No se pudo guardar');
         return;
       }
-      onUpdate(campaignId, [...draft]);
+      onUpdate(campaignId, {
+        product_ids: Array.isArray(j.product_ids) ? j.product_ids : [...draftPrimary],
+        complementary_product_ids: Array.isArray(j.complementary_product_ids)
+          ? j.complementary_product_ids
+          : [...draftComplementary],
+      });
       setOpen(false);
     } catch {
       setErr('Error de red');
     } finally {
       setSaving(false);
     }
-  }, [campaignId, draft, onUpdate]);
+  }, [campaignId, draftPrimary, draftComplementary, onUpdate]);
 
-  const labels = productIds
+  const primaryLabels = (linkDetail.product_ids || [])
     .map((id) => products.find((p) => p.id === id)?.title)
     .filter(Boolean) as string[];
-  const summary =
-    productIds.length === 0
-      ? 'Sin asignar'
-      : labels.length <= 2
-        ? labels.join(' · ')
-        : `${productIds.length} productos`;
+  const compLabels = (linkDetail.complementary_product_ids || [])
+    .map((id) => products.find((p) => p.id === id)?.title)
+    .filter(Boolean) as string[];
+
+  let summary = 'Sin asignar';
+  if (campaignLinkHasAnyProduct(linkDetail)) {
+    const parts: string[] = [];
+    if (primaryLabels.length) {
+      parts.push(
+        primaryLabels.length <= 1
+          ? `Principal: ${primaryLabels[0]}`
+          : `${primaryLabels.length} principales`,
+      );
+    }
+    if (compLabels.length) {
+      parts.push(
+        compLabels.length <= 1 ? `+ ${compLabels[0]}` : `+ ${compLabels.length} complementarios`,
+      );
+    }
+    summary = parts.join(' · ');
+  }
+
+  const renderProductList = (
+    selected: number[],
+    onToggle: (id: number) => void,
+    disabledIds: Set<number>,
+  ) => (
+    <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      {products.map((p) => {
+        const disabled = disabledIds.has(p.id);
+        return (
+          <li key={p.id}>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'flex-start',
+                gap: 10,
+                cursor: disabled ? 'not-allowed' : 'pointer',
+                fontSize: 12,
+                color: disabled ? ds.textMuted : ds.textPrimary,
+                lineHeight: 1.35,
+                opacity: disabled ? 0.55 : 1,
+              }}
+            >
+              <input
+                type="checkbox"
+                checked={selected.includes(p.id)}
+                disabled={disabled}
+                onChange={() => onToggle(p.id)}
+                style={{ marginTop: 2 }}
+              />
+              <span>{p.title}</span>
+            </label>
+          </li>
+        );
+      })}
+    </ul>
+  );
 
   return (
     <>
-      <div style={{ maxWidth: 240 }}>
+      <div style={{ maxWidth: 260 }}>
         <div
           style={{
             fontSize: 11,
@@ -78,7 +161,7 @@ export function MetaCampaignProductAssign({
             textOverflow: 'ellipsis',
             whiteSpace: 'nowrap',
           }}
-          title={labels.length ? labels.join(', ') : undefined}
+          title={[...primaryLabels, ...compLabels].join(', ') || undefined}
         >
           {summary}
         </div>
@@ -120,8 +203,8 @@ export function MetaCampaignProductAssign({
             role="dialog"
             aria-modal="true"
             style={{
-              width: 'min(420px, 100%)',
-              maxHeight: 'min(480px, 90vh)',
+              width: 'min(480px, 100%)',
+              maxHeight: 'min(560px, 90vh)',
               background: ds.bgCard,
               borderRadius: 14,
               border: `1px solid ${ds.borderCard}`,
@@ -133,45 +216,42 @@ export function MetaCampaignProductAssign({
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ padding: '16px 18px', borderBottom: `1px solid ${ds.borderCard}` }}>
-              <div style={{ fontSize: 14, fontWeight: 700, color: ds.textPrimary }}>Productos relacionados</div>
-              <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 4 }}>
-                Vincula el gasto de esta campaña con uno o varios productos de tu catálogo Shopify.
+              <div style={{ fontSize: 14, fontWeight: 700, color: ds.textPrimary }}>Productos de la campaña</div>
+              <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 4, lineHeight: 1.45 }}>
+                El <strong>producto principal</strong> recibe el gasto publicitario y agrupa las ventas en Ganancia
+                diaria. Los <strong>complementarios</strong> (upsells) se suman al principal en el informe.
               </div>
             </div>
             <div style={{ padding: '12px 18px', overflowY: 'auto', flex: 1 }}>
               {!shopifyOk ? (
                 <p style={{ margin: 0, fontSize: 12, color: ds.textSecondary, lineHeight: 1.5 }}>
-                  Conecta Shopify en <strong style={{ color: ds.textPrimary }}>Canales</strong> para cargar el catálogo y
-                  poder elegir productos.
+                  Conecta Shopify en <strong style={{ color: ds.textPrimary }}>Canales</strong> para cargar el
+                  catálogo.
                 </p>
               ) : products.length === 0 ? (
-                <p style={{ margin: 0, fontSize: 12, color: ds.textMuted }}>No hay productos en la tienda (o la lista está vacía).</p>
+                <p style={{ margin: 0, fontSize: 12, color: ds.textMuted }}>No hay productos en la tienda.</p>
               ) : (
-                <ul style={{ listStyle: 'none', margin: 0, padding: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-                  {products.map((p) => (
-                    <li key={p.id}>
-                      <label
-                        style={{
-                          display: 'flex',
-                          alignItems: 'flex-start',
-                          gap: 10,
-                          cursor: 'pointer',
-                          fontSize: 12,
-                          color: ds.textPrimary,
-                          lineHeight: 1.35,
-                        }}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={draft.includes(p.id)}
-                          onChange={() => toggle(p.id)}
-                          style={{ marginTop: 2 }}
-                        />
-                        <span>{p.title}</span>
-                      </label>
-                    </li>
-                  ))}
-                </ul>
+                <>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: ds.textPrimary, marginBottom: 8 }}>
+                      Producto(s) principal(es)
+                    </div>
+                    {renderProductList(draftPrimary, togglePrimary, new Set())}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: ds.textPrimary, marginBottom: 8 }}>
+                      Productos complementarios
+                    </div>
+                    <p style={{ margin: '0 0 8px', fontSize: 11, color: ds.textMuted, lineHeight: 1.4 }}>
+                      No aparecen como fila aparte en Ganancia diaria; sus ventas se agrupan en el principal.
+                    </p>
+                    {renderProductList(
+                      draftComplementary,
+                      toggleComplementary,
+                      new Set(draftPrimary),
+                    )}
+                  </div>
+                </>
               )}
             </div>
             {err ? (

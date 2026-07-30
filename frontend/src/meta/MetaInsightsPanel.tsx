@@ -4,6 +4,12 @@ import { ds } from '../design-system/ds';
 import { MetaDataIssueCard, MetaFetchErrorPanel, MetaLiveDataStrip } from './MetaApiStatusBanner';
 import { MetaCampaignProductAssign } from './MetaCampaignProductAssign';
 import {
+  type CampaignProductLinkDetail,
+  campaignLinkHasPrimary,
+  campaignLinkIncludesProduct,
+  parseCampaignLinkDetailsFromApi,
+} from './campaignProductLinks';
+import {
   aggregateTargetsForProducts,
   campaignIdForInsightRow,
   evaluateInsightAgainstTargets,
@@ -167,19 +173,20 @@ function rowMatchesProductLinkFilter(
   row: InsightRow,
   level: InsightLevel,
   filterProductId: string,
-  campaignProductLinks: Record<string, number[]>,
+  campaignLinkDetails: Record<string, CampaignProductLinkDetail>,
   campaignProductLinksReady: boolean,
 ): boolean {
   if (!filterProductId.trim()) return true;
   const cid = campaignIdForProductLinkFilter(row, level);
   if (!cid) return false;
+  const link = campaignLinkDetails[cid];
   if (filterProductId === FILTER_PRODUCT_UNASSIGNED) {
     if (!campaignProductLinksReady) return true;
-    return (campaignProductLinks[cid] || []).length === 0;
+    return !campaignLinkHasPrimary(link);
   }
   const pid = Number.parseInt(filterProductId, 10);
   if (!Number.isFinite(pid)) return true;
-  return (campaignProductLinks[cid] || []).includes(pid);
+  return campaignLinkIncludesProduct(link, pid);
 }
 
 type Totals = {
@@ -794,7 +801,7 @@ export function MetaInsightsPanel({
   const [filterActId, setFilterActId] = useState('');
   const [campaignActivityFilter, setCampaignActivityFilter] = useState<CampaignActivityFilter>('all');
   const [filterProductId, setFilterProductId] = useState('');
-  const [campaignProductLinks, setCampaignProductLinks] = useState<Record<string, number[]>>({});
+  const [campaignLinkDetails, setCampaignLinkDetails] = useState<Record<string, CampaignProductLinkDetail>>({});
   const [campaignProductLinksReady, setCampaignProductLinksReady] = useState(false);
   const [shopifyProducts, setShopifyProducts] = useState<ShopifyProductOption[]>([]);
   const [shopifyCatalogOk, setShopifyCatalogOk] = useState(false);
@@ -833,21 +840,17 @@ export function MetaInsightsPanel({
         const res = await apiFetch('/api/meta/campaign-product-links');
         if (c) return;
         if (!res.ok) {
-          setCampaignProductLinks({});
+          setCampaignLinkDetails({});
           return;
         }
-        const data = (await res.json()) as { links?: Record<string, number[]> };
+        const data = (await res.json()) as {
+          links?: Record<string, number[]>;
+          linkDetails?: Record<string, CampaignProductLinkDetail>;
+        };
         if (c) return;
-        const raw = data.links && typeof data.links === 'object' ? data.links : {};
-        const next: Record<string, number[]> = {};
-        for (const [k, v] of Object.entries(raw)) {
-          if (Array.isArray(v)) {
-            next[k] = v.map((x) => Number.parseInt(String(x), 10)).filter((n) => Number.isFinite(n));
-          }
-        }
-        setCampaignProductLinks(next);
+        setCampaignLinkDetails(parseCampaignLinkDetailsFromApi(data));
       } catch {
-        if (!c) setCampaignProductLinks({});
+        if (!c) setCampaignLinkDetails({});
       } finally {
         if (!c) setCampaignProductLinksReady(true);
       }
@@ -923,9 +926,17 @@ export function MetaInsightsPanel({
     };
   }, []);
 
-  const handleCampaignProductsSaved = useCallback((campaignId: string, ids: number[]) => {
-    setCampaignProductLinks((prev) => ({ ...prev, [campaignId]: ids }));
+  const handleCampaignProductsSaved = useCallback((campaignId: string, detail: CampaignProductLinkDetail) => {
+    setCampaignLinkDetails((prev) => ({ ...prev, [campaignId]: detail }));
   }, []);
+
+  const primaryLinksForTargets = useMemo(() => {
+    const out: Record<string, number[]> = {};
+    for (const [cid, link] of Object.entries(campaignLinkDetails)) {
+      out[cid] = link.product_ids || [];
+    }
+    return out;
+  }, [campaignLinkDetails]);
 
   const loadShopifyPedidosCounts = useCallback(async () => {
     try {
@@ -946,8 +957,9 @@ export function MetaInsightsPanel({
       }
       const orders = Array.isArray(raw.orders) ? raw.orders : [];
       const productToCampaigns = new Map<number, string[]>();
-      for (const [cid, pids] of Object.entries(campaignProductLinks)) {
-        for (const pid of pids) {
+      for (const [cid, link] of Object.entries(campaignLinkDetails)) {
+        const allPids = [...(link.product_ids || []), ...(link.complementary_product_ids || [])];
+        for (const pid of allPids) {
           if (!productToCampaigns.has(pid)) productToCampaigns.set(pid, []);
           productToCampaigns.get(pid)!.push(cid);
         }
@@ -983,7 +995,7 @@ export function MetaInsightsPanel({
       setShopifyVentasByLevel({});
       setShopifyPedidosAvailable(false);
     }
-  }, [period, campaignProductLinks, rows, level]);
+  }, [period, campaignLinkDetails, rows, level]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1016,7 +1028,7 @@ export function MetaInsightsPanel({
           row,
           level,
           filterProductId,
-          campaignProductLinks,
+          campaignLinkDetails,
           campaignProductLinksReady,
         );
       });
@@ -1028,7 +1040,7 @@ export function MetaInsightsPanel({
         row,
         level,
         filterProductId,
-        campaignProductLinks,
+        campaignLinkDetails,
         campaignProductLinksReady,
       );
     });
@@ -1038,7 +1050,7 @@ export function MetaInsightsPanel({
     campaignActivityFilter,
     filterProductId,
     level,
-    campaignProductLinks,
+    campaignLinkDetails,
     campaignProductLinksReady,
     period,
   ]);
@@ -1225,12 +1237,12 @@ export function MetaInsightsPanel({
     let linked = 0;
     let unlinked = 0;
     for (const row of campaignRows) {
-      const ids = campaignProductLinks[String(row.id)] || [];
-      if (ids.length > 0) linked += 1;
+      const link = campaignLinkDetails[String(row.id)];
+      if (campaignLinkHasPrimary(link)) linked += 1;
       else unlinked += 1;
     }
     return { total: campaignRows.length, linked, unlinked };
-  }, [level, allCampaignRows, rows, campaignProductLinks, campaignProductLinksReady, campaignActivityFilter]);
+  }, [level, allCampaignRows, rows, campaignLinkDetails, campaignProductLinksReady, campaignActivityFilter]);
 
   type MetricCard = { label: string; value: string; title?: string };
 
@@ -1496,8 +1508,8 @@ export function MetaInsightsPanel({
       {level === 'campaigns' ? (
         <p style={{ margin: '0 0 14px', fontSize: 12, color: ds.textMuted, maxWidth: 720, lineHeight: 1.45 }}>
           Las filas{' '}
-          <strong style={{ color: ds.dangerText }}>sin ningún producto Shopify asignado</strong> se resaltan en rojo hasta
-          que vincules al menos uno en la columna Productos.
+          <strong style={{ color: ds.dangerText }}>sin producto principal Shopify asignado</strong> se resaltan en
+          rojo. Asigna el producto principal y, si aplica, los complementarios (upsells) en la columna Productos.
         </p>
       ) : null}
 
@@ -1526,7 +1538,7 @@ export function MetaInsightsPanel({
             {
               label: 'Vinculadas a Shopify',
               value: formatNumber(campaignLinkStats.linked),
-              hint: 'Campañas con al menos un producto Shopify asignado (catálogo completo)',
+              hint: 'Campañas con producto principal Shopify asignado (catálogo completo)',
               color: ds.successText,
               bg: ds.successBg,
             },
@@ -1664,13 +1676,13 @@ export function MetaInsightsPanel({
               </tr>
             ) : (
               tableRows.map((row) => {
-                const ev = buildRowTargetEvaluation(row, level, campaignProductLinks, targetsByProduct);
+                const ev = buildRowTargetEvaluation(row, level, primaryLinksForTargets, targetsByProduct);
                 const rowBg = insightRowBg(ev.rowHighlight);
-                const linkedProductIds = campaignProductLinks[String(row.id)] || [];
+                const link = campaignLinkDetails[String(row.id)];
                 const campaignMissingShopifyProduct =
                   level === 'campaigns' &&
                   campaignProductLinksReady &&
-                  linkedProductIds.length === 0;
+                  !campaignLinkHasPrimary(link);
                 const trBackground = campaignMissingShopifyProduct ? CAMPAIGN_ROW_MISSING_PRODUCT_BG : rowBg;
                 const trTitle = [ev.tooltip, campaignMissingShopifyProduct ? 'Sin producto Shopify asignado.' : '']
                   .filter(Boolean)
@@ -1697,7 +1709,12 @@ export function MetaInsightsPanel({
                       <td style={{ padding: '12px 16px', verticalAlign: 'top' }}>
                         <MetaCampaignProductAssign
                           campaignId={String(row.id)}
-                          productIds={campaignProductLinks[String(row.id)] || []}
+                          linkDetail={
+                            campaignLinkDetails[String(row.id)] || {
+                              product_ids: [],
+                              complementary_product_ids: [],
+                            }
+                          }
                           products={shopifyProducts}
                           shopifyOk={shopifyCatalogOk}
                           onUpdate={handleCampaignProductsSaved}

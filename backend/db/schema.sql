@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS meta_campaign_product_links (
   organization_id INTEGER NOT NULL REFERENCES organizations (id) ON DELETE CASCADE,
   meta_campaign_id TEXT NOT NULL,
   product_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+  complementary_product_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   UNIQUE (organization_id, meta_campaign_id)
 );

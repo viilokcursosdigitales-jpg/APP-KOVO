@@ -263,6 +263,9 @@ async function initDb(pool) {
   await pool.query(
     `CREATE INDEX IF NOT EXISTS idx_meta_campaign_links_org ON meta_campaign_product_links (organization_id)`,
   );
+  await pool.query(
+    `ALTER TABLE meta_campaign_product_links ADD COLUMN IF NOT EXISTS complementary_product_ids JSONB NOT NULL DEFAULT '[]'::jsonb`,
+  );
 
   await pool.query(`
     CREATE TABLE IF NOT EXISTS shopify_product_marketing_targets (
