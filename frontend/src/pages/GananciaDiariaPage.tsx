@@ -197,6 +197,10 @@ type ProductAnalysisRow = {
   label: string;
   ventasTotales: number;
   ventasDespachadas: number;
+  gastoPublicitario: number;
+  costoProductoEntregado: number;
+  costoFlete: number;
+  gastoAdmin: number;
   roasTotal: number | null;
   roasDespachado: number | null;
   utilidad: number | null;
@@ -264,11 +268,16 @@ function aggregateProductAnalysis(
         utilidad != null && r.ventasTotales > 0 ? (utilidad / r.ventasTotales) * 100 : null;
       const roasTotal = comparable && r.gastoAds > 0 ? r.ventasTotales / r.gastoAds : null;
       const roasDespachado = comparable && r.gastoAds > 0 ? r.ventasDespachadas / r.gastoAds : null;
+      const gastoAdmin = r.ventasTotales * (adminPercent / 100);
       return {
         key,
         label: r.label,
         ventasTotales: r.ventasTotales,
         ventasDespachadas: r.ventasDespachadas,
+        gastoPublicitario: r.gastoAds,
+        costoProductoEntregado: r.costoProdEnt,
+        costoFlete: r.costoFlete,
+        gastoAdmin,
         roasTotal,
         roasDespachado,
         utilidad,
@@ -821,6 +830,18 @@ export default function GananciaDiariaPage() {
                         <GananciaThStack parts={['Ventas', 'despachadas']} />
                       </th>
                       <th style={thColHeadRight}>
+                        <GananciaThStack parts={['Gasto', 'publicitario']} />
+                      </th>
+                      <th style={thColHeadRight}>
+                        <GananciaThStack parts={['Costo producto', 'entregado']} />
+                      </th>
+                      <th style={thColHeadRight}>
+                        <GananciaThStack parts={['Costo', 'flete']} />
+                      </th>
+                      <th style={thColHeadRight}>
+                        <GananciaThStack parts={['Gastos', 'admon']} />
+                      </th>
+                      <th style={thColHeadRight}>
                         <span style={{ whiteSpace: 'nowrap' }}>ROAS total</span>
                       </th>
                       <th style={thColHeadRight}>
@@ -855,6 +876,18 @@ export default function GananciaDiariaPage() {
                           </td>
                           <td style={{ ...tdColVentasDespachadas, borderBottom: isLast ? 'none' : tdColVentasDespachadas.borderBottom }}>
                             {formatMoney(row.ventasDespachadas, seriesVentasCur)}
+                          </td>
+                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
+                            {formatMoney(row.gastoPublicitario, seriesVentasCur)}
+                          </td>
+                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
+                            {formatMoney(row.costoProductoEntregado, seriesVentasCur)}
+                          </td>
+                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
+                            {formatMoney(row.costoFlete, seriesVentasCur)}
+                          </td>
+                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
+                            {formatMoney(row.gastoAdmin, seriesVentasCur)}
                           </td>
                           <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
                             {formatRoas(row.roasTotal)}
