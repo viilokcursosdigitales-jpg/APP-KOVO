@@ -4,6 +4,18 @@ import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
 
+type ProductDaySlice = {
+  label?: string;
+  product_id?: number | null;
+  ventas_despachadas_total: number;
+  ventas_entregadas_total: number;
+  ventas_despachadas_pedidos: number;
+  cantidad_producto_total: number;
+  costo_producto_total: number;
+  costo_producto_entregado_total: number;
+  costo_flete_promedio_total: number;
+};
+
 type SeriesDayRow = {
   date: string;
   ventas_despachadas_total: number;
@@ -16,6 +28,7 @@ type SeriesDayRow = {
   gasto_publicitario_total: number;
   ganancia: number | null;
   utilidad: number | null;
+  by_product?: Record<string, ProductDaySlice>;
 };
 
 type SeriesPayload = {
@@ -122,6 +135,152 @@ function utilidadMostradaPorDia(
   if (!comparable || row.utilidad == null || !Number.isFinite(row.utilidad)) return null;
   const ve = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
   return (row.utilidad as number) - ve * (adminPercent / 100);
+}
+
+function filterDayRowByProduct(
+  row: SeriesDayRow,
+  productId: number,
+  comparable: boolean | undefined,
+): SeriesDayRow {
+  const byp = row.by_product && typeof row.by_product === 'object' ? row.by_product : {};
+  const selected = Object.values(byp).find(
+    (x) => x && Number.isFinite(Number(x.product_id)) && Number(x.product_id) === productId,
+  );
+  const totalVentasDay = Number(row.ventas_despachadas_total || 0);
+  const totalGastoAdsDay = Number(row.gasto_publicitario_total || 0);
+  if (!selected) {
+    return {
+      ...row,
+      ventas_despachadas_total: 0,
+      ventas_entregadas_total: 0,
+      ventas_despachadas_pedidos: 0,
+      cantidad_producto_total: 0,
+      costo_producto_total: 0,
+      costo_producto_entregado_total: 0,
+      costo_flete_promedio_total: 0,
+      gasto_publicitario_total: 0,
+      ganancia: comparable ? 0 : null,
+      utilidad: comparable ? 0 : null,
+      by_product: {},
+    };
+  }
+  const ventasDesp = Number(selected.ventas_despachadas_total || 0);
+  const ventasEnt = Number(selected.ventas_entregadas_total || 0);
+  const pedidos = Number(selected.ventas_despachadas_pedidos || 0);
+  const qty = Number(selected.cantidad_producto_total || 0);
+  const costoProd = Number(selected.costo_producto_total || 0);
+  const costoProdEnt = Number(selected.costo_producto_entregado_total || 0);
+  const costoFlete = Number(selected.costo_flete_promedio_total || 0);
+  const shareByVentas =
+    totalVentasDay > 0 && Number.isFinite(totalVentasDay) ? Math.max(0, Math.min(1, ventasDesp / totalVentasDay)) : 0;
+  const gastoAds = Math.round(totalGastoAdsDay * shareByVentas * 100) / 100;
+  return {
+    ...row,
+    ventas_despachadas_total: Math.round(ventasDesp * 100) / 100,
+    ventas_entregadas_total: Math.round(ventasEnt * 100) / 100,
+    ventas_despachadas_pedidos: pedidos,
+    cantidad_producto_total: Math.round(qty * 100) / 100,
+    costo_producto_total: Math.round(costoProd * 100) / 100,
+    costo_producto_entregado_total: Math.round(costoProdEnt * 100) / 100,
+    costo_flete_promedio_total: Math.round(costoFlete * 100) / 100,
+    gasto_publicitario_total: gastoAds,
+    ganancia: comparable ? Math.round((ventasDesp - gastoAds) * 100) / 100 : null,
+    utilidad: comparable ? Math.round((ventasEnt - gastoAds - costoProdEnt - costoFlete) * 100) / 100 : null,
+    by_product: {
+      [String(selected.product_id ?? productId)]: selected,
+    },
+  };
+}
+
+type ProductAnalysisRow = {
+  key: string;
+  label: string;
+  ventasTotales: number;
+  ventasDespachadas: number;
+  roasTotal: number | null;
+  roasDespachado: number | null;
+  utilidad: number | null;
+  utilidadPct: number | null;
+};
+
+function aggregateProductAnalysis(
+  rows: SeriesDayRow[],
+  comparable: boolean | undefined,
+  adminPercent: number,
+): ProductAnalysisRow[] {
+  const map = new Map<
+    string,
+    {
+      label: string;
+      ventasTotales: number;
+      ventasDespachadas: number;
+      gastoAds: number;
+      costoProdEnt: number;
+      costoFlete: number;
+    }
+  >();
+
+  for (const row of rows) {
+    const byp = row.by_product && typeof row.by_product === 'object' ? row.by_product : {};
+    const totalVentasDay = Number(row.ventas_despachadas_total || 0);
+    const gastoDay = Number(row.gasto_publicitario_total || 0);
+
+    for (const [pk, slice] of Object.entries(byp)) {
+      if (!slice) continue;
+      const key = pk;
+      if (!map.has(key)) {
+        map.set(key, {
+          label: String(slice.label || pk),
+          ventasTotales: 0,
+          ventasDespachadas: 0,
+          gastoAds: 0,
+          costoProdEnt: 0,
+          costoFlete: 0,
+        });
+      }
+      const acc = map.get(key)!;
+      const vd = Number(slice.ventas_despachadas_total || 0);
+      const ve = Number(slice.ventas_entregadas_total || 0);
+      acc.ventasDespachadas += vd;
+      acc.ventasTotales += ve;
+      acc.costoProdEnt += Number(slice.costo_producto_entregado_total || slice.costo_producto_total || 0);
+      acc.costoFlete += Number(slice.costo_flete_promedio_total || 0);
+      const share =
+        totalVentasDay > 0 && Number.isFinite(totalVentasDay) ? Math.max(0, Math.min(1, vd / totalVentasDay)) : 0;
+      acc.gastoAds += gastoDay * share;
+    }
+  }
+
+  return [...map.entries()]
+    .map(([key, r]) => {
+      const utilidadBase = comparable
+        ? r.ventasTotales - r.gastoAds - r.costoProdEnt - r.costoFlete
+        : null;
+      const utilidad =
+        utilidadBase != null
+          ? Math.round((utilidadBase - r.ventasTotales * (adminPercent / 100)) * 100) / 100
+          : null;
+      const utilidadPct =
+        utilidad != null && r.ventasTotales > 0 ? (utilidad / r.ventasTotales) * 100 : null;
+      const roasTotal = comparable && r.gastoAds > 0 ? r.ventasTotales / r.gastoAds : null;
+      const roasDespachado = comparable && r.gastoAds > 0 ? r.ventasDespachadas / r.gastoAds : null;
+      return {
+        key,
+        label: r.label,
+        ventasTotales: r.ventasTotales,
+        ventasDespachadas: r.ventasDespachadas,
+        roasTotal,
+        roasDespachado,
+        utilidad,
+        utilidadPct,
+      };
+    })
+    .sort((a, b) => {
+      const ap = a.utilidadPct ?? -Infinity;
+      const bp = b.utilidadPct ?? -Infinity;
+      if (bp !== ap) return bp - ap;
+      return a.label.localeCompare(b.label, 'es', { sensitivity: 'base' });
+    });
 }
 
 const cardBase: CSSProperties = {
@@ -332,9 +491,6 @@ export default function GananciaDiariaPage() {
     if (selectedMonths.length > 0) {
       qs.set('months', selectedMonths.join(','));
     }
-    if (selectedProductId) {
-      qs.set('product_id', selectedProductId);
-    }
     const suffix = qs.toString() ? `?${qs}` : '';
     const cacheKey = suffix || '__default__';
     const cached = readSeriesCache(cacheKey);
@@ -368,7 +524,7 @@ export default function GananciaDiariaPage() {
     } finally {
       setSeriesLoading(false);
     }
-  }, [selectedMonths, selectedProductId, readSeriesCache, writeSeriesCache]);
+  }, [selectedMonths, readSeriesCache, writeSeriesCache]);
 
   useEffect(() => {
     void loadSeries();
@@ -429,11 +585,17 @@ export default function GananciaDiariaPage() {
   const seriesMetaCur = seriesData?.meta_currency;
   const comparable = seriesData?.ganancia_comparable;
   const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
+  const daysForTable = useMemo(() => {
+    if (!selectedProductId) return days;
+    const pid = Number.parseInt(selectedProductId, 10);
+    if (!Number.isFinite(pid) || pid <= 0) return days;
+    return days.map((row) => filterDayRowByProduct(row, pid, comparable));
+  }, [days, selectedProductId, comparable]);
   const dayKeys = useMemo(() => {
     const s = new Set<string>();
-    for (const row of days) s.add(String(row.date || '').trim());
+    for (const row of daysForTable) s.add(String(row.date || '').trim());
     return [...s].filter(Boolean).sort();
-  }, [days]);
+  }, [daysForTable]);
 
   const dayKeysSig = useMemo(() => dayKeys.join('|'), [dayKeys]);
 
@@ -500,6 +662,18 @@ export default function GananciaDiariaPage() {
   }, [draggingRangeThumb, updateRangeThumbAtClientX]);
 
   const daysInRange = useMemo(() => {
+    if (dayKeys.length === 0 || !selectedRangeDates.from || !selectedRangeDates.to) return daysForTable;
+    const lo = selectedRangeDates.from;
+    const hi = selectedRangeDates.to;
+    return daysForTable.filter((row) => {
+      const d = row.date;
+      if (lo && d < lo) return false;
+      if (hi && d > hi) return false;
+      return true;
+    });
+  }, [daysForTable, dayKeys, selectedRangeDates]);
+
+  const daysInRangeAllProducts = useMemo(() => {
     if (dayKeys.length === 0 || !selectedRangeDates.from || !selectedRangeDates.to) return days;
     const lo = selectedRangeDates.from;
     const hi = selectedRangeDates.to;
@@ -510,6 +684,11 @@ export default function GananciaDiariaPage() {
       return true;
     });
   }, [days, dayKeys, selectedRangeDates]);
+
+  const productAnalysisRows = useMemo(
+    () => aggregateProductAnalysis(daysInRangeAllProducts, comparable, adminPercent),
+    [daysInRangeAllProducts, comparable, adminPercent],
+  );
 
   const totals = useMemo(() => {
     let v = 0;
@@ -581,9 +760,9 @@ export default function GananciaDiariaPage() {
             . Sin meses en el filtro se cargan los últimos 7 días; con meses seleccionados se cargan todos los días de
             esos meses. El deslizador solo acota qué días ves en pantalla.
           </p>
-          {dayKeys.length > 0 && daysInRange.length !== days.length ? (
+          {dayKeys.length > 0 && daysInRange.length !== daysForTable.length ? (
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textHint }}>
-              Mostrando {daysInRange.length} de {days.length} día{days.length === 1 ? '' : 's'} según el rango de fechas.
+              Mostrando {daysInRange.length} de {daysForTable.length} día{daysForTable.length === 1 ? '' : 's'} según el rango de fechas.
             </p>
           ) : null}
 
@@ -602,6 +781,105 @@ export default function GananciaDiariaPage() {
               </div>
             </div>
           </div>
+
+          {!seriesLoading && productAnalysisRows.length > 0 ? (
+            <div
+              style={{
+                ...cardBase,
+                padding: 0,
+                overflow: 'hidden',
+                border: '1px solid #6c47ff',
+                marginBottom: 24,
+              }}
+            >
+              <div
+                style={{
+                  padding: '14px 20px',
+                  borderBottom: `1px solid ${ds.borderSide}`,
+                  background: ds.bgSubtle,
+                }}
+              >
+                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: ds.textPrimary }}>
+                  Análisis por producto
+                </h2>
+                <p style={{ margin: '6px 0 0', fontSize: 12, color: ds.textMuted, lineHeight: 1.45 }}>
+                  Totales del rango de fechas seleccionado. Ventas totales = ventas entregadas. Gasto publicitario
+                  prorrateado por participación diaria en ventas despachadas. Ordenado por % utilidad de mayor a menor.
+                </p>
+              </div>
+              <div style={{ overflowX: 'auto' }}>
+                <table style={tableStyle}>
+                  <thead>
+                    <tr style={{ background: '#6c47ff' }}>
+                      <th style={thColHeadLeft}>
+                        <span style={{ whiteSpace: 'nowrap' }}>Producto</span>
+                      </th>
+                      <th style={thColHeadRight}>
+                        <GananciaThStack parts={['Ventas', 'totales']} />
+                      </th>
+                      <th style={thColHeadVentasDespachadas}>
+                        <GananciaThStack parts={['Ventas', 'despachadas']} />
+                      </th>
+                      <th style={thColHeadRight}>
+                        <span style={{ whiteSpace: 'nowrap' }}>ROAS total</span>
+                      </th>
+                      <th style={thColHeadRight}>
+                        <GananciaThStack parts={['ROAS', 'despachado']} />
+                      </th>
+                      <th style={thColHeadRight}>
+                        <span style={{ whiteSpace: 'nowrap' }}>Utilidad</span>
+                      </th>
+                      <th style={thColHeadRight}>
+                        <GananciaThStack parts={['Utilidad', '%']} />
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {productAnalysisRows.map((row, i, arr) => {
+                      const isLast = i === arr.length - 1;
+                      const utilidadStyle: CSSProperties =
+                        row.utilidad == null
+                          ? tdColRight
+                          : row.utilidad < 0
+                            ? { ...tdColRight, color: ds.dangerText, fontWeight: 600 }
+                            : row.utilidad > 0
+                              ? { ...tdColRight, color: ds.successText, fontWeight: 600 }
+                              : tdColRight;
+                      return (
+                        <tr key={row.key}>
+                          <td style={{ ...tdColLeft, borderBottom: isLast ? 'none' : tdColLeft.borderBottom }}>
+                            {row.label}
+                          </td>
+                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
+                            {formatMoney(row.ventasTotales, seriesVentasCur)}
+                          </td>
+                          <td style={{ ...tdColVentasDespachadas, borderBottom: isLast ? 'none' : tdColVentasDespachadas.borderBottom }}>
+                            {formatMoney(row.ventasDespachadas, seriesVentasCur)}
+                          </td>
+                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
+                            {formatRoas(row.roasTotal)}
+                          </td>
+                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
+                            {formatRoas(row.roasDespachado)}
+                          </td>
+                          <td style={{ ...utilidadStyle, borderBottom: isLast ? 'none' : utilidadStyle.borderBottom }}>
+                            {row.utilidad != null && Number.isFinite(row.utilidad)
+                              ? formatMoney(row.utilidad, seriesVentasCur)
+                              : '—'}
+                          </td>
+                          <td style={{ ...utilidadStyle, borderBottom: isLast ? 'none' : utilidadStyle.borderBottom }}>
+                            {row.utilidadPct != null && Number.isFinite(row.utilidadPct)
+                              ? `${row.utilidadPct.toFixed(2)}%`
+                              : '—'}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          ) : null}
 
           <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
             <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: ds.textPrimary, flex: '1 1 auto' }}>
@@ -931,7 +1209,7 @@ export default function GananciaDiariaPage() {
           {seriesMetaNote ? (
             <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textHint }}>Meta (tabla): {seriesMetaNote}</p>
           ) : null}
-          {seriesData?.product_id_applied && seriesData?.product_spend_allocation ? (
+          {selectedProductId ? (
             <p
               style={{
                 margin: '0 0 12px',
@@ -945,7 +1223,7 @@ export default function GananciaDiariaPage() {
               }}
             >
               Producto filtrado activo: el gasto Meta del día se prorratea por la participación de ventas despachadas
-              del producto en ese día.
+              del producto en ese día. La tabla superior sigue mostrando todos los productos del rango.
             </p>
           ) : null}
 

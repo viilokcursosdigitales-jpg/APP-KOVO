@@ -132,10 +132,10 @@ export default function App() {
                 <Route index element={<ListaMensualPlaneacion />} />
                 <Route path=":id" element={<DetallePlanPlaneacion />} />
               </Route>
+              <Route path="/reporte-2-dropi" element={<Reporte2DropiPage />} />
             </Route>
             <Route path="/profile" element={<Profile />} />
             <Route path="/reporte-dropi" element={<ReporteDropiPage />} />
-            <Route path="/reporte-2-dropi" element={<Reporte2DropiPage />} />
             <Route path="/admin/users" element={<AdminUsersPage />} />
             <Route path="/admin/dashboard-content" element={<AdminDashboardContentPage />} />
             <Route element={<AdminRoute />}>

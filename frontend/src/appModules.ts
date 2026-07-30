@@ -19,6 +19,7 @@ export const APP_MODULE_IDS = [
   'kips',
   'gasto_publicitario_por_mes',
   'gasto_publicitario_por_producto',
+  'reporte_2_dropi',
 ] as const;
 
 export type AppModuleId = (typeof APP_MODULE_IDS)[number];
@@ -43,6 +44,7 @@ export const APP_MODULE_CATALOG: { id: AppModuleId; label: string; group: string
   { id: 'kips', label: 'Análisis de Campaña', group: 'Marketing' },
   { id: 'gasto_publicitario_por_mes', label: 'Gasto publicitario por mes', group: 'Marketing' },
   { id: 'gasto_publicitario_por_producto', label: 'Gasto publicitario por producto', group: 'Marketing' },
+  { id: 'reporte_2_dropi', label: 'Reporte 2 Dropi', group: 'Logística' },
 ];
 
 const PATH_TO_MODULE: Record<string, AppModuleId> = {
@@ -67,6 +69,7 @@ const PATH_TO_MODULE: Record<string, AppModuleId> = {
   '/kips': 'kips',
   '/gasto-publicitario-por-mes': 'gasto_publicitario_por_mes',
   '/gasto-publicitario-por-producto': 'gasto_publicitario_por_producto',
+  '/reporte-2-dropi': 'reporte_2_dropi',
 };
 
 const MODULE_TO_PATH: Record<AppModuleId, string> = {
@@ -89,6 +92,7 @@ const MODULE_TO_PATH: Record<AppModuleId, string> = {
   kips: '/kips',
   gasto_publicitario_por_mes: '/gasto-publicitario-por-mes',
   gasto_publicitario_por_producto: '/gasto-publicitario-por-producto',
+  reporte_2_dropi: '/reporte-2-dropi',
 };
 
 /** Orden para “primera pantalla” tras login o al bloquear una ruta. */
