@@ -18,6 +18,7 @@ type ProductDaySlice = {
   costo_producto_total: number;
   costo_producto_entregado_total: number;
   costo_flete_promedio_total: number;
+  gasto_publicitario_total?: number;
 };
 
 type SeriesDayRow = {
@@ -218,7 +219,11 @@ function filterDayRowByProduct(
   const costoFlete = Number(selected.costo_flete_promedio_total || 0);
   const shareByVentas =
     totalVentasDay > 0 && Number.isFinite(totalVentasDay) ? Math.max(0, Math.min(1, ventasDesp / totalVentasDay)) : 0;
-  const gastoAds = Math.round(totalGastoAdsDay * shareByVentas * 100) / 100;
+  const linkedGasto = selected.gasto_publicitario_total;
+  const gastoAds =
+    linkedGasto != null && Number.isFinite(Number(linkedGasto))
+      ? Math.round(Number(linkedGasto) * 100) / 100
+      : Math.round(totalGastoAdsDay * shareByVentas * 100) / 100;
   return {
     ...row,
     ventas_despachadas_total: Math.round(ventasDesp * 100) / 100,
@@ -295,9 +300,14 @@ function aggregateProductAnalysis(
       acc.ventasTotales += ve;
       acc.costoProdEnt += Number(slice.costo_producto_entregado_total || slice.costo_producto_total || 0);
       acc.costoFlete += Number(slice.costo_flete_promedio_total || 0);
-      const share =
-        totalVentasDay > 0 && Number.isFinite(totalVentasDay) ? Math.max(0, Math.min(1, vd / totalVentasDay)) : 0;
-      acc.gastoAds += gastoDay * share;
+      const sliceGasto = slice.gasto_publicitario_total;
+      if (sliceGasto != null && Number.isFinite(Number(sliceGasto))) {
+        acc.gastoAds += Number(sliceGasto);
+      } else {
+        const share =
+          totalVentasDay > 0 && Number.isFinite(totalVentasDay) ? Math.max(0, Math.min(1, vd / totalVentasDay)) : 0;
+        acc.gastoAds += gastoDay * share;
+      }
     }
   }
 

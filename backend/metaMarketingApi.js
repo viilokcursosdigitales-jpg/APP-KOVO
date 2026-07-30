@@ -581,7 +581,7 @@ async function fetchAccountInsightsTotalsForPreset(actId, accessToken, datePrese
   if (!id) {
     return { ok: false, error: 'ID de cuenta no válido', totals: null };
   }
-  const fields = `${INSIGHT_FIELDS},actions,action_values`;
+  const fields = INSIGHT_FIELDS;
   const url = `https://graph.facebook.com/${v}/${id}/insights?date_preset=${encodeURIComponent(datePreset)}&fields=${encodeURIComponent(fields)}&access_token=${encodeURIComponent(accessToken)}`;
   const { ok, data } = await graphFetchJson(url, { ...apiOptions, accessToken });
   if (!ok || !data || !Array.isArray(data.data) || !data.data[0]) {
@@ -855,6 +855,68 @@ async function fetchDailySpendByDayForAdAccountsTimeRange(actIds, accessToken, s
 }
 
 /**
+ * Gasto diario por campaña (level=campaign + time_increment=1) en rango since/until.
+ * @returns {Promise<{ rows: { adAccountId: string, campaignId: string, dateStart: string, spend: number }[], partialErrors: { adAccountId: string, error: string }[] }>}
+ */
+async function fetchCampaignDailySpendForAdAccountsTimeRange(actIds, accessToken, since, until, apiOptions = {}) {
+  const v = getGraphVersion();
+  const tr = JSON.stringify({ since, until });
+  const fields = 'campaign_id,campaign_name,spend,date_start';
+  const partialErrors = [];
+  const rows = [];
+
+  for (const raw of actIds) {
+    const id = normalizeActId(raw);
+    if (!id) {
+      partialErrors.push({ adAccountId: String(raw || ''), error: 'ID de cuenta no válido' });
+      continue;
+    }
+    const base = `https://graph.facebook.com/${v}/${id}/insights?level=campaign&fields=${encodeURIComponent(fields)}&time_range=${encodeURIComponent(tr)}&time_increment=1&limit=500&access_token=${encodeURIComponent(accessToken)}`;
+    const r = await fetchAllGraphPages(base, { ...apiOptions, accessToken });
+    if (!r.ok) {
+      const fb = r.data && r.data.error;
+      partialErrors.push({
+        adAccountId: id,
+        error: (fb && fb.message) || 'Error al leer gasto diario por campaña',
+      });
+      continue;
+    }
+    for (const row of r.items) {
+      const dateStart = String(row.date_start || '').trim();
+      const campaignId = String(row.campaign_id || '').trim();
+      if (!dateStart || !campaignId) continue;
+      const spend = parseNum(row.spend);
+      if (!Number.isFinite(spend) || spend <= 0) continue;
+      rows.push({ adAccountId: id, campaignId, dateStart, spend });
+    }
+  }
+  return { rows, partialErrors };
+}
+
+/** Mapa date → product_id → gasto asignado vía links campaña–producto Shopify. */
+function buildProductSpendByDayFromCampaignRows(campaignRows, linksByCampaign) {
+  const byDay = new Map();
+  for (const row of campaignRows || []) {
+    const spend = Number(row.spend);
+    if (!Number.isFinite(spend) || spend <= 0) continue;
+    const date = String(row.dateStart || '').trim();
+    const cid = String(row.campaignId || '').trim();
+    if (!date || !cid) continue;
+    const pids = linksByCampaign.get(cid) || [];
+    if (!pids.length) continue;
+    const share = spend / pids.length;
+    if (!byDay.has(date)) byDay.set(date, new Map());
+    const dayMap = byDay.get(date);
+    for (const pid of pids) {
+      const n = Number(pid);
+      if (!Number.isFinite(n)) continue;
+      dayMap.set(n, (dayMap.get(n) || 0) + share);
+    }
+  }
+  return byDay;
+}
+
+/**
  * Insights diarios por cuenta en rango since/until (YYYY-MM-DD) con métricas completas.
  * @param {string} actId
  * @param {string} accessToken
@@ -989,6 +1051,8 @@ module.exports = {
   fetchAccountSpendForTimeRange,
   fetchTotalSpendForAdAccountsTimeRange,
   fetchDailySpendByDayForAdAccountsTimeRange,
+  fetchCampaignDailySpendForAdAccountsTimeRange,
+  buildProductSpendByDayFromCampaignRows,
   fetchDailyInsightsByDayForAdAccountsTimeRange,
   getCampaignAdAccountId,
   updateCampaignStatusGraph,

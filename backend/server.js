@@ -37,6 +37,8 @@ const {
   fetchMergedDailyInsightsForAdAccounts,
   fetchTotalSpendForAdAccountsTimeRange,
   fetchDailySpendByDayForAdAccountsTimeRange,
+  fetchCampaignDailySpendForAdAccountsTimeRange,
+  buildProductSpendByDayFromCampaignRows,
   fetchDailyInsightsByDayForAdAccountsTimeRange,
   runWithMetaApiContext,
   getGraphVersion,
@@ -6081,6 +6083,67 @@ async function gananciaFetchMetaSpendPack(organizationId, sinceYmd, untilYmd) {
   return out;
 }
 
+/** Gasto Meta por producto y día según vínculos campaña Meta → producto Shopify. */
+async function gananciaFetchMetaProductSpendByDay(organizationId, sinceYmd, untilYmd) {
+  const out = {
+    productSpendByDay: new Map(),
+    linkedCampaignRows: 0,
+    metaPartialErrors: [],
+    allocation: null,
+  };
+  let linksByCampaign = new Map();
+  try {
+    const linksRows = await pool.query(
+      `SELECT meta_campaign_id, product_ids
+       FROM meta_campaign_product_links
+       WHERE organization_id = $1`,
+      [organizationId],
+    );
+    for (const r of linksRows.rows) {
+      const cid = String(r.meta_campaign_id || '').trim();
+      if (!cid) continue;
+      const ids = Array.isArray(r.product_ids)
+        ? r.product_ids.map((x) => Number.parseInt(String(x), 10)).filter((n) => Number.isFinite(n))
+        : [];
+      if (ids.length) linksByCampaign.set(cid, ids);
+    }
+  } catch (e) {
+    if (!(e && e.code === '42P01')) throw e;
+    return out;
+  }
+  if (linksByCampaign.size === 0) return out;
+
+  const metaRow = await ensureValidMetaTokenForOrg(pool, META_GRAPH_VERSION, organizationId);
+  if (!metaRow || !String(metaRow.access_token || '').trim()) return out;
+  const resolved = resolveAdAccountIdsForRequest(undefined, metaRow.selected_ad_account_ids);
+  if (!resolved.ok || resolved.actIds.length === 0) return out;
+
+  const token = metaRow.access_token;
+  const campRes = await fetchCampaignDailySpendForAdAccountsTimeRange(
+    resolved.actIds,
+    token,
+    sinceYmd,
+    untilYmd,
+  );
+  for (const pe of campRes.partialErrors || []) out.metaPartialErrors.push(pe);
+  out.productSpendByDay = buildProductSpendByDayFromCampaignRows(campRes.rows, linksByCampaign);
+  out.linkedCampaignRows = (campRes.rows || []).filter((row) => {
+    const cid = String(row.campaignId || '').trim();
+    return cid && (linksByCampaign.get(cid) || []).length > 0;
+  }).length;
+  if (out.productSpendByDay.size > 0) {
+    out.allocation = 'meta_campaign_product_links';
+  }
+  return out;
+}
+
+function productLinkedSpendForDay(productSpendByDay, dateStr, productId) {
+  if (!productSpendByDay || productId == null || !Number.isFinite(Number(productId))) return 0;
+  const dayMap = productSpendByDay.get(dateStr);
+  if (!dayMap) return 0;
+  return Number(dayMap.get(Number(productId)) || 0);
+}
+
 /** Gasto Meta un solo día (insights + listado de cuentas en paralelo). */
 async function gananciaFetchMetaSpendSingleDay(organizationId, dateStr) {
   const out = { spend: 0, metaPartialErrors: [], metaCurrency: '' };
@@ -8330,7 +8393,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     qs.set('created_at_max', rangeMax);
     const sinceYmd = sortedAsc[0];
     const untilYmd = sortedAsc[sortedAsc.length - 1];
-    const [r, manualRows, metaPack, manualAdPack] = await Promise.all([
+    const [r, manualRows, metaPack, manualAdPack, metaProductSpendPack] = await Promise.all([
       shopifyFetchAllOrders(shopRow.shop_domain, shopRow.access_token, qs),
       loadMoticoManualOrdersForOrgGananciaSeries(
         req.organizationId,
@@ -8341,6 +8404,7 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       ),
       gananciaFetchMetaSpendPack(req.organizationId, sinceYmd, untilYmd),
       loadManualAdSpendByDayForOrg(req.organizationId, sinceYmd, untilYmd),
+      gananciaFetchMetaProductSpendByDay(req.organizationId, sinceYmd, untilYmd),
     ]);
     if (!r.ok) {
       const st = Number(r.status) >= 400 ? Number(r.status) : 502;
@@ -8484,8 +8548,10 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     for (const k of sortedAsc) {
       spendByDay[k] = Number(spendByDayMeta[k] || 0) + Number(spendByDayManual[k] || 0);
     }
-    const metaPartialErrors = metaPack.metaPartialErrors || [];
+    const metaPartialErrors = [...(metaPack.metaPartialErrors || []), ...(metaProductSpendPack.metaPartialErrors || [])];
     const metaCurrency = metaPack.metaCurrency || '';
+    const productSpendByDay = metaProductSpendPack.productSpendByDay || new Map();
+    const usesCampaignProductSpend = metaProductSpendPack.allocation === 'meta_campaign_product_links';
 
     const totalMetaSpend = Object.values(spendByDayMeta).reduce((sum, v) => sum + (Number(v) || 0), 0);
     const shopC = shopCurrency.toUpperCase();
@@ -8545,20 +8611,28 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       let by_product = {};
       if (innerProd && innerProd.size) {
         by_product = Object.fromEntries(
-          [...innerProd.entries()].map(([pk, v]) => [
-            pk,
-            {
-              label: v.label,
-              product_id: v.product_id,
-              ventas_despachadas_total: Math.round(v.ventas_despachadas * 100) / 100,
-              ventas_entregadas_total: Math.round(v.ventas_entregadas * 100) / 100,
-              ventas_despachadas_pedidos: v.pedidos,
-              cantidad_producto_total: Math.round(v.qty * 100) / 100,
-              costo_producto_total: Math.round(v.costo_producto * 100) / 100,
-              costo_producto_entregado_total: Math.round(v.costo_entregado * 100) / 100,
-              costo_flete_promedio_total: Math.round(v.flete * 100) / 100,
-            },
-          ]),
+          [...innerProd.entries()].map(([pk, v]) => {
+            const pid = v.product_id != null ? Number(v.product_id) : null;
+            let gastoProducto = 0;
+            if (usesCampaignProductSpend && pid != null && Number.isFinite(pid)) {
+              gastoProducto = productLinkedSpendForDay(productSpendByDay, dateStr, pid);
+            }
+            return [
+              pk,
+              {
+                label: v.label,
+                product_id: v.product_id,
+                ventas_despachadas_total: Math.round(v.ventas_despachadas * 100) / 100,
+                ventas_entregadas_total: Math.round(v.ventas_entregadas * 100) / 100,
+                ventas_despachadas_pedidos: v.pedidos,
+                cantidad_producto_total: Math.round(v.qty * 100) / 100,
+                costo_producto_total: Math.round(v.costo_producto * 100) / 100,
+                costo_producto_entregado_total: Math.round(v.costo_entregado * 100) / 100,
+                costo_flete_promedio_total: Math.round(v.flete * 100) / 100,
+                gasto_publicitario_total: Math.round(gastoProducto * 100) / 100,
+              },
+            ];
+          }),
         );
       }
       days.push({
@@ -8599,8 +8673,6 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
           const selected = Object.values(byp).find(
             (x) => x && Number.isFinite(Number(x.product_id)) && Number(x.product_id) === productIdFilterNum,
           );
-        const totalVentasDay = Number(row.ventas_despachadas_total || 0);
-        const totalGastoAdsDay = Number(row.gasto_publicitario_total || 0);
           if (!selected) {
             return {
               ...row,
@@ -8624,9 +8696,17 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
           const costoProd = Number(selected.costo_producto_total || 0);
           const costoProdEnt = Number(selected.costo_producto_entregado_total || 0);
           const costoFlete = Number(selected.costo_flete_promedio_total || 0);
-          const shareByVentas =
-            totalVentasDay > 0 && Number.isFinite(totalVentasDay) ? Math.max(0, Math.min(1, ventasDesp / totalVentasDay)) : 0;
-          const gastoAds = Math.round(totalGastoAdsDay * shareByVentas * 100) / 100;
+          let gastoAds = 0;
+          if (usesCampaignProductSpend) {
+            gastoAds = Math.round(productLinkedSpendForDay(productSpendByDay, row.date, productIdFilterNum) * 100) / 100;
+          } else {
+            const totalVentasDay = Number(row.ventas_despachadas_total || 0);
+            const shareByVentas =
+              totalVentasDay > 0 && Number.isFinite(totalVentasDay)
+                ? Math.max(0, Math.min(1, ventasDesp / totalVentasDay))
+                : 0;
+            gastoAds = Math.round(Number(row.gasto_publicitario_total || 0) * shareByVentas * 100) / 100;
+          }
           return {
             ...row,
             ventas_despachadas_total: Math.round(ventasDesp * 100) / 100,
@@ -8640,7 +8720,10 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
             ganancia: gananciaComparable ? Math.round((ventasDesp - gastoAds) * 100) / 100 : null,
             utilidad: gananciaComparable ? Math.round((ventasEnt - gastoAds - costoProdEnt - costoFlete) * 100) / 100 : null,
             by_product: {
-              [String(selected.product_id ?? productIdFilterNum)]: selected,
+              [String(selected.product_id ?? productIdFilterNum)]: {
+                ...selected,
+                gasto_publicitario_total: gastoAds,
+              },
             },
           };
         })
@@ -8659,7 +8742,11 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       days: filteredDays,
       product_options,
       product_id_applied: hasProductFilter ? productIdFilterNum : null,
-      product_spend_allocation: hasProductFilter ? 'ventas_despachadas_prorrata_dia' : null,
+      product_spend_allocation: usesCampaignProductSpend
+        ? 'meta_campaign_product_links'
+        : hasProductFilter
+          ? 'ventas_despachadas_prorrata_dia'
+          : null,
     });
   } catch (e) {
     console.error(e);

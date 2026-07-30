@@ -13,6 +13,7 @@ export type ProductDaySlice = {
   costo_producto_total: number;
   costo_producto_entregado_total: number;
   costo_flete_promedio_total: number;
+  gasto_publicitario_total?: number;
 };
 
 export type SeriesDayRow = {
@@ -173,9 +174,17 @@ export function buildProductSeriesMap(days: SeriesDayRow[]): Map<
       }
       const acc = map.get(key)!;
       const vd = Number(slice.ventas_despachadas_total || 0);
-      const share =
-        totalVentasDay > 0 && Number.isFinite(totalVentasDay) ? Math.max(0, Math.min(1, vd / totalVentasDay)) : 0;
-      const ads = gastoDay * share;
+      const sliceGasto = slice.gasto_publicitario_total;
+      const ads =
+        sliceGasto != null && Number.isFinite(Number(sliceGasto))
+          ? Number(sliceGasto)
+          : (() => {
+              const share =
+                totalVentasDay > 0 && Number.isFinite(totalVentasDay)
+                  ? Math.max(0, Math.min(1, vd / totalVentasDay))
+                  : 0;
+              return gastoDay * share;
+            })();
       acc.pedidos += Number(slice.ventas_despachadas_pedidos || 0);
       acc.cantidad += Number(slice.cantidad_producto_total || 0);
       acc.ventas += vd;
