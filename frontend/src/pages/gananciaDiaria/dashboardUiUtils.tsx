@@ -77,6 +77,7 @@ export type DashboardInsight = {
   subtitle: string;
   value: string;
   tone: 'success' | 'warning' | 'danger' | 'neutral' | 'brand';
+  product_id?: number | null;
 };
 
 export const dashboardCard: CSSProperties = {
@@ -278,6 +279,7 @@ export function computeInsights(
       subtitle: topPct.label,
       value: `${topPct.utilidadPct.toFixed(1)}% utilidad neta`,
       tone: 'success',
+      product_id: topPct.product_id,
     });
   }
 
@@ -289,6 +291,7 @@ export function computeInsights(
       subtitle: topUnit.label,
       value: formatMoney(topUnit.utilidadUnitaria),
       tone: 'brand',
+      product_id: topUnit.product_id,
     });
   }
 
@@ -300,6 +303,7 @@ export function computeInsights(
       subtitle: topTotal.label,
       value: formatMoney(topTotal.utilidad),
       tone: 'success',
+      product_id: topTotal.product_id,
     });
   }
 
@@ -311,6 +315,7 @@ export function computeInsights(
       subtitle: topRoas.label,
       value: formatRoas(topRoas.roasDespachado),
       tone: 'brand',
+      product_id: topRoas.product_id,
     });
   }
 
@@ -327,6 +332,7 @@ export function computeInsights(
             ? formatMoney(risk.utilidad)
             : '—',
       tone: 'danger',
+      product_id: risk.product_id,
     });
   }
 
@@ -338,6 +344,7 @@ export function computeInsights(
       subtitle: growth.label,
       value: `+${growth.ventasGrowthPct.toFixed(1)}% ventas`,
       tone: 'success',
+      product_id: growth.product_id,
     });
   }
 
@@ -349,6 +356,7 @@ export function computeInsights(
       subtitle: topSpend.label,
       value: formatMoney(topSpend.gastoPublicitario),
       tone: 'warning',
+      product_id: topSpend.product_id,
     });
   }
 

@@ -7,6 +7,7 @@ import {
   isGananciaSeriesStale,
 } from '../utils/gananciaSeriesCache';
 import { GananciaDiariaDashboardView } from './gananciaDiaria/GananciaDiariaDashboardView';
+import { fetchShopifyProductImageMap, type ProductImageMap } from './gananciaDiaria/productImages';
 import type { ComplementaryProductDetail } from './gananciaDiaria/dashboardUiUtils';
 
 type ProductDaySlice = {
@@ -355,6 +356,7 @@ function aggregateProductAnalysis(
 }
 
 export default function GananciaDiariaPage() {
+  const [productImageById, setProductImageById] = useState<ProductImageMap>({});
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [seriesLoading, setSeriesLoading] = useState(true);
@@ -413,6 +415,16 @@ export default function GananciaDiariaPage() {
       setSeriesLoading(false);
     }
   }, [selectedMonths]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchShopifyProductImageMap().then((map) => {
+      if (!cancelled) setProductImageById(map);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   useEffect(() => {
     const force = consumeGananciaSeriesStale();
@@ -775,6 +787,7 @@ export default function GananciaDiariaPage() {
       prevPeriodDaysAllProducts={prevPeriodDaysAllProducts}
       productAnalysisRows={productAnalysisRows}
       productComplementaryDetail={productComplementaryDetail}
+      productImageById={productImageById}
       totals={totals}
       prevTotals={prevTotals}
       selectedRangeDates={selectedRangeDates}

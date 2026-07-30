@@ -36,6 +36,7 @@ import {
   type ProductAnalysisRow,
   type SeriesDayRow,
 } from './dashboardUiUtils';
+import { productImageUrl, type ProductImageMap } from './productImages';
 
 /* ─── Shared styles ─── */
 
@@ -161,23 +162,48 @@ function EstadoBadge({ estado }: { estado: EnrichedProductRow['estado'] }) {
   );
 }
 
-function ProductAvatar({ label }: { label: string }) {
+function ProductThumbnail({
+  label,
+  productId,
+  imageUrl,
+  size = 36,
+}: {
+  label: string;
+  productId?: number | null;
+  imageUrl?: string;
+  size?: number;
+}) {
   const letter = (label.trim()[0] || '?').toUpperCase();
+  const radius = size <= 28 ? 8 : 10;
+  const shared: CSSProperties = {
+    width: size,
+    height: size,
+    borderRadius: radius,
+    border: `1px solid ${ds.borderCard}`,
+    flexShrink: 0,
+  };
+
+  if (imageUrl) {
+    return (
+      <img
+        src={imageUrl}
+        alt={label ? `Imagen de ${label}` : 'Producto'}
+        style={{ ...shared, display: 'block', objectFit: 'cover', background: ds.bgSubtle }}
+      />
+    );
+  }
+
   return (
     <div
       style={{
-        width: 36,
-        height: 36,
-        borderRadius: 10,
+        ...shared,
         background: 'linear-gradient(135deg, rgba(99,102,241,0.15), rgba(99,102,241,0.05))',
-        border: `1px solid ${ds.borderCard}`,
         display: 'flex',
         alignItems: 'center',
         justifyContent: 'center',
-        fontSize: 14,
+        fontSize: size <= 28 ? 11 : 14,
         fontWeight: 700,
         color: '#6366f1',
-        flexShrink: 0,
       }}
     >
       {letter}
@@ -256,12 +282,14 @@ function DecisionCard({
   count,
   title,
   products,
+  productImageById,
 }: {
   tone: 'success' | 'warning' | 'danger';
   icon: ReactNode;
   count: number;
   title: string;
   products: EnrichedProductRow[];
+  productImageById: ProductImageMap;
 }) {
   const colors = {
     success: { bg: 'rgba(5,150,105,0.08)', border: 'rgba(5,150,105,0.2)', fg: '#047857' },
@@ -291,29 +319,28 @@ function DecisionCard({
             ? 'Cerca del objetivo; conviene optimizar.'
             : 'Utilidad negativa o por debajo del umbral.'}
       </p>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         {products.slice(0, 3).map((p) => (
-          <span
+          <ProductThumbnail
             key={p.key}
-            style={{
-              fontSize: 11,
-              fontWeight: 600,
-              padding: '4px 8px',
-              borderRadius: 6,
-              background: 'rgba(255,255,255,0.7)',
-              color: ds.textSecondary,
-              border: `1px solid ${ds.borderCard}`,
-            }}
-          >
-            {p.label.length > 22 ? `${p.label.slice(0, 20)}…` : p.label}
-          </span>
+            label={p.label}
+            productId={p.product_id}
+            imageUrl={productImageUrl(productImageById, p.product_id)}
+            size={32}
+          />
         ))}
       </div>
     </div>
   );
 }
 
-function InsightCard({ insight }: { insight: DashboardInsight }) {
+function InsightCard({
+  insight,
+  productImageById,
+}: {
+  insight: DashboardInsight;
+  productImageById: ProductImageMap;
+}) {
   const toneBg = {
     success: 'rgba(5,150,105,0.08)',
     warning: 'rgba(245,158,11,0.08)',
@@ -321,6 +348,7 @@ function InsightCard({ insight }: { insight: DashboardInsight }) {
     brand: 'rgba(99,102,241,0.08)',
     neutral: ds.bgSubtle,
   }[insight.tone];
+  const imageUrl = productImageUrl(productImageById, insight.product_id);
 
   return (
     <div
@@ -334,8 +362,18 @@ function InsightCard({ insight }: { insight: DashboardInsight }) {
       <div style={{ fontSize: 11, fontWeight: 700, color: ds.textMuted, textTransform: 'uppercase', letterSpacing: '0.04em' }}>
         {insight.title}
       </div>
-      <div style={{ marginTop: 6, fontSize: 14, fontWeight: 700, color: ds.textPrimary }}>{insight.subtitle}</div>
-      <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600, color: ds.textSecondary }}>{insight.value}</div>
+      <div style={{ marginTop: 8, display: 'flex', alignItems: 'center', gap: 10 }}>
+        <ProductThumbnail
+          label={insight.subtitle}
+          productId={insight.product_id}
+          imageUrl={imageUrl}
+          size={40}
+        />
+        <div style={{ minWidth: 0 }}>
+          <div style={{ fontSize: 14, fontWeight: 700, color: ds.textPrimary, lineHeight: 1.35 }}>{insight.subtitle}</div>
+          <div style={{ marginTop: 4, fontSize: 13, fontWeight: 600, color: ds.textSecondary }}>{insight.value}</div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -345,11 +383,13 @@ function ComplementaryProductsModal({
   rows,
   fmt,
   onClose,
+  productImageById,
 }: {
   productLabel: string;
   rows: ComplementaryProductDetail[];
   fmt: (n: number) => string;
   onClose: () => void;
+  productImageById: ProductImageMap;
 }) {
   const totals = rows.reduce(
     (acc, r) => {
@@ -444,7 +484,17 @@ function ComplementaryProductsModal({
             <tbody>
               {rows.map((r, idx) => (
                 <tr key={`${r.product_id ?? r.label}-${idx}`}>
-                  <td style={{ ...tdStyle, fontWeight: 600 }}>{r.label}</td>
+                  <td style={tdStyle}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+                      <ProductThumbnail
+                        label={r.label}
+                        productId={r.product_id}
+                        imageUrl={productImageUrl(productImageById, r.product_id)}
+                        size={32}
+                      />
+                      <span style={{ fontWeight: 600 }}>{r.label}</span>
+                    </div>
+                  </td>
                   <td style={tdRight}>{r.cantidad > 0 ? r.cantidad.toLocaleString('es-CO') : '—'}</td>
                   <td style={tdRight}>{fmt(r.ventas_despachadas || 0)}</td>
                   <td style={tdRight}>{fmt(r.costo_producto || 0)}</td>
@@ -511,6 +561,7 @@ export type GananciaDiariaDashboardViewProps = {
   prevPeriodDaysAllProducts: SeriesDayRow[];
   productAnalysisRows: ProductAnalysisRow[];
   productComplementaryDetail: Record<string, ComplementaryProductDetail[]>;
+  productImageById: ProductImageMap;
   totals: {
     ventas: number;
     ventasEntregadas: number;
@@ -590,6 +641,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
     prevPeriodDaysAllProducts,
     productAnalysisRows,
     productComplementaryDetail = {},
+    productImageById = {},
     totals,
     prevTotals,
     selectedRangeDates,
@@ -1146,6 +1198,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                       count={escalar.length}
                       title="productos para escalar"
                       products={escalar}
+                      productImageById={productImageById}
                     />
                     <DecisionCard
                       tone="warning"
@@ -1153,6 +1206,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                       count={optimizar.length}
                       title="productos para optimizar"
                       products={optimizar}
+                      productImageById={productImageById}
                     />
                     <DecisionCard
                       tone="danger"
@@ -1160,6 +1214,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                       count={apagar.length}
                       title="productos para apagar"
                       products={apagar}
+                      productImageById={productImageById}
                     />
                   </div>
                   <div
@@ -1262,7 +1317,11 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                               }}
                             >
                               <td style={{ ...tdStyle, width: 48 }}>
-                                <ProductAvatar label={row.label} />
+                                <ProductThumbnail
+                                  label={row.label}
+                                  productId={row.product_id}
+                                  imageUrl={productImageUrl(productImageById, row.product_id)}
+                                />
                               </td>
                               <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 180 }}>
                                 {hasComplementaries ? (
@@ -1560,7 +1619,9 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                   {insights.length === 0 ? (
                     <p style={{ fontSize: 13, color: ds.textMuted, margin: 0 }}>Sin datos suficientes.</p>
                   ) : (
-                    insights.map((ins) => <InsightCard key={ins.id} insight={ins} />)
+                    insights.map((ins) => (
+                      <InsightCard key={ins.id} insight={ins} productImageById={productImageById} />
+                    ))
                   )}
                 </div>
               </div>
@@ -1574,6 +1635,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
           rows={complementaryModal.rows}
           fmt={fmt}
           onClose={() => setComplementaryModal(null)}
+          productImageById={productImageById}
         />
       ) : null}
     </div>
