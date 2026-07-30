@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
+import { formatYmdLocal } from '../utils/datePresets';
 import {
   clearGananciaSeriesCache,
   consumeGananciaSeriesStale,
@@ -54,6 +55,49 @@ type SeriesPayload = {
   error?: string;
   code?: string;
 };
+
+function shiftYmd(ymd: string, deltaDays: number): string {
+  const p = ymd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!p) return ymd;
+  const d = new Date(Number(p[1]), Number(p[2]) - 1, Number(p[3]));
+  d.setDate(d.getDate() + deltaDays);
+  return formatYmdLocal(d);
+}
+
+const filterLabelStyle: CSSProperties = {
+  display: 'block',
+  fontSize: 11,
+  fontWeight: 600,
+  color: ds.textMuted,
+  marginBottom: 6,
+  letterSpacing: '0.02em',
+};
+
+const filterInputStyle: CSSProperties = {
+  width: '100%',
+  padding: '8px 10px',
+  borderRadius: 8,
+  border: `1px solid ${ds.borderCard}`,
+  background: ds.bgCard,
+  color: ds.textPrimary,
+  fontSize: 13,
+  boxSizing: 'border-box',
+};
+
+function quickRangeButtonStyle(active: boolean, disabled?: boolean): CSSProperties {
+  return {
+    padding: '6px 12px',
+    borderRadius: 8,
+    border: `1px solid ${active ? '#6c47ff' : ds.borderCard}`,
+    background: active ? 'rgba(108, 71, 255, 0.1)' : ds.bgCard,
+    color: active ? '#6c47ff' : ds.textSecondary,
+    fontSize: 12,
+    fontWeight: 600,
+    cursor: disabled ? 'not-allowed' : 'pointer',
+    opacity: disabled ? 0.45 : 1,
+    whiteSpace: 'nowrap',
+  };
+}
 
 function formatMoney(n: number, currency: string | null | undefined): string {
   if (!Number.isFinite(n)) return '—';
@@ -702,6 +746,49 @@ export default function GananciaDiariaPage() {
     };
   }, [draggingRangeThumb, updateRangeThumbAtClientX]);
 
+  const ayerTargetYmd = useMemo(() => {
+    if (dayKeys.length === 0) return null;
+    const yesterday = shiftYmd(formatYmdLocal(), -1);
+    if (dayKeys.includes(yesterday)) return yesterday;
+    const today = formatYmdLocal();
+    if (dayKeys.length >= 2 && dayKeys[dayKeys.length - 1] === today) {
+      return dayKeys[dayKeys.length - 2];
+    }
+    return null;
+  }, [dayKeys]);
+
+  const applyRangeAyer = useCallback(() => {
+    if (!ayerTargetYmd) return;
+    const idx = dayKeys.indexOf(ayerTargetYmd);
+    if (idx < 0) return;
+    setRangeStartIdx(idx);
+    setRangeEndIdx(idx);
+  }, [dayKeys, ayerTargetYmd]);
+
+  const applyRangeEsteAno = useCallback(() => {
+    if (dayKeys.length === 0) return;
+    const year = new Date().getFullYear();
+    const yearStart = `${year}-01-01`;
+    const firstIdx = dayKeys.findIndex((d) => d >= yearStart);
+    setRangeStartIdx(firstIdx >= 0 ? firstIdx : 0);
+    setRangeEndIdx(dayKeys.length - 1);
+  }, [dayKeys]);
+
+  const rangeQuickPreset = useMemo((): 'ayer' | 'este_ano' | null => {
+    if (dayKeys.length === 0) return null;
+    const { start, end } = effectiveRangeIdx;
+    if (ayerTargetYmd && start === end && dayKeys[start] === ayerTargetYmd) return 'ayer';
+    const year = new Date().getFullYear();
+    const yearStart = `${year}-01-01`;
+    const firstYearIdx = dayKeys.findIndex((d) => d >= yearStart);
+    const expectedFirst = firstYearIdx >= 0 ? firstYearIdx : 0;
+    if (start === expectedFirst && end === dayKeys.length - 1) return 'este_ano';
+    return null;
+  }, [dayKeys, effectiveRangeIdx, ayerTargetYmd]);
+
+  const isFullRange =
+    dayKeys.length > 0 && effectiveRangeIdx.start === 0 && effectiveRangeIdx.end === dayKeys.length - 1;
+
   const daysInRange = useMemo(() => {
     if (dayKeys.length === 0 || !selectedRangeDates.from || !selectedRangeDates.to) return daysForTable;
     const lo = selectedRangeDates.from;
@@ -967,308 +1054,286 @@ export default function GananciaDiariaPage() {
             </div>
           ) : null}
 
-          <div style={{ marginBottom: 12, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 12 }}>
-            <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: ds.textPrimary, flex: '1 1 auto' }}>
+          <div
+            style={{
+              marginBottom: 16,
+              padding: '16px 18px',
+              borderRadius: 12,
+              border: `1px solid ${ds.borderCard}`,
+              background: ds.bgSubtle,
+            }}
+          >
+            <h2 style={{ margin: '0 0 14px', fontSize: 16, fontWeight: 700, color: ds.textPrimary }}>
               Detalle por día
             </h2>
-            <label
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                fontSize: 12,
-                color: ds.textSecondary,
-                fontWeight: 600,
-              }}
-            >
-              Producto
-              <select
-                value={selectedProductId}
-                onChange={(e) => setSelectedProductId(e.target.value)}
-                style={{
-                  minWidth: 220,
-                  padding: '7px 9px',
-                  borderRadius: 8,
-                  border: `1px solid ${ds.borderCard}`,
-                  background: ds.bgCard,
-                  color: ds.textPrimary,
-                  fontSize: 12,
-                }}
-              >
-                <option value="">Todos</option>
-                {availableProducts
-                  .filter((p) => Number.isFinite(Number(p.product_id)) && Number(p.product_id) > 0)
-                  .map((p) => (
-                    <option key={p.key} value={String(p.product_id)}>
-                      {p.label}
-                    </option>
-                  ))}
-              </select>
-            </label>
-            <label
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: 8,
-                fontSize: 12,
-                color: ds.textSecondary,
-                fontWeight: 600,
-              }}
-            >
-              % gasto administrativo
-              <input
-                type="text"
-                inputMode="decimal"
-                value={adminPercentInput}
-                onChange={(e) => setAdminPercentInput(e.target.value)}
-                placeholder="0"
-                style={{
-                  width: 96,
-                  padding: '7px 9px',
-                  borderRadius: 8,
-                  border: `1px solid ${ds.borderCard}`,
-                  background: ds.bgCard,
-                  color: ds.textPrimary,
-                  fontSize: 12,
-                }}
-              />
-            </label>
             <div
               style={{
-                display: 'inline-flex',
-                flexDirection: 'column',
-                alignItems: 'flex-start',
-                gap: 8,
-                fontSize: 12,
-                color: ds.textSecondary,
-                fontWeight: 600,
-                minWidth: 280,
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: 14,
+                alignItems: 'end',
               }}
             >
-              <span>Rango (deslizador)</span>
-              <div
-                style={{
-                  width: '100%',
-                  border: `1px solid ${ds.borderCard}`,
-                  borderRadius: 10,
-                  background: ds.bgCard,
-                  padding: '8px 10px',
-                  boxSizing: 'border-box',
-                }}
-              >
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: ds.textHint }}>
-                  <span>{selectedRangeDates.from ? formatTableDate(selectedRangeDates.from) : '—'}</span>
-                  <span>{selectedRangeDates.to ? formatTableDate(selectedRangeDates.to) : '—'}</span>
-                </div>
-                <div
-                  ref={rangeSliderTrackRef}
-                  style={{
-                    marginTop: 8,
-                    position: 'relative',
-                    height: 30,
-                    userSelect: 'none',
-                    touchAction: 'none',
-                  }}
+              <div style={{ minWidth: 0 }}>
+                <span style={filterLabelStyle}>Producto</span>
+                <select
+                  value={selectedProductId}
+                  onChange={(e) => setSelectedProductId(e.target.value)}
+                  style={filterInputStyle}
                 >
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      right: 0,
-                      top: '50%',
-                      height: 6,
-                      transform: 'translateY(-50%)',
-                      borderRadius: 999,
-                      background: ds.bgSubtle,
-                      border: `1px solid ${ds.borderCard}`,
-                    }}
-                  />
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: `${startPercent}%`,
-                      width: `${Math.max(0, endPercent - startPercent)}%`,
-                      top: '50%',
-                      height: 6,
-                      transform: 'translateY(-50%)',
-                      borderRadius: 999,
-                      background: '#6c47ff',
-                    }}
-                  />
-                  {(['start', 'end'] as const).map((thumb) => {
-                    const isStart = thumb === 'start';
-                    const x = isStart ? startPercent : endPercent;
-                    return (
-                      <button
-                        key={thumb}
-                        type="button"
-                        aria-label={isStart ? 'Inicio del rango de fechas' : 'Fin del rango de fechas'}
-                        disabled={dayKeys.length <= 1}
-                        onPointerDown={(e) => {
-                          if (dayKeys.length <= 1) return;
-                          e.preventDefault();
-                          setDraggingRangeThumb(thumb);
-                          updateRangeThumbAtClientX(thumb, e.clientX);
-                        }}
-                        onKeyDown={(e) => {
-                          if (dayKeys.length <= 1) return;
-                          const delta = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
-                          if (!delta) return;
-                          e.preventDefault();
-                          if (isStart) {
-                            setRangeStartIdx((prev) => Math.max(0, Math.min(prev + delta, effectiveRangeIdx.end)));
-                          } else {
-                            setRangeEndIdx((prev) => Math.min(maxRangeIdx, Math.max(prev + delta, effectiveRangeIdx.start)));
-                          }
-                        }}
-                        style={{
-                          position: 'absolute',
-                          left: `calc(${x}% - 8px)`,
-                          top: '50%',
-                          transform: 'translateY(-50%)',
-                          width: 16,
-                          height: 16,
-                          borderRadius: '50%',
-                          border: '2px solid #6c47ff',
-                          background: '#fff',
-                          boxShadow: '0 1px 3px rgba(0,0,0,0.22)',
-                          cursor: dayKeys.length <= 1 ? 'not-allowed' : 'grab',
-                          padding: 0,
-                        }}
-                      />
-                    );
-                  })}
-                </div>
+                  <option value="">Todos</option>
+                  {availableProducts
+                    .filter((p) => Number.isFinite(Number(p.product_id)) && Number(p.product_id) > 0)
+                    .map((p) => (
+                      <option key={p.key} value={String(p.product_id)}>
+                        {p.label}
+                      </option>
+                    ))}
+                </select>
               </div>
-              <button
-                type="button"
-                disabled={dayKeys.length === 0 || (effectiveRangeIdx.start === 0 && effectiveRangeIdx.end === dayKeys.length - 1)}
-                onClick={() => {
-                  if (dayKeys.length === 0) return;
-                  setRangeStartIdx(0);
-                  setRangeEndIdx(dayKeys.length - 1);
-                }}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: 8,
-                  border: `1px solid ${ds.borderCard}`,
-                  background: ds.bgSubtle,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  cursor:
-                    dayKeys.length === 0 || (effectiveRangeIdx.start === 0 && effectiveRangeIdx.end === dayKeys.length - 1)
-                      ? 'not-allowed'
-                      : 'pointer',
-                  opacity:
-                    dayKeys.length === 0 || (effectiveRangeIdx.start === 0 && effectiveRangeIdx.end === dayKeys.length - 1)
-                      ? 0.5
-                      : 1,
-                }}
-              >
-                Quitar rango
-              </button>
-            </div>
-            <div ref={monthDropdownRef} style={{ position: 'relative' }}>
-              <button
-                type="button"
-                disabled={!availableMonths.length}
-                onClick={() => (monthsPanelOpen ? setMonthsPanelOpen(false) : openMonthsPanel())}
-                style={{
-                  padding: '8px 14px',
-                  borderRadius: 8,
-                  border: `1px solid ${ds.borderCard}`,
-                  background: ds.bgCard,
-                  color: ds.textPrimary,
-                  fontSize: 13,
-                  cursor: !availableMonths.length ? 'not-allowed' : 'pointer',
-                  minWidth: 200,
-                  maxWidth: 'min(92vw, 580px)',
-                  textAlign: 'left',
-                  opacity: !availableMonths.length ? 0.55 : 1,
-                }}
-              >
-                Meses: {appliedPeriodLabel}
-                <span style={{ float: 'right', opacity: 0.6 }}>{monthsPanelOpen ? '▲' : '▼'}</span>
-              </button>
-              {monthsPanelOpen ? (
+
+              <div style={{ minWidth: 0, maxWidth: 140 }}>
+                <span style={filterLabelStyle}>% gasto administrativo</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={adminPercentInput}
+                  onChange={(e) => setAdminPercentInput(e.target.value)}
+                  placeholder="0"
+                  style={filterInputStyle}
+                />
+              </div>
+
+              <div style={{ minWidth: 0, gridColumn: '1 / -1' }}>
+                <span style={filterLabelStyle}>Rango de fechas</span>
                 <div
                   style={{
-                    position: 'absolute',
-                    right: 0,
-                    top: '100%',
-                    marginTop: 6,
-                    minWidth: 280,
-                    maxHeight: 320,
-                    overflowY: 'auto',
-                    background: ds.bgCard,
                     border: `1px solid ${ds.borderCard}`,
                     borderRadius: 10,
-                    boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-                    zIndex: 20,
-                    padding: '12px 14px',
+                    background: ds.bgCard,
+                    padding: '10px 12px',
+                    boxSizing: 'border-box',
                   }}
                 >
-                  <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 10 }}>
-                    Selecciona uno o varios meses (calendario tienda)
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: ds.textHint, marginBottom: 8 }}>
+                    <span>{selectedRangeDates.from ? formatTableDate(selectedRangeDates.from) : '—'}</span>
+                    <span>{selectedRangeDates.to ? formatTableDate(selectedRangeDates.to) : '—'}</span>
                   </div>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                    {availableMonths.map((ym) => (
-                      <label
-                        key={ym}
+                  <div
+                    ref={rangeSliderTrackRef}
+                    style={{
+                      position: 'relative',
+                      height: 28,
+                      userSelect: 'none',
+                      touchAction: 'none',
+                      marginBottom: 10,
+                    }}
+                  >
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 0,
+                        right: 0,
+                        top: '50%',
+                        height: 6,
+                        transform: 'translateY(-50%)',
+                        borderRadius: 999,
+                        background: ds.bgSubtle,
+                        border: `1px solid ${ds.borderCard}`,
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: `${startPercent}%`,
+                        width: `${Math.max(0, endPercent - startPercent)}%`,
+                        top: '50%',
+                        height: 6,
+                        transform: 'translateY(-50%)',
+                        borderRadius: 999,
+                        background: '#6c47ff',
+                      }}
+                    />
+                    {(['start', 'end'] as const).map((thumb) => {
+                      const isStart = thumb === 'start';
+                      const x = isStart ? startPercent : endPercent;
+                      return (
+                        <button
+                          key={thumb}
+                          type="button"
+                          aria-label={isStart ? 'Inicio del rango de fechas' : 'Fin del rango de fechas'}
+                          disabled={dayKeys.length <= 1}
+                          onPointerDown={(e) => {
+                            if (dayKeys.length <= 1) return;
+                            e.preventDefault();
+                            setDraggingRangeThumb(thumb);
+                            updateRangeThumbAtClientX(thumb, e.clientX);
+                          }}
+                          onKeyDown={(e) => {
+                            if (dayKeys.length <= 1) return;
+                            const delta = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
+                            if (!delta) return;
+                            e.preventDefault();
+                            if (isStart) {
+                              setRangeStartIdx((prev) => Math.max(0, Math.min(prev + delta, effectiveRangeIdx.end)));
+                            } else {
+                              setRangeEndIdx((prev) => Math.min(maxRangeIdx, Math.max(prev + delta, effectiveRangeIdx.start)));
+                            }
+                          }}
+                          style={{
+                            position: 'absolute',
+                            left: `calc(${x}% - 8px)`,
+                            top: '50%',
+                            transform: 'translateY(-50%)',
+                            width: 16,
+                            height: 16,
+                            borderRadius: '50%',
+                            border: '2px solid #6c47ff',
+                            background: '#fff',
+                            boxShadow: '0 1px 3px rgba(0,0,0,0.22)',
+                            cursor: dayKeys.length <= 1 ? 'not-allowed' : 'grab',
+                            padding: 0,
+                          }}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+                    <button
+                      type="button"
+                      disabled={!ayerTargetYmd}
+                      onClick={applyRangeAyer}
+                      style={quickRangeButtonStyle(rangeQuickPreset === 'ayer', !ayerTargetYmd)}
+                    >
+                      Ayer
+                    </button>
+                    <button
+                      type="button"
+                      disabled={dayKeys.length === 0}
+                      onClick={applyRangeEsteAno}
+                      style={quickRangeButtonStyle(rangeQuickPreset === 'este_ano', dayKeys.length === 0)}
+                    >
+                      Este año
+                    </button>
+                    <button
+                      type="button"
+                      disabled={dayKeys.length === 0 || isFullRange}
+                      onClick={() => {
+                        if (dayKeys.length === 0) return;
+                        setRangeStartIdx(0);
+                        setRangeEndIdx(dayKeys.length - 1);
+                      }}
+                      style={quickRangeButtonStyle(false, dayKeys.length === 0 || isFullRange)}
+                    >
+                      Quitar rango
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div ref={monthDropdownRef} style={{ position: 'relative', minWidth: 0 }}>
+                <span style={filterLabelStyle}>Meses</span>
+                <button
+                  type="button"
+                  disabled={!availableMonths.length}
+                  onClick={() => (monthsPanelOpen ? setMonthsPanelOpen(false) : openMonthsPanel())}
+                  style={{
+                    ...filterInputStyle,
+                    textAlign: 'left',
+                    cursor: !availableMonths.length ? 'not-allowed' : 'pointer',
+                    opacity: !availableMonths.length ? 0.55 : 1,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    gap: 8,
+                  }}
+                >
+                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {appliedPeriodLabel}
+                  </span>
+                  <span style={{ opacity: 0.55, flexShrink: 0 }}>{monthsPanelOpen ? '▲' : '▼'}</span>
+                </button>
+                {monthsPanelOpen ? (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      right: 0,
+                      left: 0,
+                      top: '100%',
+                      marginTop: 6,
+                      minWidth: 260,
+                      maxHeight: 320,
+                      overflowY: 'auto',
+                      background: ds.bgCard,
+                      border: `1px solid ${ds.borderCard}`,
+                      borderRadius: 10,
+                      boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+                      zIndex: 20,
+                      padding: '12px 14px',
+                    }}
+                  >
+                    <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 10 }}>
+                      Selecciona uno o varios meses (calendario tienda)
+                    </div>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                      {availableMonths.map((ym) => (
+                        <label
+                          key={ym}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: 10,
+                            fontSize: 14,
+                            color: ds.textPrimary,
+                            cursor: 'pointer',
+                          }}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={pendingMonths.includes(ym)}
+                            onChange={() => togglePendingMonth(ym)}
+                          />
+                          <span style={{ textTransform: 'capitalize' }}>{formatMonthLabel(ym)}</span>
+                        </label>
+                      ))}
+                    </div>
+                    <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
+                      <button
+                        type="button"
+                        onClick={() => setMonthsPanelOpen(false)}
                         style={{
-                          display: 'flex',
-                          alignItems: 'center',
-                          gap: 10,
-                          fontSize: 14,
-                          color: ds.textPrimary,
+                          padding: '6px 12px',
+                          borderRadius: 8,
+                          border: `1px solid ${ds.borderCard}`,
+                          background: ds.bgSubtle,
+                          fontSize: 13,
                           cursor: 'pointer',
                         }}
                       >
-                        <input
-                          type="checkbox"
-                          checked={pendingMonths.includes(ym)}
-                          onChange={() => togglePendingMonth(ym)}
-                        />
-                        <span style={{ textTransform: 'capitalize' }}>{formatMonthLabel(ym)}</span>
-                      </label>
-                    ))}
+                        Cancelar
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => applyMonthFilter()}
+                        disabled={pendingMonths.length === 0}
+                        style={{
+                          padding: '6px 14px',
+                          borderRadius: 8,
+                          border: 'none',
+                          background: ds.brand,
+                          color: '#fff',
+                          fontWeight: 600,
+                          fontSize: 13,
+                          cursor: pendingMonths.length === 0 ? 'not-allowed' : 'pointer',
+                          opacity: pendingMonths.length === 0 ? 0.5 : 1,
+                        }}
+                      >
+                        Aplicar
+                      </button>
+                    </div>
                   </div>
-                  <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
-                    <button
-                      type="button"
-                      onClick={() => setMonthsPanelOpen(false)}
-                      style={{
-                        padding: '6px 12px',
-                        borderRadius: 8,
-                        border: `1px solid ${ds.borderCard}`,
-                        background: ds.bgSubtle,
-                        fontSize: 13,
-                        cursor: 'pointer',
-                      }}
-                    >
-                      Cancelar
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => applyMonthFilter()}
-                      disabled={pendingMonths.length === 0}
-                      style={{
-                        padding: '6px 14px',
-                        borderRadius: 8,
-                        border: 'none',
-                        background: ds.brand,
-                        color: '#fff',
-                        fontWeight: 600,
-                        fontSize: 13,
-                        cursor: pendingMonths.length === 0 ? 'not-allowed' : 'pointer',
-                        opacity: pendingMonths.length === 0 ? 0.5 : 1,
-                      }}
-                    >
-                      Aplicar
-                    </button>
-                  </div>
-                </div>
-              ) : null}
+                ) : null}
+              </div>
             </div>
           </div>
 
