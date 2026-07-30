@@ -246,6 +246,18 @@ function writeCachedJsonResponse(key, payload, ttlMs) {
   });
 }
 
+/** Invalida respuestas cacheadas del servidor para una org (p. ej. tras editar pedidos). */
+function invalidateOrganizationResponseCacheByScope(organizationId, scope) {
+  const prefix = `${String(scope || '')}|org:${Number(organizationId) || 0}|`;
+  for (const key of [...responseCacheStore.keys()]) {
+    if (key.startsWith(prefix)) responseCacheStore.delete(key);
+  }
+}
+
+function invalidateGananciaDiariaCaches(organizationId) {
+  invalidateOrganizationResponseCacheByScope(organizationId, 'ganancia_diaria_series');
+}
+
 function cleanupExpiredResponseCache() {
   const now = Date.now();
   for (const [key, value] of responseCacheStore) {
@@ -8072,7 +8084,9 @@ app.get('/api/ganancia-diaria', verifyToken, scopeToOrganization, async (req, re
 app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (req, res) => {
   try {
     const cacheKey = cacheKeyForRequest(req, 'ganancia_diaria_series');
-    const cachedPayload = readCachedJsonResponse(cacheKey);
+    const forceRefresh =
+      req.query.refresh === '1' || String(req.query.refresh || '').toLowerCase() === 'true';
+    const cachedPayload = forceRefresh ? null : readCachedJsonResponse(cacheKey);
     if (cachedPayload) {
       return res.json(cachedPayload);
     }
@@ -9004,6 +9018,7 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
       );
       const refreshedMapped = refreshedRows[0] ? mapMoticoManualOrderRowFromDb(refreshedRows[0]) : null;
       const responseMensajero = refreshedMapped ? refreshedMapped.mensajero : null;
+      invalidateGananciaDiariaCaches(req.organizationId);
       return res.json({
         ok: true,
         internal_status: motico_status,
@@ -9248,6 +9263,8 @@ app.put('/api/shopify/orders/:orderId/local-fields', verifyToken, scopeToOrganiz
         has_shipping_override: !!(shipping_address_override && typeof shipping_address_override === 'object'),
       },
     });
+
+    invalidateGananciaDiariaCaches(req.organizationId);
 
     res.json({
       ok: true,

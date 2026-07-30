@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { apiFetch } from '../auth/api';
+import { markGananciaSeriesStale } from '../utils/gananciaSeriesCache';
 import { ds } from '../design-system/ds';
 import { labelStyle } from './authStyles';
 
@@ -566,6 +567,7 @@ export default function PedidosOrderEditPage() {
         setError(typeof dataLocal.error === 'string' ? dataLocal.error : 'No se pudo guardar el pedido');
         return;
       }
+      markGananciaSeriesStale();
       navigate(pedidosReturnPath, { replace: true });
     } finally {
       setSaving(false);

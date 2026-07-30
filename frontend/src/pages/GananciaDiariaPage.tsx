@@ -3,6 +3,13 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
+import {
+  GANANCIA_SERIES_CACHE_KEY,
+  GANANCIA_SERIES_CACHE_TTL_MS,
+  clearGananciaSeriesCache,
+  consumeGananciaSeriesStale,
+  isGananciaSeriesStale,
+} from '../utils/gananciaSeriesCache';
 
 type ProductDaySlice = {
   label?: string;
@@ -51,8 +58,6 @@ type SeriesPayload = {
 };
 type SeriesCacheEntry = { updatedAt: number; payload: SeriesPayload };
 type SeriesCacheStore = Record<string, SeriesCacheEntry>;
-const GANANCIA_SERIES_CACHE_KEY = 'kovo_ganancia_series_cache_v1';
-const GANANCIA_SERIES_CACHE_TTL_MS = 1000 * 60 * 10;
 
 function formatMoney(n: number, currency: string | null | undefined): string {
   if (!Number.isFinite(n)) return '—';
@@ -495,14 +500,16 @@ export default function GananciaDiariaPage() {
     }
   }, []);
 
-  const loadSeries = useCallback(async () => {
+  const loadSeries = useCallback(async (options?: { force?: boolean }) => {
+    const force = options?.force === true;
     const qs = new URLSearchParams();
     if (selectedMonths.length > 0) {
       qs.set('months', selectedMonths.join(','));
     }
+    if (force) qs.set('refresh', '1');
     const suffix = qs.toString() ? `?${qs}` : '';
-    const cacheKey = suffix || '__default__';
-    const cached = readSeriesCache(cacheKey);
+    const cacheKey = (selectedMonths.length > 0 ? selectedMonths.join(',') : '') || '__default__';
+    const cached = !force ? readSeriesCache(cacheKey) : null;
     if (cached && !hasHydratedFromCache.current) {
       hasHydratedFromCache.current = true;
       setSeriesData(cached);
@@ -512,6 +519,7 @@ export default function GananciaDiariaPage() {
     } else {
       setSeriesLoading(true);
     }
+    if (force) clearGananciaSeriesCache();
     setSeriesError('');
     try {
       const res = await apiFetch(`/api/ganancia-diaria/series${suffix}`);
@@ -536,7 +544,18 @@ export default function GananciaDiariaPage() {
   }, [selectedMonths, readSeriesCache, writeSeriesCache]);
 
   useEffect(() => {
-    void loadSeries();
+    const force = consumeGananciaSeriesStale();
+    void loadSeries({ force });
+  }, [loadSeries]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible' && isGananciaSeriesStale()) {
+        void loadSeries({ force: true });
+      }
+    };
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => document.removeEventListener('visibilitychange', onVisibility);
   }, [loadSeries]);
 
   useEffect(() => {
@@ -753,7 +772,28 @@ export default function GananciaDiariaPage() {
 
   return (
     <div style={{ width: '100%', maxWidth: 1440 }}>
-      <PageHeader title="GANANCIA DIARIA ESTIMADA" titleFitLongestWord />
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
+        <PageHeader title="GANANCIA DIARIA ESTIMADA" titleFitLongestWord />
+        <button
+          type="button"
+          disabled={seriesLoading}
+          onClick={() => void loadSeries({ force: true })}
+          style={{
+            padding: '9px 14px',
+            borderRadius: 10,
+            border: `1px solid ${ds.borderCard}`,
+            background: ds.bgCard,
+            color: ds.textPrimary,
+            fontWeight: 600,
+            fontSize: 13,
+            cursor: seriesLoading ? 'not-allowed' : 'pointer',
+            opacity: seriesLoading ? 0.65 : 1,
+            alignSelf: 'center',
+          }}
+        >
+          {seriesLoading ? 'Actualizando…' : 'Actualizar informe'}
+        </button>
+      </div>
 
       {!seriesError ? (
         <>
