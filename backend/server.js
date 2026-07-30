@@ -6622,6 +6622,42 @@ function gananciaProductContributionsForOrder(order, pricingMap, titleToProductI
     lines.push({ pk, label, qty, lineRev, pid: Number.isFinite(pid) && pid > 0 ? pid : null });
   }
   if (!lines.length) {
+    const uniquePids = [
+      ...new Set(
+        (Array.isArray(order?.productIds) ? order.productIds : [])
+          .map((id) => Number(id))
+          .filter((n) => Number.isFinite(n) && n > 0),
+      ),
+    ];
+    if (uniquePids.length === 1) {
+      const pid = uniquePids[0];
+      let label = 'Producto';
+      for (const li of detail) {
+        const t = String(li?.title || li?.name || '').trim();
+        if (t) {
+          label = t;
+          break;
+        }
+      }
+      return {
+        contrib: new Map([
+          [
+            `p:${pid}`,
+            {
+              label,
+              product_id: pid,
+              ventas_despachadas: amt,
+              ventas_entregadas: orderVentasEntregadas,
+              costo_producto: costs.productCost,
+              costo_entregado: costs.productDeliveredCost,
+              flete: costs.avgFreightCost,
+              qty: effectiveOrderProductQuantityForGanancia(order, orderLocalFields),
+              pedidos: 1,
+            },
+          ],
+        ]),
+      };
+    }
     const k = '__sin_lineas__';
     return {
       contrib: new Map([
@@ -6713,6 +6749,50 @@ function gananciaMergeProductDay(innerMap, contrib) {
     cur.pedidos += Number(row.pedidos) || 0;
     innerMap.set(pk, cur);
   }
+}
+
+/**
+ * Unifica entradas `p:ID` y `t:título` del mismo producto para que el filtro por producto
+ * refleje las mismas ventas que la vista "Todos".
+ */
+function consolidateGananciaProductDayInner(innerMap, titleToProductIdMap) {
+  if (!innerMap || !(innerMap instanceof Map) || innerMap.size === 0) return innerMap;
+  const out = new Map();
+  const titleMap = titleToProductIdMap instanceof Map ? titleToProductIdMap : new Map();
+  for (const [pk, row] of innerMap) {
+    if (!row || typeof row !== 'object') continue;
+    let pid = row.product_id != null ? Number(row.product_id) : NaN;
+    if (!Number.isFinite(pid) || pid <= 0) {
+      const labelKey = normalizeLineItemLookupKey(row.label || '');
+      if (labelKey && titleMap.has(labelKey)) {
+        pid = Number(titleMap.get(labelKey));
+      }
+    }
+    const mergeKey = Number.isFinite(pid) && pid > 0 ? `p:${pid}` : String(pk || '__otro__');
+    const cur = out.get(mergeKey) || {
+      label: row.label,
+      product_id: Number.isFinite(pid) && pid > 0 ? pid : row.product_id ?? null,
+      ventas_despachadas: 0,
+      ventas_entregadas: 0,
+      costo_producto: 0,
+      costo_entregado: 0,
+      flete: 0,
+      qty: 0,
+      pedidos: 0,
+    };
+    cur.label = row.label || cur.label;
+    if (Number.isFinite(pid) && pid > 0) cur.product_id = pid;
+    else if (row.product_id != null && cur.product_id == null) cur.product_id = row.product_id;
+    cur.ventas_despachadas += Number(row.ventas_despachadas) || 0;
+    cur.ventas_entregadas += Number(row.ventas_entregadas) || 0;
+    cur.costo_producto += Number(row.costo_producto) || 0;
+    cur.costo_entregado += Number(row.costo_entregado) || 0;
+    cur.flete += Number(row.flete) || 0;
+    cur.qty += Number(row.qty) || 0;
+    cur.pedidos += Number(row.pedidos) || 0;
+    out.set(mergeKey, cur);
+  }
+  return out;
 }
 
 /**
@@ -8442,7 +8522,11 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         utilidad =
           Math.round((ventasEntregadasTotal - gastoAds - costoProductoEntregado - costoFletePromedio) * 100) / 100;
       }
-      const innerProd = productByDay.get(dateStr);
+      const innerProdRaw = productByDay.get(dateStr);
+      const innerProd =
+        innerProdRaw && innerProdRaw.size
+          ? consolidateGananciaProductDayInner(innerProdRaw, lineTitleToProductIdMap)
+          : innerProdRaw;
       let by_product = {};
       if (innerProd && innerProd.size) {
         by_product = Object.fromEntries(
@@ -8480,7 +8564,8 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
 
     const productLabelByKey = new Map();
     for (const inner of productByDay.values()) {
-      for (const [pk, v] of inner) {
+      const consolidated = consolidateGananciaProductDayInner(inner, lineTitleToProductIdMap);
+      for (const [pk, v] of consolidated) {
         if (!productLabelByKey.has(pk)) {
           productLabelByKey.set(pk, { key: pk, label: String(v.label || pk), product_id: v.product_id ?? null });
         } else {

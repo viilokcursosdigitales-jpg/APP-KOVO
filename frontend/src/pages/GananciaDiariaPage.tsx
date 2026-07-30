@@ -138,15 +138,68 @@ function utilidadMostradaPorDia(
   return (row.utilidad as number) - ve * (adminPercent / 100);
 }
 
+function normalizeProductLabel(raw: string): string {
+  return String(raw || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, ' ');
+}
+
+function collectProductDaySlices(
+  byp: Record<string, ProductDaySlice>,
+  productId: number,
+  productLabel?: string,
+): ProductDaySlice[] {
+  const normLabel = productLabel ? normalizeProductLabel(productLabel) : '';
+  return Object.values(byp).filter((x) => {
+    if (!x) return false;
+    if (Number.isFinite(Number(x.product_id)) && Number(x.product_id) === productId) return true;
+    if (normLabel && normalizeProductLabel(String(x.label || '')) === normLabel) return true;
+    return false;
+  });
+}
+
+function sumProductDaySlices(slices: ProductDaySlice[], productId: number): ProductDaySlice | null {
+  if (!slices.length) return null;
+  let ventasDesp = 0;
+  let ventasEnt = 0;
+  let pedidos = 0;
+  let qty = 0;
+  let costoProd = 0;
+  let costoProdEnt = 0;
+  let costoFlete = 0;
+  let label = '';
+  for (const s of slices) {
+    ventasDesp += Number(s.ventas_despachadas_total || 0);
+    ventasEnt += Number(s.ventas_entregadas_total || 0);
+    pedidos += Number(s.ventas_despachadas_pedidos || 0);
+    qty += Number(s.cantidad_producto_total || 0);
+    costoProd += Number(s.costo_producto_total || 0);
+    costoProdEnt += Number(s.costo_producto_entregado_total || 0);
+    costoFlete += Number(s.costo_flete_promedio_total || 0);
+    if (!label && s.label) label = String(s.label);
+  }
+  return {
+    label: label || `Producto ${productId}`,
+    product_id: productId,
+    ventas_despachadas_total: ventasDesp,
+    ventas_entregadas_total: ventasEnt,
+    ventas_despachadas_pedidos: pedidos,
+    cantidad_producto_total: qty,
+    costo_producto_total: costoProd,
+    costo_producto_entregado_total: costoProdEnt,
+    costo_flete_promedio_total: costoFlete,
+  };
+}
+
 function filterDayRowByProduct(
   row: SeriesDayRow,
   productId: number,
   comparable: boolean | undefined,
+  productLabel?: string,
 ): SeriesDayRow {
   const byp = row.by_product && typeof row.by_product === 'object' ? row.by_product : {};
-  const selected = Object.values(byp).find(
-    (x) => x && Number.isFinite(Number(x.product_id)) && Number(x.product_id) === productId,
-  );
+  const selected = sumProductDaySlices(collectProductDaySlices(byp, productId, productLabel), productId);
   const totalVentasDay = Number(row.ventas_despachadas_total || 0);
   const totalGastoAdsDay = Number(row.gasto_publicitario_total || 0);
   if (!selected) {
@@ -232,7 +285,8 @@ function aggregateProductAnalysis(
 
     for (const [pk, slice] of Object.entries(byp)) {
       if (!slice) continue;
-      const key = pk;
+      const pid = Number(slice.product_id);
+      const key = Number.isFinite(pid) && pid > 0 ? `p:${pid}` : pk;
       if (!map.has(key)) {
         map.set(key, {
           label: String(slice.label || pk),
@@ -565,12 +619,19 @@ export default function GananciaDiariaPage() {
   const seriesMetaCur = seriesData?.meta_currency;
   const comparable = seriesData?.ganancia_comparable;
   const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
-  const daysForTable = useMemo(() => {
-    if (!selectedProductId) return days;
+  const selectedProductMeta = useMemo(() => {
+    if (!selectedProductId) return null;
     const pid = Number.parseInt(selectedProductId, 10);
-    if (!Number.isFinite(pid) || pid <= 0) return days;
-    return days.map((row) => filterDayRowByProduct(row, pid, comparable));
-  }, [days, selectedProductId, comparable]);
+    if (!Number.isFinite(pid) || pid <= 0) return null;
+    const opt = availableProducts.find((p) => Number(p.product_id) === pid);
+    return { productId: pid, label: opt?.label ?? '' };
+  }, [selectedProductId, availableProducts]);
+  const daysForTable = useMemo(() => {
+    if (!selectedProductMeta) return days;
+    return days.map((row) =>
+      filterDayRowByProduct(row, selectedProductMeta.productId, comparable, selectedProductMeta.label),
+    );
+  }, [days, selectedProductMeta, comparable]);
   const dayKeys = useMemo(() => {
     const s = new Set<string>();
     for (const row of daysForTable) s.add(String(row.date || '').trim());
