@@ -5658,22 +5658,27 @@ function shopifyDefaultTotalAPagar(o) {
 }
 
 /**
+ * Lee price_override de KOVO (NULL/vacío = usar total Shopify).
+ */
+function readPriceOverrideValue(raw) {
+  if (raw == null) return null;
+  if (typeof raw === 'string' && raw.trim() === '') return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n < 0) return null;
+  return n;
+}
+
+/**
  * Mismo criterio de Pedidos para ventas:
  * 1) price_override en local fields (si existe)
  * 2) price_override en el objeto de orden (si existe)
  * 3) total base del pedido
  */
 function resolveOrderRevenueAmount(order, localFields) {
-  const ovLocal =
-    localFields?.price_override != null && Number.isFinite(Number(localFields.price_override))
-      ? Number(localFields.price_override)
-      : null;
-  if (ovLocal != null && ovLocal >= 0) return ovLocal;
-  const ovOrder =
-    order?.price_override != null && Number.isFinite(Number(order.price_override))
-      ? Number(order.price_override)
-      : null;
-  if (ovOrder != null && ovOrder >= 0) return ovOrder;
+  const ovLocal = readPriceOverrideValue(localFields?.price_override);
+  if (ovLocal != null) return ovLocal;
+  const ovOrder = readPriceOverrideValue(order?.price_override);
+  if (ovOrder != null) return ovOrder;
   const baseRaw = Number.parseFloat(String(order?.shopifyTotal ?? order?.total ?? '0').replace(',', '.'));
   if (Number.isFinite(baseRaw) && baseRaw >= 0) return baseRaw;
   return NaN;
@@ -6555,7 +6560,7 @@ function calculateOrderMoticoFreightCost(order, pricingMap, titleToProductIdMap)
  * Devuelve Map productKey -> acumulados para agregar por día.
  */
 function gananciaProductContributionsForOrder(order, pricingMap, titleToProductIdMap, orderLocalFields) {
-  const amt = parseFloat(String(order?.total || '0').replace(',', '.'));
+  const amt = resolveOrderRevenueAmount(order, orderLocalFields);
   if (!Number.isFinite(amt) || amt < 0) return null;
   const costs = calculateOrderManualCosts(order, pricingMap, titleToProductIdMap, orderLocalFields);
   const effPct = Number.isFinite(costs.deliveryEffectivenessPct) ? costs.deliveryEffectivenessPct : 100;

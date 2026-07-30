@@ -1,3 +1,5 @@
+import { clearApiGetCache } from '../auth/api';
+
 export const GANANCIA_SERIES_CACHE_KEY = 'kovo_ganancia_series_cache_v1';
 export const GANANCIA_SERIES_STALE_KEY = 'kovo_ganancia_series_stale_v1';
 export const GANANCIA_SERIES_CACHE_TTL_MS = 1000 * 60 * 10;
@@ -10,6 +12,7 @@ export function markGananciaSeriesStale(): void {
   } catch {
     /* noop */
   }
+  clearApiGetCache('/api/ganancia-diaria');
 }
 
 export function isGananciaSeriesStale(): boolean {
@@ -38,4 +41,5 @@ export function clearGananciaSeriesCache(): void {
   } catch {
     /* noop */
   }
+  clearApiGetCache('/api/ganancia-diaria');
 }

@@ -4,8 +4,6 @@ import { apiFetch } from '../auth/api';
 import { ds } from '../design-system/ds';
 import { PageHeader } from '../design-system/PageHeader';
 import {
-  GANANCIA_SERIES_CACHE_KEY,
-  GANANCIA_SERIES_CACHE_TTL_MS,
   clearGananciaSeriesCache,
   consumeGananciaSeriesStale,
   isGananciaSeriesStale,
@@ -56,8 +54,6 @@ type SeriesPayload = {
   error?: string;
   code?: string;
 };
-type SeriesCacheEntry = { updatedAt: number; payload: SeriesPayload };
-type SeriesCacheStore = Record<string, SeriesCacheEntry>;
 
 function formatMoney(n: number, currency: string | null | undefined): string {
   if (!Number.isFinite(n)) return '—';
@@ -466,39 +462,8 @@ export default function GananciaDiariaPage() {
   const [rangeStartIdx, setRangeStartIdx] = useState(0);
   const [rangeEndIdx, setRangeEndIdx] = useState(0);
   const [draggingRangeThumb, setDraggingRangeThumb] = useState<'start' | 'end' | null>(null);
-  const hasHydratedFromCache = useRef(false);
   const monthDropdownRef = useRef<HTMLDivElement>(null);
   const rangeSliderTrackRef = useRef<HTMLDivElement>(null);
-
-  const readSeriesCache = useCallback((key: string): SeriesPayload | null => {
-    try {
-      const raw = localStorage.getItem(GANANCIA_SERIES_CACHE_KEY);
-      if (!raw) return null;
-      const parsed = JSON.parse(raw) as SeriesCacheStore;
-      if (!parsed || typeof parsed !== 'object') return null;
-      const hit = parsed[key];
-      if (!hit || typeof hit !== 'object') return null;
-      if (!Number.isFinite(hit.updatedAt) || Date.now() - hit.updatedAt > GANANCIA_SERIES_CACHE_TTL_MS) return null;
-      const payload = hit.payload;
-      return payload && typeof payload === 'object' ? payload : null;
-    } catch {
-      return null;
-    }
-  }, []);
-
-  const writeSeriesCache = useCallback((key: string, payload: SeriesPayload) => {
-    try {
-      const raw = localStorage.getItem(GANANCIA_SERIES_CACHE_KEY);
-      const parsed = raw ? ((JSON.parse(raw) as SeriesCacheStore) ?? {}) : {};
-      const next: SeriesCacheStore = { ...parsed, [key]: { updatedAt: Date.now(), payload } };
-      const keys = Object.keys(next).sort((a, b) => (next[b]?.updatedAt || 0) - (next[a]?.updatedAt || 0));
-      const limited: SeriesCacheStore = {};
-      for (const k of keys.slice(0, 10)) limited[k] = next[k];
-      localStorage.setItem(GANANCIA_SERIES_CACHE_KEY, JSON.stringify(limited));
-    } catch {
-      /* noop */
-    }
-  }, []);
 
   const loadSeries = useCallback(async (options?: { force?: boolean }) => {
     const force = options?.force === true;
@@ -507,41 +472,28 @@ export default function GananciaDiariaPage() {
       qs.set('months', selectedMonths.join(','));
     }
     if (force) qs.set('refresh', '1');
-    const suffix = qs.toString() ? `?${qs}` : '';
-    const cacheKey = (selectedMonths.length > 0 ? selectedMonths.join(',') : '') || '__default__';
-    const cached = !force ? readSeriesCache(cacheKey) : null;
-    if (cached && !hasHydratedFromCache.current) {
-      hasHydratedFromCache.current = true;
-      setSeriesData(cached);
-      if (cached.available_months?.length) setMonthOptions(cached.available_months);
-      if (Array.isArray(cached.product_options)) setProductOptions(cached.product_options);
-      setSeriesLoading(false);
-    } else {
-      setSeriesLoading(true);
-    }
+    const suffix = qs.toString() ? `?${qs.toString()}` : '';
     if (force) clearGananciaSeriesCache();
+    setSeriesLoading(true);
     setSeriesError('');
     try {
       const res = await apiFetch(`/api/ganancia-diaria/series${suffix}`);
       const body = (await res.json().catch(() => ({}))) as SeriesPayload;
       if (!res.ok) {
-        if (!cached) setSeriesData(null);
+        setSeriesData(null);
         setSeriesError(typeof body.error === 'string' ? body.error : 'No se pudo cargar la tabla');
         return;
       }
       setSeriesData(body);
       if (body.available_months?.length) setMonthOptions(body.available_months);
       if (Array.isArray(body.product_options)) setProductOptions(body.product_options);
-      writeSeriesCache(cacheKey, body);
     } catch {
-      if (!cached) {
-        setSeriesData(null);
-        setSeriesError('Error de red');
-      }
+      setSeriesData(null);
+      setSeriesError('Error de red');
     } finally {
       setSeriesLoading(false);
     }
-  }, [selectedMonths, readSeriesCache, writeSeriesCache]);
+  }, [selectedMonths]);
 
   useEffect(() => {
     const force = consumeGananciaSeriesStale();

@@ -44,6 +44,20 @@ function isGetCacheableRequest(method: string, init: RequestInit): boolean {
   return method === 'GET' && init.body === undefined;
 }
 
+export function clearApiGetCache(pathContains?: string): void {
+  if (!pathContains) {
+    apiGetCache.clear();
+    apiGetInFlight.clear();
+    return;
+  }
+  for (const key of [...apiGetCache.keys()]) {
+    if (key.includes(pathContains)) apiGetCache.delete(key);
+  }
+  for (const key of [...apiGetInFlight.keys()]) {
+    if (key.includes(pathContains)) apiGetInFlight.delete(key);
+  }
+}
+
 export function getStoredToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
