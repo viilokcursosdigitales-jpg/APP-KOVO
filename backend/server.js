@@ -6871,6 +6871,162 @@ function consolidateGananciaProductDayInner(innerMap, titleToProductIdMap) {
   return out;
 }
 
+function cloneGananciaProductSlice(row) {
+  return {
+    label: row.label,
+    product_id: row.product_id ?? null,
+    ventas_despachadas: Number(row.ventas_despachadas) || 0,
+    ventas_entregadas: Number(row.ventas_entregadas) || 0,
+    costo_producto: Number(row.costo_producto) || 0,
+    costo_entregado: Number(row.costo_entregado) || 0,
+    flete: Number(row.flete) || 0,
+    qty: Number(row.qty) || 0,
+    pedidos: Number(row.pedidos) || 0,
+  };
+}
+
+function mergeGananciaProductSliceInto(target, source, share = 1, opts = {}) {
+  const addPedidos = opts.addPedidos !== false;
+  const s = share != null && Number.isFinite(Number(share)) ? Number(share) : 1;
+  target.ventas_despachadas += (Number(source.ventas_despachadas) || 0) * s;
+  target.ventas_entregadas += (Number(source.ventas_entregadas) || 0) * s;
+  target.costo_producto += (Number(source.costo_producto) || 0) * s;
+  target.costo_entregado += (Number(source.costo_entregado) || 0) * s;
+  target.flete += (Number(source.flete) || 0) * s;
+  target.qty += (Number(source.qty) || 0) * s;
+  if (addPedidos) target.pedidos += (Number(source.pedidos) || 0) * s;
+}
+
+async function loadMetaCampaignPrimaryProductIds(organizationId) {
+  const set = new Set();
+  try {
+    const linksRows = await pool.query(
+      `SELECT product_ids FROM meta_campaign_product_links WHERE organization_id = $1`,
+      [organizationId],
+    );
+    for (const r of linksRows.rows) {
+      const ids = Array.isArray(r.product_ids) ? r.product_ids : [];
+      for (const x of ids) {
+        const n = Number.parseInt(String(x), 10);
+        if (Number.isFinite(n) && n > 0) set.add(n);
+      }
+    }
+  } catch (e) {
+    if (!(e && e.code === '42P01')) throw e;
+  }
+  return set;
+}
+
+/** Agrupa complementarios del pedido dentro del producto principal vinculado a campaña Meta. */
+function rollupOrderContribToPrimaryProducts(contrib, primaryProductIds) {
+  if (!contrib || !(contrib instanceof Map) || !primaryProductIds || primaryProductIds.size === 0) {
+    return { contrib, complementaryAllocations: [] };
+  }
+  const primaries = [];
+  const complementaries = [];
+  for (const [pk, row] of contrib) {
+    const pid = row.product_id != null ? Number(row.product_id) : null;
+    if (pid && primaryProductIds.has(pid)) primaries.push([pk, row]);
+    else complementaries.push([pk, row]);
+  }
+  if (!complementaries.length) {
+    return { contrib, complementaryAllocations: [] };
+  }
+  if (!primaries.length) {
+    return { contrib: new Map(), complementaryAllocations: [] };
+  }
+
+  const out = new Map();
+  for (const [pk, row] of primaries) {
+    out.set(pk, cloneGananciaProductSlice(row));
+  }
+
+  let totalPrimaryVd = 0;
+  for (const [, row] of out) totalPrimaryVd += row.ventas_despachadas;
+
+  const complementaryAllocations = [];
+  for (const [, comp] of complementaries) {
+    if (primaries.length === 1) {
+      const primaryPid = primaries[0][1].product_id;
+      const [, target] = [...out.entries()][0];
+      mergeGananciaProductSliceInto(target, comp, 1, { addPedidos: false });
+      complementaryAllocations.push({ primaryPid, comp: cloneGananciaProductSlice(comp), share: 1 });
+    } else {
+      for (const [, primaryRow] of primaries) {
+        const primaryPid = primaryRow.product_id;
+        const share =
+          totalPrimaryVd > 0 ? primaryRow.ventas_despachadas / totalPrimaryVd : 1 / primaries.length;
+        const target = [...out.values()].find((r) => Number(r.product_id) === Number(primaryPid));
+        if (target) mergeGananciaProductSliceInto(target, comp, share, { addPedidos: false });
+        complementaryAllocations.push({
+          primaryPid,
+          comp: cloneGananciaProductSlice(comp),
+          share,
+        });
+      }
+    }
+  }
+
+  let pedidosAssigned = false;
+  for (const row of out.values()) {
+    if (!pedidosAssigned && row.pedidos > 0) {
+      row.pedidos = 1;
+      pedidosAssigned = true;
+    } else {
+      row.pedidos = 0;
+    }
+  }
+
+  return { contrib: out, complementaryAllocations };
+}
+
+function accumulateComplementaryDetailGlobal(globalMap, primaryPid, compRow, share = 1) {
+  const pid = Number(primaryPid);
+  if (!Number.isFinite(pid) || pid <= 0) return;
+  if (!globalMap.has(pid)) globalMap.set(pid, new Map());
+  const inner = globalMap.get(pid);
+  const compPid = compRow.product_id != null ? Number(compRow.product_id) : null;
+  const labelKey = normalizeLineItemLookupKey(compRow.label || '');
+  const compKey =
+    compPid && Number.isFinite(compPid) && compPid > 0 ? `p:${compPid}` : `t:${labelKey || compRow.label || 'otro'}`;
+  const cur = inner.get(compKey) || {
+    label: String(compRow.label || 'Complementario'),
+    product_id: compPid && Number.isFinite(compPid) ? compPid : null,
+    ventas_despachadas: 0,
+    ventas_entregadas: 0,
+    costo_producto: 0,
+    costo_producto_entregado: 0,
+    costo_flete: 0,
+    cantidad: 0,
+    pedidos: 0,
+  };
+  const s = share != null && Number.isFinite(Number(share)) ? Number(share) : 1;
+  cur.ventas_despachadas += (Number(compRow.ventas_despachadas) || 0) * s;
+  cur.ventas_entregadas += (Number(compRow.ventas_entregadas) || 0) * s;
+  cur.costo_producto += (Number(compRow.costo_producto) || 0) * s;
+  cur.costo_producto_entregado += (Number(compRow.costo_entregado) || 0) * s;
+  cur.costo_flete += (Number(compRow.flete) || 0) * s;
+  cur.cantidad += (Number(compRow.qty) || 0) * s;
+  inner.set(compKey, cur);
+}
+
+function complementaryDetailGlobalToJson(globalMap) {
+  const out = {};
+  for (const [primaryPid, inner] of globalMap) {
+    out[String(primaryPid)] = [...inner.values()].map((r) => ({
+      label: r.label,
+      product_id: r.product_id,
+      ventas_despachadas: Math.round(r.ventas_despachadas * 100) / 100,
+      ventas_entregadas: Math.round(r.ventas_entregadas * 100) / 100,
+      costo_producto: Math.round(r.costo_producto * 100) / 100,
+      costo_producto_entregado: Math.round(r.costo_producto_entregado * 100) / 100,
+      costo_flete: Math.round(r.costo_flete * 100) / 100,
+      cantidad: Math.round(r.cantidad * 100) / 100,
+    }));
+  }
+  return out;
+}
+
 /**
  * Unidades de producto para ganancia diaria (tabla / totales): misma prioridad que Motico "cantidad final".
  * Suma cantidades de líneas si hay alguna > 0; si no, override (shopify_order_local_fields o pedido manual);
@@ -8435,6 +8591,10 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       }
     })();
 
+    const primaryProductIds = await loadMetaCampaignPrimaryProductIds(req.organizationId);
+    /** @type {Map<number, Map<string, object>>} */
+    const complementaryDetailGlobal = new Map();
+
     const daySet = new Set(sortedAsc);
     const ventasByDay = new Map();
     const ventasEntregadasByDay = new Map();
@@ -8503,7 +8663,18 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         (costoFletePromedioByDay.get(key) || 0) + costs.avgFreightCost,
       );
       const pack = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap, lf);
-      if (pack) gananciaMergeProductDay(touchDayProducts(key), pack.contrib);
+      if (pack) {
+        const rolled = rollupOrderContribToPrimaryProducts(pack.contrib, primaryProductIds);
+        for (const alloc of rolled.complementaryAllocations) {
+          accumulateComplementaryDetailGlobal(
+            complementaryDetailGlobal,
+            alloc.primaryPid,
+            alloc.comp,
+            alloc.share,
+          );
+        }
+        gananciaMergeProductDay(touchDayProducts(key), rolled.contrib);
+      }
     }
     for (const o of manualRows) {
       const key = moticoManualOrderAssignedYmd(o, iana);
@@ -8539,7 +8710,18 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         (costoFletePromedioByDay.get(key) || 0) + costs.avgFreightCost,
       );
       const packM = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, null));
-      if (packM) gananciaMergeProductDay(touchDayProducts(key), packM.contrib);
+      if (packM) {
+        const rolled = rollupOrderContribToPrimaryProducts(packM.contrib, primaryProductIds);
+        for (const alloc of rolled.complementaryAllocations) {
+          accumulateComplementaryDetailGlobal(
+            complementaryDetailGlobal,
+            alloc.primaryPid,
+            alloc.comp,
+            alloc.share,
+          );
+        }
+        gananciaMergeProductDay(touchDayProducts(key), rolled.contrib);
+      }
     }
 
     const spendByDayMeta = metaPack.spendByDay || {};
@@ -8663,9 +8845,13 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         }
       }
     }
-    const product_options = [...productLabelByKey.values()].sort((a, b) =>
-      String(a.label).localeCompare(String(b.label), 'es', { sensitivity: 'base' }),
-    );
+    const product_options = [...productLabelByKey.values()]
+      .filter((opt) => {
+        if (!primaryProductIds.size) return true;
+        const pid = opt.product_id != null ? Number(opt.product_id) : null;
+        return pid != null && Number.isFinite(pid) && primaryProductIds.has(pid);
+      })
+      .sort((a, b) => String(a.label).localeCompare(String(b.label), 'es', { sensitivity: 'base' }));
 
     const filteredDays = hasProductFilter
       ? days.map((row) => {
@@ -8747,6 +8933,8 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         : hasProductFilter
           ? 'ventas_despachadas_prorrata_dia'
           : null,
+      primary_product_ids: [...primaryProductIds],
+      product_complementary_detail: complementaryDetailGlobalToJson(complementaryDetailGlobal),
     });
   } catch (e) {
     console.error(e);

@@ -31,8 +31,20 @@ export type SeriesDayRow = {
   by_product?: Record<string, ProductDaySlice>;
 };
 
+export type ComplementaryProductDetail = {
+  label: string;
+  product_id: number | null;
+  ventas_despachadas: number;
+  ventas_entregadas: number;
+  costo_producto: number;
+  costo_producto_entregado: number;
+  costo_flete: number;
+  cantidad: number;
+};
+
 export type ProductAnalysisRow = {
   key: string;
+  product_id: number | null;
   label: string;
   ventasTotales: number;
   ventasDespachadas: number;

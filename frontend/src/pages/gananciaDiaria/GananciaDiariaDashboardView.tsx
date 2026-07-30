@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode, RefObject } from 'react';
+import { useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -15,6 +16,7 @@ import {
   Target,
   TrendingUp,
   Wallet,
+  X,
 } from 'lucide-react';
 import { ds } from '../../design-system/ds';
 import {
@@ -30,6 +32,7 @@ import {
   pctChange,
   type DashboardInsight,
   type EnrichedProductRow,
+  type ComplementaryProductDetail,
   type ProductAnalysisRow,
   type SeriesDayRow,
 } from './dashboardUiUtils';
@@ -337,6 +340,138 @@ function InsightCard({ insight }: { insight: DashboardInsight }) {
   );
 }
 
+function ComplementaryProductsModal({
+  productLabel,
+  rows,
+  fmt,
+  onClose,
+}: {
+  productLabel: string;
+  rows: ComplementaryProductDetail[];
+  fmt: (n: number) => string;
+  onClose: () => void;
+}) {
+  const totals = rows.reduce(
+    (acc, r) => {
+      acc.ventas += r.ventas_despachadas || 0;
+      acc.costo += r.costo_producto || 0;
+      acc.flete += r.costo_flete || 0;
+      acc.cantidad += r.cantidad || 0;
+      return acc;
+    },
+    { ventas: 0, costo: 0, flete: 0, cantidad: 0 },
+  );
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="complementary-modal-title"
+      style={{
+        position: 'fixed',
+        inset: 0,
+        zIndex: 1000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: 24,
+        background: 'rgba(15, 23, 42, 0.45)',
+      }}
+      onClick={onClose}
+    >
+      <div
+        style={{
+          ...dashboardCard,
+          width: 'min(720px, 100%)',
+          maxHeight: 'min(80vh, 640px)',
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div
+          style={{
+            padding: '18px 22px',
+            borderBottom: `1px solid ${ds.borderRow}`,
+            display: 'flex',
+            alignItems: 'flex-start',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <div>
+            <h3 id="complementary-modal-title" style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>
+              Productos complementarios
+            </h3>
+            <p style={{ margin: '6px 0 0', fontSize: 13, color: ds.textSecondary, lineHeight: 1.45 }}>
+              Desglose incluido en <strong>{productLabel}</strong>. Los costos compartidos (flete, etc.) están
+              prorrateados según la participación de cada ítem en el pedido.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Cerrar"
+            style={{
+              border: 'none',
+              background: ds.bgSubtle,
+              borderRadius: 8,
+              width: 32,
+              height: 32,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              cursor: 'pointer',
+              color: ds.textSecondary,
+              flexShrink: 0,
+            }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div style={{ overflow: 'auto', padding: '0 0 8px' }}>
+          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
+            <thead>
+              <tr>
+                <th style={thStyle}>Producto</th>
+                <th style={thRight}>Cantidad</th>
+                <th style={thRight}>Ventas despachadas</th>
+                <th style={thRight}>Costo producto</th>
+                <th style={thRight}>Flete prorrateado</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.map((r, idx) => (
+                <tr key={`${r.product_id ?? r.label}-${idx}`}>
+                  <td style={{ ...tdStyle, fontWeight: 600 }}>{r.label}</td>
+                  <td style={tdRight}>{r.cantidad > 0 ? r.cantidad.toLocaleString('es-CO') : '—'}</td>
+                  <td style={tdRight}>{fmt(r.ventas_despachadas || 0)}</td>
+                  <td style={tdRight}>{fmt(r.costo_producto || 0)}</td>
+                  <td style={tdRight}>{fmt(r.costo_flete || 0)}</td>
+                </tr>
+              ))}
+            </tbody>
+            {rows.length > 1 ? (
+              <tfoot>
+                <tr style={{ borderTop: `2px solid ${ds.borderRow}` }}>
+                  <td style={{ ...tdStyle, fontWeight: 700 }}>Total complementarios</td>
+                  <td style={{ ...tdRight, fontWeight: 700 }}>
+                    {totals.cantidad > 0 ? totals.cantidad.toLocaleString('es-CO') : '—'}
+                  </td>
+                  <td style={{ ...tdRight, fontWeight: 700 }}>{fmt(totals.ventas)}</td>
+                  <td style={{ ...tdRight, fontWeight: 700 }}>{fmt(totals.costo)}</td>
+                  <td style={{ ...tdRight, fontWeight: 700 }}>{fmt(totals.flete)}</td>
+                </tr>
+              </tfoot>
+            ) : null}
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ─── Props ─── */
 
 export type GananciaDiariaDashboardViewProps = {
@@ -375,6 +510,7 @@ export type GananciaDiariaDashboardViewProps = {
   prevPeriodDays: SeriesDayRow[];
   prevPeriodDaysAllProducts: SeriesDayRow[];
   productAnalysisRows: ProductAnalysisRow[];
+  productComplementaryDetail: Record<string, ComplementaryProductDetail[]>;
   totals: {
     ventas: number;
     ventasEntregadas: number;
@@ -453,6 +589,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
     prevPeriodDays,
     prevPeriodDaysAllProducts,
     productAnalysisRows,
+    productComplementaryDetail,
     totals,
     prevTotals,
     selectedRangeDates,
@@ -481,6 +618,19 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
   } = props;
 
   const fmt = (n: number) => formatMoney(n, seriesVentasCur);
+
+  const [complementaryModal, setComplementaryModal] = useState<{
+    label: string;
+    rows: ComplementaryProductDetail[];
+  } | null>(null);
+
+  const openComplementaryModal = (row: EnrichedProductRow) => {
+    const pid = row.product_id;
+    if (pid == null || !Number.isFinite(pid)) return;
+    const rows = productComplementaryDetail[String(pid)] ?? [];
+    if (!rows.length) return;
+    setComplementaryModal({ label: row.label, rows });
+  };
 
   const sortedRangeDays = useMemoSortedDays(daysInRange);
   const kpiSparklines = {
@@ -1059,7 +1209,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                     <div>
                       <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>Resumen por producto</h2>
                       <p style={{ margin: '4px 0 0', fontSize: 12, color: ds.textMuted }}>
-                        Totales del rango seleccionado · ordenado por % utilidad
+                        Totales del rango seleccionado · solo productos principales · ordenado por % utilidad
                       </p>
                     </div>
                   </div>
@@ -1083,6 +1233,9 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                       </thead>
                       <tbody>
                         {enrichedProducts.map((row) => {
+                          const hasComplementaries =
+                            row.product_id != null &&
+                            (productComplementaryDetail[String(row.product_id)]?.length ?? 0) > 0;
                           const utilidadUnitStyle: CSSProperties =
                             row.utilidadUnitaria == null
                               ? tdRight
@@ -1103,7 +1256,33 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                               <td style={{ ...tdStyle, width: 48 }}>
                                 <ProductAvatar label={row.label} />
                               </td>
-                              <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 180 }}>{row.label}</td>
+                              <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 180 }}>
+                                {hasComplementaries ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => openComplementaryModal(row)}
+                                    title="Ver productos complementarios incluidos"
+                                    style={{
+                                      border: 'none',
+                                      background: 'none',
+                                      padding: 0,
+                                      margin: 0,
+                                      font: 'inherit',
+                                      fontWeight: 600,
+                                      color: '#4f46e5',
+                                      cursor: 'pointer',
+                                      textAlign: 'left',
+                                      textDecoration: 'underline',
+                                      textDecorationColor: 'rgba(79, 70, 229, 0.35)',
+                                      textUnderlineOffset: 3,
+                                    }}
+                                  >
+                                    {row.label}
+                                  </button>
+                                ) : (
+                                  row.label
+                                )}
+                              </td>
                               <td style={tdRight}>
                                 <div>{fmt(row.ventasDespachadas)}</div>
                                 <MiniDelta value={row.ventasGrowthPct} />
@@ -1380,6 +1559,14 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
             </aside>
           </div>
         </>
+      ) : null}
+      {complementaryModal ? (
+        <ComplementaryProductsModal
+          productLabel={complementaryModal.label}
+          rows={complementaryModal.rows}
+          fmt={fmt}
+          onClose={() => setComplementaryModal(null)}
+        />
       ) : null}
     </div>
   );

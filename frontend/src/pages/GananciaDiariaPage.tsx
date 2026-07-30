@@ -7,6 +7,7 @@ import {
   isGananciaSeriesStale,
 } from '../utils/gananciaSeriesCache';
 import { GananciaDiariaDashboardView } from './gananciaDiaria/GananciaDiariaDashboardView';
+import type { ComplementaryProductDetail } from './gananciaDiaria/dashboardUiUtils';
 
 type ProductDaySlice = {
   label?: string;
@@ -50,6 +51,8 @@ type SeriesPayload = {
   product_options?: { key: string; label: string; product_id: number | null }[];
   product_id_applied?: number | null;
   product_spend_allocation?: string | null;
+  primary_product_ids?: number[];
+  product_complementary_detail?: Record<string, ComplementaryProductDetail[]>;
   days?: SeriesDayRow[];
   error?: string;
   code?: string;
@@ -244,6 +247,7 @@ function filterDayRowByProduct(
 
 type ProductAnalysisRow = {
   key: string;
+  product_id: number | null;
   label: string;
   ventasTotales: number;
   ventasDespachadas: number;
@@ -327,6 +331,7 @@ function aggregateProductAnalysis(
       const gastoAdmin = r.ventasTotales * (adminPercent / 100);
       return {
         key,
+        product_id: Number.isFinite(pid) && pid > 0 ? pid : null,
         label: r.label,
         ventasTotales: r.ventasTotales,
         ventasDespachadas: r.ventasDespachadas,
@@ -762,6 +767,7 @@ export default function GananciaDiariaPage() {
       prevPeriodDays={prevPeriodDays}
       prevPeriodDaysAllProducts={prevPeriodDaysAllProducts}
       productAnalysisRows={productAnalysisRows}
+      productComplementaryDetail={seriesData?.product_complementary_detail ?? {}}
       totals={totals}
       prevTotals={prevTotals}
       selectedRangeDates={selectedRangeDates}
