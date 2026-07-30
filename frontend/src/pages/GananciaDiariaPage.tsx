@@ -1,14 +1,12 @@
-import type { CSSProperties } from 'react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { apiFetch } from '../auth/api';
-import { ds } from '../design-system/ds';
-import { PageHeader } from '../design-system/PageHeader';
 import { formatYmdLocal } from '../utils/datePresets';
 import {
   clearGananciaSeriesCache,
   consumeGananciaSeriesStale,
   isGananciaSeriesStale,
 } from '../utils/gananciaSeriesCache';
+import { GananciaDiariaDashboardView } from './gananciaDiaria/GananciaDiariaDashboardView';
 
 type ProductDaySlice = {
   label?: string;
@@ -62,41 +60,6 @@ function shiftYmd(ymd: string, deltaDays: number): string {
   const d = new Date(Number(p[1]), Number(p[2]) - 1, Number(p[3]));
   d.setDate(d.getDate() + deltaDays);
   return formatYmdLocal(d);
-}
-
-const filterLabelStyle: CSSProperties = {
-  display: 'block',
-  fontSize: 11,
-  fontWeight: 600,
-  color: ds.textMuted,
-  marginBottom: 6,
-  letterSpacing: '0.02em',
-};
-
-const filterInputStyle: CSSProperties = {
-  width: '100%',
-  padding: '8px 10px',
-  borderRadius: 8,
-  border: `1px solid ${ds.borderCard}`,
-  background: ds.bgCard,
-  color: ds.textPrimary,
-  fontSize: 13,
-  boxSizing: 'border-box',
-};
-
-function quickRangeButtonStyle(active: boolean, disabled?: boolean): CSSProperties {
-  return {
-    padding: '6px 12px',
-    borderRadius: 8,
-    border: `1px solid ${active ? '#6c47ff' : ds.borderCard}`,
-    background: active ? 'rgba(108, 71, 255, 0.1)' : ds.bgCard,
-    color: active ? '#6c47ff' : ds.textSecondary,
-    fontSize: 12,
-    fontWeight: 600,
-    cursor: disabled ? 'not-allowed' : 'pointer',
-    opacity: disabled ? 0.45 : 1,
-    whiteSpace: 'nowrap',
-  };
 }
 
 function formatMoney(n: number, currency: string | null | undefined): string {
@@ -153,22 +116,6 @@ function parsePercentInput(raw: string): number {
   const n = Number.parseFloat(String(raw || '').replace(',', '.'));
   if (!Number.isFinite(n) || n < 0) return 0;
   return n;
-}
-
-/** Encabezados de tabla: una línea por elemento, sin partir palabras al ancho de columna. */
-function GananciaThStack({ parts }: { parts: readonly string[] }) {
-  return (
-    <>
-      {parts.map((line, i) => (
-        <span
-          key={`${i}-${line}`}
-          style={{ display: 'block', whiteSpace: 'nowrap', textAlign: 'inherit' }}
-        >
-          {line}
-        </span>
-      ))}
-    </>
-  );
 }
 
 /** Misma utilidad que muestra la tabla por día: API − % admin sobre ventas entregadas. */
@@ -391,155 +338,6 @@ function aggregateProductAnalysis(
     });
 }
 
-const cardBase: CSSProperties = {
-  background: ds.bgCard,
-  borderRadius: 14,
-  padding: '20px 22px',
-  border: `1px solid ${ds.borderCard}`,
-};
-
-const thStyle: CSSProperties = {
-  textAlign: 'left',
-  fontSize: 10,
-  fontWeight: 700,
-  color: '#ffffff',
-  backgroundColor: '#6c47ff',
-  textTransform: 'uppercase',
-  letterSpacing: '0.02em',
-  lineHeight: 1.2,
-  padding: '8px 4px',
-  borderBottom: '1px solid rgba(255,255,255,0.12)',
-  whiteSpace: 'normal',
-  verticalAlign: 'bottom',
-  wordBreak: 'break-word',
-  hyphens: 'auto',
-};
-
-const thRight: CSSProperties = { ...thStyle, textAlign: 'right' };
-
-/** Columna al ancho del texto más largo + 20px izq. y 20px der. */
-const thTdColSizing: CSSProperties = {
-  width: '1%',
-  whiteSpace: 'nowrap',
-  paddingTop: 8,
-  paddingBottom: 8,
-  paddingLeft: 20,
-  paddingRight: 20,
-  boxSizing: 'border-box',
-  wordBreak: 'normal',
-  hyphens: 'manual',
-};
-
-const thColLeft: CSSProperties = { ...thStyle, ...thTdColSizing };
-const thColRight: CSSProperties = { ...thRight, ...thTdColSizing };
-
-/** Encabezados: líneas controladas; sin partir palabras (evita PRODUC|TO). */
-const thHeadPad: CSSProperties = {
-  paddingTop: 8,
-  paddingBottom: 8,
-  paddingLeft: 20,
-  paddingRight: 20,
-  boxSizing: 'border-box',
-  width: 'max-content',
-  wordBreak: 'normal',
-  overflowWrap: 'normal',
-  hyphens: 'manual',
-  whiteSpace: 'normal',
-  lineHeight: 1.25,
-  verticalAlign: 'bottom',
-};
-
-const thColHeadLeft: CSSProperties = { ...thStyle, ...thHeadPad };
-const thColHeadRight: CSSProperties = { ...thRight, ...thHeadPad };
-
-/** Pedidos: ancho al texto del encabezado + 20px izq. y der. */
-const thColHeadPedidos: CSSProperties = {
-  ...thRight,
-  paddingTop: 8,
-  paddingBottom: 8,
-  paddingLeft: 20,
-  paddingRight: 20,
-  boxSizing: 'border-box',
-  whiteSpace: 'nowrap',
-  width: 'max-content',
-  verticalAlign: 'bottom',
-  lineHeight: 1.25,
-  wordBreak: 'normal',
-  hyphens: 'manual',
-};
-
-/** Ventas despachadas: ancho según contenido del encabezado (líneas nowrap). */
-const thColHeadVentasDespachadas: CSSProperties = {
-  ...thRight,
-  paddingTop: 8,
-  paddingBottom: 8,
-  paddingLeft: 20,
-  paddingRight: 20,
-  boxSizing: 'border-box',
-  width: 'max-content',
-  verticalAlign: 'bottom',
-  lineHeight: 1.25,
-  whiteSpace: 'normal',
-  wordBreak: 'normal',
-  hyphens: 'manual',
-};
-
-/** Cantidad / producto */
-const thColHeadCantidad: CSSProperties = {
-  ...thRight,
-  paddingTop: 8,
-  paddingBottom: 8,
-  paddingLeft: 20,
-  paddingRight: 20,
-  boxSizing: 'border-box',
-  width: 'max-content',
-  verticalAlign: 'bottom',
-  lineHeight: 1.25,
-  whiteSpace: 'normal',
-  wordBreak: 'normal',
-  hyphens: 'manual',
-};
-
-const tdStyle: CSSProperties = {
-  fontSize: 13,
-  color: ds.textPrimary,
-  padding: '8px 4px',
-  borderBottom: `1px solid ${ds.borderRow}`,
-  wordBreak: 'break-word',
-};
-
-const tdColLeft: CSSProperties = { ...tdStyle, ...thTdColSizing, fontWeight: 500 };
-const tdColRight: CSSProperties = {
-  ...tdStyle,
-  ...thTdColSizing,
-  textAlign: 'right',
-  fontVariantNumeric: 'tabular-nums',
-};
-
-const tdColVentasDespachadas: CSSProperties = { ...tdColRight };
-
-const tdColPedidos: CSSProperties = {
-  ...tdStyle,
-  paddingTop: 8,
-  paddingBottom: 8,
-  paddingLeft: 20,
-  paddingRight: 20,
-  boxSizing: 'border-box',
-  textAlign: 'right',
-  whiteSpace: 'nowrap',
-  fontVariantNumeric: 'tabular-nums',
-  fontWeight: 500,
-  width: '1%',
-  wordBreak: 'normal',
-  hyphens: 'manual',
-};
-
-const tableStyle: CSSProperties = {
-  width: '100%',
-  borderCollapse: 'collapse',
-  tableLayout: 'auto',
-};
-
 export default function GananciaDiariaPage() {
   const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
@@ -555,6 +353,13 @@ export default function GananciaDiariaPage() {
       return localStorage.getItem('kovo_ganancia_admin_percent') || '0';
     } catch {
       return '0';
+    }
+  });
+  const [goalPctInput, setGoalPctInput] = useState(() => {
+    try {
+      return localStorage.getItem('kovo_ganancia_goal_pct') || '20';
+    } catch {
+      return '20';
     }
   });
   const [rangeStartIdx, setRangeStartIdx] = useState(0);
@@ -617,6 +422,14 @@ export default function GananciaDiariaPage() {
   }, [adminPercentInput]);
 
   useEffect(() => {
+    try {
+      localStorage.setItem('kovo_ganancia_goal_pct', goalPctInput);
+    } catch {
+      /* noop */
+    }
+  }, [goalPctInput]);
+
+  useEffect(() => {
     if (!monthsPanelOpen) return;
     const onDown = (e: MouseEvent) => {
       const el = monthDropdownRef.current;
@@ -663,6 +476,7 @@ export default function GananciaDiariaPage() {
   const seriesMetaCur = seriesData?.meta_currency;
   const comparable = seriesData?.ganancia_comparable;
   const adminPercent = useMemo(() => parsePercentInput(adminPercentInput), [adminPercentInput]);
+  const goalPct = useMemo(() => parsePercentInput(goalPctInput), [goalPctInput]);
   const selectedProductMeta = useMemo(() => {
     if (!selectedProductId) return null;
     const pid = Number.parseInt(selectedProductId, 10);
@@ -861,735 +675,109 @@ export default function GananciaDiariaPage() {
     };
   }, [daysInRange, comparable, adminPercent]);
 
-  const utilidadKpiValue =
-    totals.utilidadNeta != null && Number.isFinite(totals.utilidadNeta) ? totals.utilidadNeta : null;
-  const utilidadKpiStyle: CSSProperties = {
-    ...cardBase,
-    borderColor: utilidadKpiValue == null ? ds.borderCard : utilidadKpiValue < 0 ? ds.dangerText : ds.successText,
-    background: utilidadKpiValue == null ? ds.bgCard : utilidadKpiValue < 0 ? ds.dangerBg : ds.successBg,
-  };
-  const utilidadKpiLabelColor = utilidadKpiValue == null ? ds.textMuted : utilidadKpiValue < 0 ? ds.dangerText : ds.successText;
+  const prevPeriodDays = useMemo(() => {
+    if (daysInRange.length === 0 || !selectedRangeDates.from) return [];
+    const sorted = [...daysForTable].sort((a, b) => a.date.localeCompare(b.date));
+    const fromIdx = sorted.findIndex((d) => d.date === selectedRangeDates.from);
+    if (fromIdx <= 0) return [];
+    const len = daysInRange.length;
+    const startIdx = Math.max(0, fromIdx - len);
+    return sorted.slice(startIdx, fromIdx);
+  }, [daysForTable, daysInRange.length, selectedRangeDates.from]);
+
+  const prevPeriodDaysAllProducts = useMemo(() => {
+    if (daysInRange.length === 0 || !selectedRangeDates.from) return [];
+    const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+    const fromIdx = sorted.findIndex((d) => d.date === selectedRangeDates.from);
+    if (fromIdx <= 0) return [];
+    const len = daysInRange.length;
+    const startIdx = Math.max(0, fromIdx - len);
+    return sorted.slice(startIdx, fromIdx);
+  }, [days, daysInRange.length, selectedRangeDates.from]);
+
+  const prevTotals = useMemo(() => {
+    let v = 0;
+    let ve = 0;
+    let p = 0;
+    let g = 0;
+    let utiDisplayedSum = 0;
+    for (const row of prevPeriodDays) {
+      v += row.ventas_despachadas_total;
+      ve += row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
+      p += row.ventas_despachadas_pedidos;
+      g += row.gasto_publicitario_total;
+      const um = utilidadMostradaPorDia(row, comparable, adminPercent);
+      if (um != null && Number.isFinite(um)) utiDisplayedSum += um;
+    }
+    const utilidadAgregada = comparable ? Math.round(utiDisplayedSum * 100) / 100 : null;
+    return {
+      ventas: v,
+      ventasEntregadas: ve,
+      pedidos: p,
+      gasto: g,
+      utilidadNeta: utilidadAgregada,
+    };
+  }, [prevPeriodDays, comparable, adminPercent]);
 
   return (
-    <div style={{ width: '100%', maxWidth: 1440 }}>
-      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, marginBottom: 4 }}>
-        <PageHeader title="GANANCIA DIARIA ESTIMADA" titleFitLongestWord />
-        <button
-          type="button"
-          disabled={seriesLoading}
-          onClick={() => void loadSeries({ force: true })}
-          style={{
-            padding: '9px 14px',
-            borderRadius: 10,
-            border: `1px solid ${ds.borderCard}`,
-            background: ds.bgCard,
-            color: ds.textPrimary,
-            fontWeight: 600,
-            fontSize: 13,
-            cursor: seriesLoading ? 'not-allowed' : 'pointer',
-            opacity: seriesLoading ? 0.65 : 1,
-            alignSelf: 'center',
-          }}
-        >
-          {seriesLoading ? 'Actualizando…' : 'Actualizar informe'}
-        </button>
-      </div>
-
-      {!seriesError ? (
-        <>
-          <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted }}>
-            Período aplicado:{' '}
-            <strong style={{ color: ds.textSecondary }}>{appliedPeriodLabel}</strong>
-            {seriesData?.shop_calendar_timezone ? (
-              <>
-                {' '}
-                · Zona tienda: <code style={{ fontSize: 11 }}>{seriesData.shop_calendar_timezone}</code>
-              </>
-            ) : null}
-            . Sin meses en el filtro se cargan los últimos 7 días; con meses seleccionados se cargan todos los días de
-            esos meses. El deslizador solo acota qué días ves en pantalla.
-          </p>
-          {dayKeys.length > 0 && daysInRange.length !== daysForTable.length ? (
-            <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textHint }}>
-              Mostrando {daysInRange.length} de {daysForTable.length} día{daysForTable.length === 1 ? '' : 's'} según el rango de fechas.
-            </p>
-          ) : null}
-
-          <div
-            style={{
-              display: 'flex',
-              marginBottom: 24,
-            }}
-          >
-            <div style={{ ...utilidadKpiStyle, width: '100%', maxWidth: 420 }}>
-              <div style={{ fontSize: 11, fontWeight: 600, color: utilidadKpiLabelColor, marginBottom: 8 }}>Utilidad</div>
-              <div style={{ fontSize: 24, fontWeight: 700, color: ds.textPrimary }}>
-                {totals.utilidadNeta != null && Number.isFinite(totals.utilidadNeta)
-                  ? formatMoney(totals.utilidadNeta, seriesVentasCur)
-                  : '—'}
-              </div>
-            </div>
-          </div>
-
-          {!seriesLoading && productAnalysisRows.length > 0 ? (
-            <div
-              style={{
-                ...cardBase,
-                padding: 0,
-                overflow: 'hidden',
-                border: '1px solid #6c47ff',
-                marginBottom: 24,
-              }}
-            >
-              <div
-                style={{
-                  padding: '14px 20px',
-                  borderBottom: `1px solid ${ds.borderSide}`,
-                  background: ds.bgSubtle,
-                }}
-              >
-                <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700, color: ds.textPrimary }}>
-                  Análisis por producto
-                </h2>
-                <p style={{ margin: '6px 0 0', fontSize: 12, color: ds.textMuted, lineHeight: 1.45 }}>
-                  Totales del rango de fechas seleccionado. Ventas totales = ventas entregadas. Gasto publicitario
-                  prorrateado por participación diaria en ventas despachadas. Ordenado por % utilidad de mayor a menor.
-                </p>
-              </div>
-              <div style={{ overflowX: 'auto' }}>
-                <table style={tableStyle}>
-                  <thead>
-                    <tr style={{ background: '#6c47ff' }}>
-                      <th style={thColHeadLeft}>
-                        <span style={{ whiteSpace: 'nowrap' }}>Producto</span>
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Ventas', 'totales']} />
-                      </th>
-                      <th style={thColHeadVentasDespachadas}>
-                        <GananciaThStack parts={['Ventas', 'despachadas']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Gasto', 'publicitario']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Costo producto', 'entregado']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Costo', 'flete']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Gastos', 'admon']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <span style={{ whiteSpace: 'nowrap' }}>ROAS total</span>
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['ROAS', 'despachado']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <span style={{ whiteSpace: 'nowrap' }}>Utilidad</span>
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Utilidad', '%']} />
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {productAnalysisRows.map((row, i, arr) => {
-                      const isLast = i === arr.length - 1;
-                      const utilidadStyle: CSSProperties =
-                        row.utilidad == null
-                          ? tdColRight
-                          : row.utilidad < 0
-                            ? { ...tdColRight, color: ds.dangerText, fontWeight: 600 }
-                            : row.utilidad > 0
-                              ? { ...tdColRight, color: ds.successText, fontWeight: 600 }
-                              : tdColRight;
-                      return (
-                        <tr key={row.key}>
-                          <td style={{ ...tdColLeft, borderBottom: isLast ? 'none' : tdColLeft.borderBottom }}>
-                            {row.label}
-                          </td>
-                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
-                            {formatMoney(row.ventasTotales, seriesVentasCur)}
-                          </td>
-                          <td style={{ ...tdColVentasDespachadas, borderBottom: isLast ? 'none' : tdColVentasDespachadas.borderBottom }}>
-                            {formatMoney(row.ventasDespachadas, seriesVentasCur)}
-                          </td>
-                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
-                            {formatMoney(row.gastoPublicitario, seriesVentasCur)}
-                          </td>
-                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
-                            {formatMoney(row.costoProductoEntregado, seriesVentasCur)}
-                          </td>
-                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
-                            {formatMoney(row.costoFlete, seriesVentasCur)}
-                          </td>
-                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
-                            {formatMoney(row.gastoAdmin, seriesVentasCur)}
-                          </td>
-                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
-                            {formatRoas(row.roasTotal)}
-                          </td>
-                          <td style={{ ...tdColRight, borderBottom: isLast ? 'none' : tdColRight.borderBottom }}>
-                            {formatRoas(row.roasDespachado)}
-                          </td>
-                          <td style={{ ...utilidadStyle, borderBottom: isLast ? 'none' : utilidadStyle.borderBottom }}>
-                            {row.utilidad != null && Number.isFinite(row.utilidad)
-                              ? formatMoney(row.utilidad, seriesVentasCur)
-                              : '—'}
-                          </td>
-                          <td style={{ ...utilidadStyle, borderBottom: isLast ? 'none' : utilidadStyle.borderBottom }}>
-                            {row.utilidadPct != null && Number.isFinite(row.utilidadPct)
-                              ? `${row.utilidadPct.toFixed(2)}%`
-                              : '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          ) : null}
-
-          <div
-            style={{
-              marginBottom: 16,
-              padding: '16px 18px',
-              borderRadius: 12,
-              border: `1px solid ${ds.borderCard}`,
-              background: ds.bgSubtle,
-            }}
-          >
-            <h2 style={{ margin: '0 0 14px', fontSize: 16, fontWeight: 700, color: ds.textPrimary }}>
-              Detalle por día
-            </h2>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
-                gap: 14,
-                alignItems: 'end',
-              }}
-            >
-              <div style={{ minWidth: 0 }}>
-                <span style={filterLabelStyle}>Producto</span>
-                <select
-                  value={selectedProductId}
-                  onChange={(e) => setSelectedProductId(e.target.value)}
-                  style={filterInputStyle}
-                >
-                  <option value="">Todos</option>
-                  {availableProducts
-                    .filter((p) => Number.isFinite(Number(p.product_id)) && Number(p.product_id) > 0)
-                    .map((p) => (
-                      <option key={p.key} value={String(p.product_id)}>
-                        {p.label}
-                      </option>
-                    ))}
-                </select>
-              </div>
-
-              <div style={{ minWidth: 0, maxWidth: 140 }}>
-                <span style={filterLabelStyle}>% gasto administrativo</span>
-                <input
-                  type="text"
-                  inputMode="decimal"
-                  value={adminPercentInput}
-                  onChange={(e) => setAdminPercentInput(e.target.value)}
-                  placeholder="0"
-                  style={filterInputStyle}
-                />
-              </div>
-
-              <div style={{ minWidth: 0, gridColumn: '1 / -1' }}>
-                <span style={filterLabelStyle}>Rango de fechas</span>
-                <div
-                  style={{
-                    border: `1px solid ${ds.borderCard}`,
-                    borderRadius: 10,
-                    background: ds.bgCard,
-                    padding: '10px 12px',
-                    boxSizing: 'border-box',
-                  }}
-                >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11, color: ds.textHint, marginBottom: 8 }}>
-                    <span>{selectedRangeDates.from ? formatTableDate(selectedRangeDates.from) : '—'}</span>
-                    <span>{selectedRangeDates.to ? formatTableDate(selectedRangeDates.to) : '—'}</span>
-                  </div>
-                  <div
-                    ref={rangeSliderTrackRef}
-                    style={{
-                      position: 'relative',
-                      height: 28,
-                      userSelect: 'none',
-                      touchAction: 'none',
-                      marginBottom: 10,
-                    }}
-                  >
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: 0,
-                        right: 0,
-                        top: '50%',
-                        height: 6,
-                        transform: 'translateY(-50%)',
-                        borderRadius: 999,
-                        background: ds.bgSubtle,
-                        border: `1px solid ${ds.borderCard}`,
-                      }}
-                    />
-                    <div
-                      style={{
-                        position: 'absolute',
-                        left: `${startPercent}%`,
-                        width: `${Math.max(0, endPercent - startPercent)}%`,
-                        top: '50%',
-                        height: 6,
-                        transform: 'translateY(-50%)',
-                        borderRadius: 999,
-                        background: '#6c47ff',
-                      }}
-                    />
-                    {(['start', 'end'] as const).map((thumb) => {
-                      const isStart = thumb === 'start';
-                      const x = isStart ? startPercent : endPercent;
-                      return (
-                        <button
-                          key={thumb}
-                          type="button"
-                          aria-label={isStart ? 'Inicio del rango de fechas' : 'Fin del rango de fechas'}
-                          disabled={dayKeys.length <= 1}
-                          onPointerDown={(e) => {
-                            if (dayKeys.length <= 1) return;
-                            e.preventDefault();
-                            setDraggingRangeThumb(thumb);
-                            updateRangeThumbAtClientX(thumb, e.clientX);
-                          }}
-                          onKeyDown={(e) => {
-                            if (dayKeys.length <= 1) return;
-                            const delta = e.key === 'ArrowLeft' ? -1 : e.key === 'ArrowRight' ? 1 : 0;
-                            if (!delta) return;
-                            e.preventDefault();
-                            if (isStart) {
-                              setRangeStartIdx((prev) => Math.max(0, Math.min(prev + delta, effectiveRangeIdx.end)));
-                            } else {
-                              setRangeEndIdx((prev) => Math.min(maxRangeIdx, Math.max(prev + delta, effectiveRangeIdx.start)));
-                            }
-                          }}
-                          style={{
-                            position: 'absolute',
-                            left: `calc(${x}% - 8px)`,
-                            top: '50%',
-                            transform: 'translateY(-50%)',
-                            width: 16,
-                            height: 16,
-                            borderRadius: '50%',
-                            border: '2px solid #6c47ff',
-                            background: '#fff',
-                            boxShadow: '0 1px 3px rgba(0,0,0,0.22)',
-                            cursor: dayKeys.length <= 1 ? 'not-allowed' : 'grab',
-                            padding: 0,
-                          }}
-                        />
-                      );
-                    })}
-                  </div>
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
-                    <button
-                      type="button"
-                      disabled={!ayerTargetYmd}
-                      onClick={applyRangeAyer}
-                      style={quickRangeButtonStyle(rangeQuickPreset === 'ayer', !ayerTargetYmd)}
-                    >
-                      Ayer
-                    </button>
-                    <button
-                      type="button"
-                      disabled={dayKeys.length === 0}
-                      onClick={applyRangeEsteAno}
-                      style={quickRangeButtonStyle(rangeQuickPreset === 'este_ano', dayKeys.length === 0)}
-                    >
-                      Este año
-                    </button>
-                    <button
-                      type="button"
-                      disabled={dayKeys.length === 0 || isFullRange}
-                      onClick={() => {
-                        if (dayKeys.length === 0) return;
-                        setRangeStartIdx(0);
-                        setRangeEndIdx(dayKeys.length - 1);
-                      }}
-                      style={quickRangeButtonStyle(false, dayKeys.length === 0 || isFullRange)}
-                    >
-                      Quitar rango
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div ref={monthDropdownRef} style={{ position: 'relative', minWidth: 0 }}>
-                <span style={filterLabelStyle}>Meses</span>
-                <button
-                  type="button"
-                  disabled={!availableMonths.length}
-                  onClick={() => (monthsPanelOpen ? setMonthsPanelOpen(false) : openMonthsPanel())}
-                  style={{
-                    ...filterInputStyle,
-                    textAlign: 'left',
-                    cursor: !availableMonths.length ? 'not-allowed' : 'pointer',
-                    opacity: !availableMonths.length ? 0.55 : 1,
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'space-between',
-                    gap: 8,
-                  }}
-                >
-                  <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {appliedPeriodLabel}
-                  </span>
-                  <span style={{ opacity: 0.55, flexShrink: 0 }}>{monthsPanelOpen ? '▲' : '▼'}</span>
-                </button>
-                {monthsPanelOpen ? (
-                  <div
-                    style={{
-                      position: 'absolute',
-                      right: 0,
-                      left: 0,
-                      top: '100%',
-                      marginTop: 6,
-                      minWidth: 260,
-                      maxHeight: 320,
-                      overflowY: 'auto',
-                      background: ds.bgCard,
-                      border: `1px solid ${ds.borderCard}`,
-                      borderRadius: 10,
-                      boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-                      zIndex: 20,
-                      padding: '12px 14px',
-                    }}
-                  >
-                    <div style={{ fontSize: 12, color: ds.textMuted, marginBottom: 10 }}>
-                      Selecciona uno o varios meses (calendario tienda)
-                    </div>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-                      {availableMonths.map((ym) => (
-                        <label
-                          key={ym}
-                          style={{
-                            display: 'flex',
-                            alignItems: 'center',
-                            gap: 10,
-                            fontSize: 14,
-                            color: ds.textPrimary,
-                            cursor: 'pointer',
-                          }}
-                        >
-                          <input
-                            type="checkbox"
-                            checked={pendingMonths.includes(ym)}
-                            onChange={() => togglePendingMonth(ym)}
-                          />
-                          <span style={{ textTransform: 'capitalize' }}>{formatMonthLabel(ym)}</span>
-                        </label>
-                      ))}
-                    </div>
-                    <div style={{ display: 'flex', gap: 8, marginTop: 14, justifyContent: 'flex-end' }}>
-                      <button
-                        type="button"
-                        onClick={() => setMonthsPanelOpen(false)}
-                        style={{
-                          padding: '6px 12px',
-                          borderRadius: 8,
-                          border: `1px solid ${ds.borderCard}`,
-                          background: ds.bgSubtle,
-                          fontSize: 13,
-                          cursor: 'pointer',
-                        }}
-                      >
-                        Cancelar
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => applyMonthFilter()}
-                        disabled={pendingMonths.length === 0}
-                        style={{
-                          padding: '6px 14px',
-                          borderRadius: 8,
-                          border: 'none',
-                          background: ds.brand,
-                          color: '#fff',
-                          fontWeight: 600,
-                          fontSize: 13,
-                          cursor: pendingMonths.length === 0 ? 'not-allowed' : 'pointer',
-                          opacity: pendingMonths.length === 0 ? 0.5 : 1,
-                        }}
-                      >
-                        Aplicar
-                      </button>
-                    </div>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-          </div>
-
-          {seriesError ? (
-            <p style={{ color: ds.dangerText, fontSize: 14, marginBottom: 12 }}>{seriesError}</p>
-          ) : null}
-
-          {seriesData?.warning ? (
-            <p
-              style={{
-                margin: '0 0 12px',
-                padding: '10px 12px',
-                borderRadius: 10,
-                background: ds.warningBg,
-                color: ds.warningText,
-                fontSize: 13,
-                lineHeight: 1.45,
-              }}
-            >
-              {seriesData.warning}
-            </p>
-          ) : null}
-
-          {seriesMetaNote ? (
-            <p style={{ margin: '0 0 12px', fontSize: 12, color: ds.textHint }}>Meta (tabla): {seriesMetaNote}</p>
-          ) : null}
-          {selectedProductId ? (
-            <p
-              style={{
-                margin: '0 0 12px',
-                padding: '10px 12px',
-                borderRadius: 10,
-                background: ds.bgSubtle,
-                color: ds.textSecondary,
-                fontSize: 12,
-                lineHeight: 1.45,
-                border: `1px solid ${ds.borderCard}`,
-              }}
-            >
-              Producto filtrado activo: el gasto Meta del día se prorratea por la participación de ventas despachadas
-              del producto en ese día. La tabla superior sigue mostrando todos los productos del rango.
-            </p>
-          ) : null}
-
-          <div
-            style={{
-              ...cardBase,
-              padding: 0,
-              overflow: 'hidden',
-              border: '1px solid #6c47ff',
-            }}
-          >
-            {seriesLoading ? (
-              <div style={{ padding: 24, textAlign: 'center', color: ds.textMuted, fontSize: 14 }}>
-                Cargando tabla…
-              </div>
-            ) : daysInRange.length === 0 ? (
-              <div style={{ padding: 24, textAlign: 'center', color: ds.textMuted, fontSize: 14 }}>
-                No hay días en el rango seleccionado.
-              </div>
-            ) : (
-              <div style={{ overflowX: 'auto' }}>
-                <table style={tableStyle}>
-                  <thead>
-                    <tr style={{ background: '#6c47ff' }}>
-                      <th style={thColHeadLeft}>
-                        <span style={{ whiteSpace: 'nowrap' }}>Día</span>
-                      </th>
-                      <th style={thColHeadVentasDespachadas}>
-                        <GananciaThStack parts={['Ventas', 'despachadas']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Ventas', 'entregadas']} />
-                      </th>
-                      <th style={thColHeadPedidos}>
-                        <span style={{ whiteSpace: 'nowrap' }}>Pedidos</span>
-                      </th>
-                      <th style={thColHeadCantidad}>
-                        <GananciaThStack parts={['Cantidad', 'producto']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Gasto', 'admon']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Costo', 'producto']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Costo', 'entregado']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['% Costo', 'del producto']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Flete', 'promedio']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['%', 'Flete']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['Gasto', 'Publicitario']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['%', 'Publicidad']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <span style={{ whiteSpace: 'nowrap' }}>Utilidad</span>
-                      </th>
-                      <th style={thColHeadRight}>
-                        <span style={{ whiteSpace: 'nowrap' }}>ROAS</span>
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['ROAS', 'Real']} />
-                      </th>
-                      <th style={thColHeadRight}>
-                        <GananciaThStack parts={['ROAS', 'Equilibrio']} />
-                      </th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {daysInRange.map((row) => {
-                      const ventasEntregadasRow = row.ventas_entregadas_total || row.ventas_despachadas_total || 0;
-                      const costoProductoEntregadoRow =
-                        row.costo_producto_entregado_total || row.costo_producto_total || 0;
-                      const gastoMetaRow = row.gasto_publicitario_total || 0;
-                      const gastoAdminRow = ventasEntregadasRow * (adminPercent / 100);
-                      const roasRow = gastoMetaRow > 0 ? row.ventas_despachadas_total / gastoMetaRow : null;
-                      const roasRealRow = gastoMetaRow > 0 ? ventasEntregadasRow / gastoMetaRow : null;
-                      const roasEquilibrioRow =
-                        gastoMetaRow > 0
-                          ? (costoProductoEntregadoRow + (row.costo_flete_promedio_total || 0) + gastoAdminRow) /
-                            gastoMetaRow
-                          : null;
-                      const utilidadRow = utilidadMostradaPorDia(row, comparable, adminPercent);
-                      const rowBg =
-                        utilidadRow == null
-                          ? 'transparent'
-                          : utilidadRow < 0
-                            ? '#fecaca'
-                            : utilidadRow > 0
-                              ? '#bbf7d0'
-                              : 'transparent';
-                      return (
-                        <tr key={row.date} style={rowBg !== 'transparent' ? { background: rowBg } : undefined}>
-                          <td style={tdColLeft}>{formatTableDate(row.date)}</td>
-                        <td style={tdColVentasDespachadas}>
-                          {formatMoney(row.ventas_despachadas_total, seriesVentasCur)}
-                        </td>
-                        <td style={tdColRight}>
-                          {formatMoney(ventasEntregadasRow, seriesVentasCur)}
-                        </td>
-                        <td style={tdColPedidos}>
-                          {row.ventas_despachadas_pedidos}
-                        </td>
-                        <td style={tdColRight}>
-                          {Number(row.cantidad_producto_total || 0).toLocaleString('es-CO')}
-                        </td>
-                        <td style={tdColRight}>
-                          {formatMoney(ventasEntregadasRow * (adminPercent / 100), seriesVentasCur)}
-                        </td>
-                        <td style={tdColRight}>
-                          {formatMoney(row.costo_producto_total || 0, seriesVentasCur)}
-                        </td>
-                        <td style={tdColRight}>
-                          {formatMoney(costoProductoEntregadoRow, seriesVentasCur)}
-                        </td>
-                        <td style={tdColRight}>
-                          {formatPercent(costoProductoEntregadoRow, ventasEntregadasRow)}
-                        </td>
-                        <td style={tdColRight}>
-                          {formatMoney(row.costo_flete_promedio_total || 0, seriesVentasCur)}
-                        </td>
-                        <td style={tdColRight}>
-                          {formatPercent(row.costo_flete_promedio_total || 0, ventasEntregadasRow)}
-                        </td>
-                        <td style={tdColRight}>
-                          {formatMoney(gastoMetaRow, seriesMetaCur || seriesVentasCur)}
-                        </td>
-                        <td style={tdColRight}>
-                          {formatPercent(gastoMetaRow, row.ventas_despachadas_total || 0)}
-                        </td>
-                        <td style={tdColRight}>
-                          {utilidadRow != null && Number.isFinite(utilidadRow)
-                            ? formatMoney(utilidadRow, seriesVentasCur)
-                            : '—'}
-                        </td>
-                        <td style={tdColRight}>{formatRoas(roasRow)}</td>
-                        <td style={tdColRight}>{formatRoas(roasRealRow)}</td>
-                        <td style={tdColRight}>{formatRoas(roasEquilibrioRow)}</td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr style={{ background: ds.bgSubtle }}>
-                      <td style={{ ...tdColLeft, fontWeight: 700 }}>Total período</td>
-                      <td style={{ ...tdColVentasDespachadas, fontWeight: 700 }}>
-                        {formatMoney(totals.ventas, seriesVentasCur)}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatMoney(totals.ventasEntregadas, seriesVentasCur)}
-                      </td>
-                      <td style={{ ...tdColPedidos, fontWeight: 700 }}>
-                        {totals.pedidos}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {Number(totals.cantidadProducto || 0).toLocaleString('es-CO')}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatMoney(totals.gastoAdministrativo, seriesVentasCur)}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatMoney(totals.costoProducto, seriesVentasCur)}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatMoney(totals.costoProductoEntregado, seriesVentasCur)}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatPercent(totals.costoProductoEntregado, totals.ventasEntregadas)}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatMoney(totals.costoFletePromedio, seriesVentasCur)}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatPercent(totals.costoFletePromedio, totals.ventasEntregadas)}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatMoney(totals.gasto, seriesMetaCur || seriesVentasCur)}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatPercent(totals.gasto, totals.ventas)}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {totals.utilidad != null ? formatMoney(totals.utilidad, seriesVentasCur) : '—'}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatRoas(totals.gasto > 0 ? totals.ventas / totals.gasto : null)}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatRoas(totals.gasto > 0 ? totals.ventasEntregadas / totals.gasto : null)}
-                      </td>
-                      <td style={{ ...tdColRight, fontWeight: 700 }}>
-                        {formatRoas(
-                          totals.gasto > 0
-                            ? (totals.costoProductoEntregado + totals.costoFletePromedio + totals.gastoAdministrativo) /
-                                totals.gasto
-                            : null,
-                        )}
-                      </td>
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            )}
-          </div>
-        </>
-      ) : null}
-    </div>
+    <GananciaDiariaDashboardView
+      seriesLoading={seriesLoading}
+      seriesError={seriesError}
+      seriesData={seriesData}
+      seriesVentasCur={seriesVentasCur}
+      seriesMetaCur={seriesMetaCur}
+      comparable={comparable}
+      adminPercent={adminPercent}
+      adminPercentInput={adminPercentInput}
+      setAdminPercentInput={setAdminPercentInput}
+      goalPctInput={goalPctInput}
+      setGoalPctInput={setGoalPctInput}
+      goalPct={goalPct}
+      selectedProductId={selectedProductId}
+      setSelectedProductId={setSelectedProductId}
+      availableProducts={availableProducts}
+      availableMonths={availableMonths}
+      appliedPeriodLabel={appliedPeriodLabel}
+      monthsPanelOpen={monthsPanelOpen}
+      setMonthsPanelOpen={setMonthsPanelOpen}
+      pendingMonths={pendingMonths}
+      togglePendingMonth={togglePendingMonth}
+      applyMonthFilter={applyMonthFilter}
+      openMonthsPanel={openMonthsPanel}
+      monthDropdownRef={monthDropdownRef}
+      dayKeys={dayKeys}
+      daysInRange={daysInRange}
+      daysForTable={daysForTable}
+      daysInRangeAllProducts={daysInRangeAllProducts}
+      prevPeriodDays={prevPeriodDays}
+      prevPeriodDaysAllProducts={prevPeriodDaysAllProducts}
+      productAnalysisRows={productAnalysisRows}
+      totals={totals}
+      prevTotals={prevTotals}
+      selectedRangeDates={selectedRangeDates}
+      rangeSliderTrackRef={rangeSliderTrackRef}
+      startPercent={startPercent}
+      endPercent={endPercent}
+      effectiveRangeIdx={effectiveRangeIdx}
+      maxRangeIdx={maxRangeIdx}
+      draggingRangeThumb={draggingRangeThumb}
+      setDraggingRangeThumb={setDraggingRangeThumb}
+      updateRangeThumbAtClientX={updateRangeThumbAtClientX}
+      setRangeStartIdx={setRangeStartIdx}
+      setRangeEndIdx={setRangeEndIdx}
+      ayerTargetYmd={ayerTargetYmd}
+      applyRangeAyer={applyRangeAyer}
+      applyRangeEsteAno={applyRangeEsteAno}
+      rangeQuickPreset={rangeQuickPreset}
+      isFullRange={isFullRange}
+      seriesMetaNote={seriesMetaNote}
+      loadSeries={loadSeries}
+      formatMoney={formatMoney}
+      formatRoas={formatRoas}
+      formatPercent={formatPercent}
+      formatTableDate={formatTableDate}
+      formatMonthLabel={formatMonthLabel}
+      utilidadMostradaPorDia={utilidadMostradaPorDia}
+    />
   );
 }
