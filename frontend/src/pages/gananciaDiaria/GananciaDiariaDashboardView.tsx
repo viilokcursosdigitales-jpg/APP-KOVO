@@ -100,6 +100,98 @@ const tdStyle: CSSProperties = {
 
 const tdRight: CSSProperties = { ...tdStyle, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
 
+/* Detalle diario — tabla compacta con columnas fijas */
+const DAILY_TABLE_MAX_HEIGHT = 380;
+const DAILY_STICKY_SHADOW = '4px 0 12px -4px rgba(15, 23, 42, 0.12)';
+const DAILY_COL_DAY_W = 122;
+const DAILY_COL_GANANCIA_W = 96;
+const DAILY_COL_UNIT_W = 104;
+const DAILY_COL_GANANCIA_L = DAILY_COL_DAY_W;
+const DAILY_COL_UNIT_L = DAILY_COL_DAY_W + DAILY_COL_GANANCIA_W;
+
+const dailyThBase: CSSProperties = {
+  textAlign: 'left',
+  fontSize: 10,
+  fontWeight: 600,
+  color: ds.textMuted,
+  padding: '7px 10px',
+  borderBottom: `1px solid ${ds.borderRow}`,
+  whiteSpace: 'nowrap',
+  background: ds.bgSubtle,
+};
+
+const dailyThRight: CSSProperties = { ...dailyThBase, textAlign: 'right' };
+
+const dailyTdBase: CSSProperties = {
+  fontSize: 12,
+  color: ds.textPrimary,
+  padding: '7px 10px',
+  borderBottom: `1px solid ${ds.borderRow}`,
+  verticalAlign: 'middle',
+};
+
+const dailyTdRight: CSSProperties = { ...dailyTdBase, textAlign: 'right', fontVariantNumeric: 'tabular-nums' };
+
+function dailyStickyTh(
+  left: number,
+  width: number,
+  zIndex: number,
+  base: CSSProperties,
+  lastSticky: boolean,
+): CSSProperties {
+  return {
+    ...base,
+    position: 'sticky',
+    top: 0,
+    left,
+    zIndex,
+    minWidth: width,
+    width,
+    maxWidth: width,
+    boxShadow: lastSticky ? `${DAILY_STICKY_SHADOW}, 0 1px 0 ${ds.borderRow}` : `0 1px 0 ${ds.borderRow}`,
+  };
+}
+
+function dailyStickyTd(
+  left: number,
+  width: number,
+  zIndex: number,
+  base: CSSProperties,
+  bg: string,
+  lastSticky: boolean,
+): CSSProperties {
+  return {
+    ...base,
+    position: 'sticky',
+    left,
+    zIndex,
+    minWidth: width,
+    width,
+    maxWidth: width,
+    background: bg,
+    boxShadow: lastSticky ? DAILY_STICKY_SHADOW : undefined,
+  };
+}
+
+function dailyThTop(base: CSSProperties): CSSProperties {
+  return {
+    ...base,
+    position: 'sticky',
+    top: 0,
+    zIndex: 3,
+    background: ds.bgSubtle,
+    boxShadow: `0 1px 0 ${ds.borderRow}`,
+  };
+}
+
+function setDailyRowHover(tr: HTMLTableRowElement, hover: boolean) {
+  const bg = hover ? ds.bgSubtle : ds.bgCard;
+  tr.style.background = bg;
+  tr.querySelectorAll('td').forEach((cell) => {
+    (cell as HTMLTableCellElement).style.background = bg;
+  });
+}
+
 /* ─── Sub-components ─── */
 
 function Sparkline({
@@ -159,6 +251,121 @@ function EstadoBadge({ estado }: { estado: EnrichedProductRow['estado'] }) {
     >
       {estadoLabel(estado)}
     </span>
+  );
+}
+
+function formatChartDayLabel(iso: string): string {
+  const p = iso.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!p) return iso;
+  return `${parseInt(p[3], 10)}/${parseInt(p[2], 10)}`;
+}
+
+function DailyUtilidadBarChart({
+  days,
+  utilidadForDay,
+  fmt,
+  formatTableDate,
+}: {
+  days: SeriesDayRow[];
+  utilidadForDay: (row: SeriesDayRow) => number | null;
+  fmt: (n: number) => string;
+  formatTableDate: (iso: string) => string;
+}) {
+  const chartPoints = useMemo(() => {
+    const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
+    return sorted
+      .map((row) => ({
+        date: row.date,
+        utilidad: utilidadForDay(row),
+      }))
+      .filter((d): d is { date: string; utilidad: number } => d.utilidad != null && Number.isFinite(d.utilidad));
+  }, [days, utilidadForDay]);
+
+  if (!chartPoints.length) {
+    return (
+      <div
+        style={{
+          padding: '12px 18px',
+          borderBottom: `1px solid ${ds.borderRow}`,
+          color: ds.textMuted,
+          fontSize: 12,
+        }}
+      >
+        Sin datos de utilidad para graficar en este rango.
+      </div>
+    );
+  }
+
+  const values = chartPoints.map((d) => d.utilidad);
+  const maxVal = Math.max(...values, 0);
+  const minVal = Math.min(...values, 0);
+  const range = maxVal - minVal || Math.max(Math.abs(maxVal), Math.abs(minVal), 1);
+
+  const chartH = 180;
+  const barSlot = 28;
+  const padL = 68;
+  const padR = 12;
+  const padT = 12;
+  const padB = 36;
+  const plotH = chartH - padT - padB;
+  const chartW = padL + padR + chartPoints.length * barSlot;
+
+  const valueToY = (v: number) => padT + ((maxVal - v) / range) * plotH;
+  const zeroY = valueToY(0);
+
+  const yTicks = [...new Set([maxVal, minVal, ...(minVal < 0 && maxVal > 0 ? [0] : [])])].sort((a, b) => b - a);
+
+  return (
+    <div style={{ padding: '12px 18px', borderBottom: `1px solid ${ds.borderRow}` }}>
+      <div style={{ fontSize: 12, fontWeight: 600, color: ds.textSecondary, marginBottom: 8 }}>
+        Utilidad neta por día
+      </div>
+      <div style={{ overflowX: 'auto' }}>
+        <svg width={chartW} height={chartH} viewBox={`0 0 ${chartW} ${chartH}`} style={{ display: 'block' }}>
+          {yTicks.map((tick) => {
+            const y = valueToY(tick);
+            return (
+              <g key={`tick-${tick}`}>
+                <line
+                  x1={padL}
+                  y1={y}
+                  x2={chartW - padR}
+                  y2={y}
+                  stroke={tick === 0 ? ds.textHint : ds.borderRow}
+                  strokeWidth={tick === 0 ? 1.25 : 1}
+                  strokeDasharray={tick === 0 ? undefined : '4 4'}
+                />
+                <text x={padL - 8} y={y + 4} fontSize={10} fill={ds.textMuted} textAnchor="end">
+                  {fmt(Math.round(tick))}
+                </text>
+              </g>
+            );
+          })}
+
+          {chartPoints.map((d, i) => {
+            const v = d.utilidad;
+            const x = padL + i * barSlot + 5;
+            const barW = barSlot - 10;
+            const yVal = valueToY(v);
+            const yTop = Math.min(zeroY, yVal);
+            const barH = v === 0 ? 0 : Math.max(Math.abs(yVal - zeroY), 2);
+            const color = v >= 0 ? '#059669' : '#dc2626';
+            return (
+              <g key={d.date}>
+                {barH > 0 ? (
+                  <rect x={x} y={yTop} width={barW} height={barH} fill={color} rx={4} opacity={0.92}>
+                    <title>{`${formatTableDate(d.date)}: ${fmt(v)}`}</title>
+                  </rect>
+                ) : null}
+                <text x={x + barW / 2} y={chartH - 10} fontSize={9} fill={ds.textMuted} textAnchor="middle">
+                  {formatChartDayLabel(d.date)}
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
+    </div>
   );
 }
 
@@ -590,8 +797,7 @@ export type GananciaDiariaDashboardViewProps = {
   setRangeEndIdx: (v: number | ((p: number) => number)) => void;
   ayerTargetYmd: string | null;
   applyRangeAyer: () => void;
-  applyRangeEsteAno: () => void;
-  rangeQuickPreset: 'ayer' | 'este_ano' | null;
+  rangeQuickPreset: 'ayer' | null;
   isFullRange: boolean;
   seriesMetaNote: string | null;
   loadSeries: (options?: { force?: boolean }) => Promise<void>;
@@ -656,7 +862,6 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
     setRangeEndIdx,
     ayerTargetYmd,
     applyRangeAyer,
-    applyRangeEsteAno,
     rangeQuickPreset,
     isFullRange,
     seriesMetaNote,
@@ -999,14 +1204,6 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                 </button>
                 <button
                   type="button"
-                  disabled={dayKeys.length === 0}
-                  onClick={applyRangeEsteAno}
-                  style={quickRangeButtonStyle(rangeQuickPreset === 'este_ano', dayKeys.length === 0)}
-                >
-                  Este año
-                </button>
-                <button
-                  type="button"
                   disabled={dayKeys.length === 0 || isFullRange}
                   onClick={() => {
                     if (dayKeys.length === 0) return;
@@ -1101,13 +1298,13 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
 
           <div
             style={{
-              display: 'flex',
-              flexWrap: 'wrap-reverse',
+              display: 'grid',
+              gridTemplateColumns: 'minmax(0, 1fr) minmax(260px, 300px)',
               gap: 24,
-              alignItems: 'flex-start',
+              alignItems: 'start',
             }}
           >
-            <div style={{ flex: '1 1 640px', minWidth: 0 }}>
+            <div style={{ minWidth: 0 }}>
               {/* KPIs */}
               <div
                 style={{
@@ -1404,47 +1601,84 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
 
               {/* Daily detail */}
               <div style={{ ...dashboardCard, padding: 0, overflow: 'hidden' }}>
-                <div style={{ padding: '18px 22px', borderBottom: `1px solid ${ds.borderRow}` }}>
-                  <h2 style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>
+                <div style={{ padding: '12px 18px', borderBottom: `1px solid ${ds.borderRow}` }}>
+                  <h2 style={{ margin: 0, fontSize: 16, fontWeight: 700 }}>
                     Detalle diario{selectedProductLabel ? ` — ${selectedProductLabel}` : ''}
                   </h2>
-                  <p style={{ margin: '4px 0 0', fontSize: 12, color: ds.textMuted }}>
+                  <p style={{ margin: '2px 0 0', fontSize: 11, color: ds.textMuted }}>
                     {daysInRange.length} día{daysInRange.length === 1 ? '' : 's'} en el rango
                     {daysInRange.length !== daysForTable.length
                       ? ` (de ${daysForTable.length} cargados)`
                       : ''}
                   </p>
                 </div>
+                {!seriesLoading && daysInRange.length > 0 ? (
+                  <DailyUtilidadBarChart
+                    days={daysInRange}
+                    utilidadForDay={(row) => utilidadMostradaPorDia(row, comparable, adminPercent)}
+                    fmt={fmt}
+                    formatTableDate={formatTableDate}
+                  />
+                ) : null}
                 {seriesLoading ? (
-                  <div style={{ padding: 32, textAlign: 'center', color: ds.textMuted }}>Cargando tabla…</div>
+                  <div style={{ padding: 20, textAlign: 'center', color: ds.textMuted, fontSize: 13 }}>
+                    Cargando tabla…
+                  </div>
                 ) : daysInRange.length === 0 ? (
-                  <div style={{ padding: 32, textAlign: 'center', color: ds.textMuted }}>
+                  <div style={{ padding: 20, textAlign: 'center', color: ds.textMuted, fontSize: 13 }}>
                     No hay días en el rango seleccionado.
                   </div>
                 ) : (
-                  <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1200 }}>
+                  <div
+                    style={{
+                      overflowX: 'auto',
+                      overflowY: 'auto',
+                      maxHeight: DAILY_TABLE_MAX_HEIGHT,
+                      WebkitOverflowScrolling: 'touch',
+                    }}
+                  >
+                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
                       <thead>
                         <tr>
-                          <th style={thStyle}>Día</th>
-                          <th style={thRight}>Ventas despachadas</th>
-                          <th style={thRight}>Ventas entregadas</th>
-                          <th style={thRight}>Pedidos</th>
-                          <th style={thRight}>Cantidad</th>
-                          <th style={thRight}>Gasto admon</th>
-                          <th style={thRight}>Costo producto</th>
-                          <th style={thRight}>Costo entregado</th>
-                          <th style={thRight}>% Costo prod.</th>
-                          <th style={thRight}>Flete promedio</th>
-                          <th style={thRight}>% Flete</th>
-                          <th style={thRight}>Gasto publicitario</th>
-                          <th style={thRight}>% Publicidad</th>
-                          <th style={thRight}>Utilidad neta</th>
-                          <th style={thRight}>Utilidad unitaria</th>
-                          <th style={thRight}>ROAS</th>
-                          <th style={thRight}>ROAS real</th>
-                          <th style={thRight}>ROAS equilibrio</th>
-                          <th style={thStyle}>Estado</th>
+                          <th style={dailyStickyTh(0, DAILY_COL_DAY_W, 13, dailyThBase, false)}>Día</th>
+                          <th
+                            style={dailyStickyTh(
+                              DAILY_COL_GANANCIA_L,
+                              DAILY_COL_GANANCIA_W,
+                              12,
+                              dailyThRight,
+                              false,
+                            )}
+                          >
+                            Ganancia
+                          </th>
+                          <th
+                            style={dailyStickyTh(
+                              DAILY_COL_UNIT_L,
+                              DAILY_COL_UNIT_W,
+                              11,
+                              dailyThRight,
+                              true,
+                            )}
+                          >
+                            Utilidad unitaria
+                          </th>
+                          <th style={dailyThTop(dailyThRight)}>Ventas despachadas</th>
+                          <th style={dailyThTop(dailyThRight)}>Ventas entregadas</th>
+                          <th style={dailyThTop(dailyThRight)}>Pedidos</th>
+                          <th style={dailyThTop(dailyThRight)}>Cantidad</th>
+                          <th style={dailyThTop(dailyThRight)}>Gasto admon</th>
+                          <th style={dailyThTop(dailyThRight)}>Costo producto</th>
+                          <th style={dailyThTop(dailyThRight)}>Costo entregado</th>
+                          <th style={dailyThTop(dailyThRight)}>% Costo prod.</th>
+                          <th style={dailyThTop(dailyThRight)}>Flete promedio</th>
+                          <th style={dailyThTop(dailyThRight)}>% Flete</th>
+                          <th style={dailyThTop(dailyThRight)}>Gasto publicitario</th>
+                          <th style={dailyThTop(dailyThRight)}>% Publicidad</th>
+                          <th style={dailyThTop(dailyThRight)}>ROAS</th>
+                          <th style={dailyThTop(dailyThRight)}>ROAS real</th>
+                          <th style={dailyThTop(dailyThRight)}>ROAS equilibrio</th>
+                          <th style={dailyThTop(dailyThBase)}>Estado</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -1468,53 +1702,55 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                           const dayEstado = classifyDayEstado(utilidadRow, ventasEntregadasRow, goalPct);
                           const utilidadUnitStyle: CSSProperties =
                             utilidadUnitRow == null
-                              ? tdRight
+                              ? dailyTdRight
                               : utilidadUnitRow < 0
-                                ? { ...tdRight, color: '#dc2626', fontWeight: 700 }
-                                : { ...tdRight, color: '#059669', fontWeight: 700 };
+                                ? { ...dailyTdRight, color: '#dc2626', fontWeight: 700 }
+                                : { ...dailyTdRight, color: '#059669', fontWeight: 700 };
                           const utilidadStyle: CSSProperties =
                             utilidadRow == null
-                              ? tdRight
+                              ? dailyTdRight
                               : utilidadRow < 0
-                                ? { ...tdRight, color: '#dc2626', fontWeight: 600 }
+                                ? { ...dailyTdRight, color: '#dc2626', fontWeight: 600 }
                                 : utilidadRow > 0
-                                  ? { ...tdRight, color: '#059669', fontWeight: 600 }
-                                  : tdRight;
+                                  ? { ...dailyTdRight, color: '#059669', fontWeight: 600 }
+                                  : dailyTdRight;
+                          const rowBg = ds.bgCard;
 
                           return (
                             <tr
                               key={row.date}
-                              style={{ background: ds.bgCard, transition: 'background 0.12s ease' }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.background = ds.bgSubtle;
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.background = ds.bgCard;
-                              }}
+                              style={{ background: rowBg, transition: 'background 0.12s ease' }}
+                              onMouseEnter={(e) => setDailyRowHover(e.currentTarget, true)}
+                              onMouseLeave={(e) => setDailyRowHover(e.currentTarget, false)}
                             >
-                              <td style={{ ...tdStyle, fontWeight: 600 }}>{formatTableDate(row.date)}</td>
-                              <td style={tdRight}>{fmt(row.ventas_despachadas_total)}</td>
-                              <td style={tdRight}>{fmt(ventasEntregadasRow)}</td>
-                              <td style={tdRight}>{row.ventas_despachadas_pedidos}</td>
-                              <td style={tdRight}>{Number(qty).toLocaleString('es-CO')}</td>
-                              <td style={tdRight}>{fmt(gastoAdminRow)}</td>
-                              <td style={tdRight}>{fmt(row.costo_producto_total || 0)}</td>
-                              <td style={tdRight}>{fmt(costoProductoEntregadoRow)}</td>
-                              <td style={tdRight}>{formatPercent(costoProductoEntregadoRow, ventasEntregadasRow)}</td>
-                              <td style={tdRight}>{fmt(row.costo_flete_promedio_total || 0)}</td>
-                              <td style={tdRight}>{formatPercent(row.costo_flete_promedio_total || 0, ventasEntregadasRow)}</td>
-                              <td style={tdRight}>{formatMoney(gastoMetaRow, seriesMetaCur || seriesVentasCur)}</td>
-                              <td style={tdRight}>{formatPercent(gastoMetaRow, row.ventas_despachadas_total || 0)}</td>
-                              <td style={utilidadStyle}>
+                              <td
+                                style={dailyStickyTd(0, DAILY_COL_DAY_W, 3, dailyTdBase, rowBg, false)}
+                                title={formatTableDate(row.date)}
+                              >
+                                <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{formatTableDate(row.date)}</span>
+                              </td>
+                              <td style={dailyStickyTd(DAILY_COL_GANANCIA_L, DAILY_COL_GANANCIA_W, 4, utilidadStyle, rowBg, false)}>
                                 {utilidadRow != null ? fmt(utilidadRow) : '—'}
                               </td>
-                              <td style={utilidadUnitStyle}>
+                              <td style={dailyStickyTd(DAILY_COL_UNIT_L, DAILY_COL_UNIT_W, 5, utilidadUnitStyle, rowBg, true)}>
                                 {utilidadUnitRow != null ? fmt(utilidadUnitRow) : '—'}
                               </td>
-                              <td style={tdRight}>{formatRoas(roasRow)}</td>
-                              <td style={tdRight}>{formatRoas(roasRealRow)}</td>
-                              <td style={tdRight}>{formatRoas(roasEquilibrioRow)}</td>
-                              <td style={tdStyle}>
+                              <td style={dailyTdRight}>{fmt(row.ventas_despachadas_total)}</td>
+                              <td style={dailyTdRight}>{fmt(ventasEntregadasRow)}</td>
+                              <td style={dailyTdRight}>{row.ventas_despachadas_pedidos}</td>
+                              <td style={dailyTdRight}>{Number(qty).toLocaleString('es-CO')}</td>
+                              <td style={dailyTdRight}>{fmt(gastoAdminRow)}</td>
+                              <td style={dailyTdRight}>{fmt(row.costo_producto_total || 0)}</td>
+                              <td style={dailyTdRight}>{fmt(costoProductoEntregadoRow)}</td>
+                              <td style={dailyTdRight}>{formatPercent(costoProductoEntregadoRow, ventasEntregadasRow)}</td>
+                              <td style={dailyTdRight}>{fmt(row.costo_flete_promedio_total || 0)}</td>
+                              <td style={dailyTdRight}>{formatPercent(row.costo_flete_promedio_total || 0, ventasEntregadasRow)}</td>
+                              <td style={dailyTdRight}>{formatMoney(gastoMetaRow, seriesMetaCur || seriesVentasCur)}</td>
+                              <td style={dailyTdRight}>{formatPercent(gastoMetaRow, row.ventas_despachadas_total || 0)}</td>
+                              <td style={dailyTdRight}>{formatRoas(roasRow)}</td>
+                              <td style={dailyTdRight}>{formatRoas(roasRealRow)}</td>
+                              <td style={dailyTdRight}>{formatRoas(roasEquilibrioRow)}</td>
+                              <td style={dailyTdBase}>
                                 <EstadoBadge estado={dayEstado} />
                               </td>
                             </tr>
@@ -1523,22 +1759,52 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                       </tbody>
                       <tfoot>
                         <tr style={{ background: ds.bgSubtle }}>
-                          <td style={{ ...tdStyle, fontWeight: 700 }}>Total período</td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>{fmt(totals.ventas)}</td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>{fmt(totals.ventasEntregadas)}</td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>{totals.pedidos}</td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td
+                            style={dailyStickyTd(0, DAILY_COL_DAY_W, 3, { ...dailyTdBase, fontWeight: 700 }, ds.bgSubtle, false)}
+                          >
+                            Total período
+                          </td>
+                          <td
+                            style={dailyStickyTd(
+                              DAILY_COL_GANANCIA_L,
+                              DAILY_COL_GANANCIA_W,
+                              4,
+                              { ...dailyTdRight, fontWeight: 700 },
+                              ds.bgSubtle,
+                              false,
+                            )}
+                          >
+                            {totals.utilidadNeta != null ? fmt(totals.utilidadNeta) : '—'}
+                          </td>
+                          <td
+                            style={dailyStickyTd(
+                              DAILY_COL_UNIT_L,
+                              DAILY_COL_UNIT_W,
+                              5,
+                              { ...dailyTdRight, fontWeight: 700 },
+                              ds.bgSubtle,
+                              true,
+                            )}
+                          >
+                            {totals.utilidadNeta != null && totals.cantidadProducto > 0
+                              ? fmt(Math.round((totals.utilidadNeta / totals.cantidadProducto) * 100) / 100)
+                              : '—'}
+                          </td>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>{fmt(totals.ventas)}</td>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>{fmt(totals.ventasEntregadas)}</td>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>{totals.pedidos}</td>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {Number(totals.cantidadProducto || 0).toLocaleString('es-CO')}
                           </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {fmt(totals.ventasEntregadas * (adminPercent / 100))}
                           </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {fmt(
                               daysInRange.reduce((s, r) => s + (r.costo_producto_total || 0), 0),
                             )}
                           </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {fmt(
                               daysInRange.reduce(
                                 (s, r) => s + (r.costo_producto_entregado_total || r.costo_producto_total || 0),
@@ -1546,7 +1812,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                               ),
                             )}
                           </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {formatPercent(
                               daysInRange.reduce(
                                 (s, r) => s + (r.costo_producto_entregado_total || r.costo_producto_total || 0),
@@ -1555,36 +1821,28 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                               totals.ventasEntregadas,
                             )}
                           </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {fmt(daysInRange.reduce((s, r) => s + (r.costo_flete_promedio_total || 0), 0))}
                           </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {formatPercent(
                               daysInRange.reduce((s, r) => s + (r.costo_flete_promedio_total || 0), 0),
                               totals.ventasEntregadas,
                             )}
                           </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {formatMoney(totals.gasto, seriesMetaCur || seriesVentasCur)}
                           </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {formatPercent(totals.gasto, totals.ventas)}
                           </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
-                            {totals.utilidadNeta != null ? fmt(totals.utilidadNeta) : '—'}
-                          </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
-                            {totals.utilidadNeta != null && totals.cantidadProducto > 0
-                              ? fmt(Math.round((totals.utilidadNeta / totals.cantidadProducto) * 100) / 100)
-                              : '—'}
-                          </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {formatRoas(totals.gasto > 0 ? totals.ventas / totals.gasto : null)}
                           </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {formatRoas(totals.gasto > 0 ? totals.ventasEntregadas / totals.gasto : null)}
                           </td>
-                          <td style={{ ...tdRight, fontWeight: 700 }}>
+                          <td style={{ ...dailyTdRight, fontWeight: 700 }}>
                             {formatRoas(
                               totals.gasto > 0
                                 ? (daysInRange.reduce(
@@ -1599,7 +1857,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                                 : null,
                             )}
                           </td>
-                          <td style={tdStyle} />
+                          <td style={dailyTdBase} />
                         </tr>
                       </tfoot>
                     </table>
@@ -1608,8 +1866,18 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
               </div>
             </div>
 
-            {/* Insights sidebar */}
-            <aside style={{ flex: '0 1 300px', width: '100%', maxWidth: 360, position: 'sticky', top: 16 }}>
+            {/* Insights sidebar — alineado con KPIs, fijo al hacer scroll */}
+            <aside
+              style={{
+                width: '100%',
+                maxWidth: 300,
+                position: 'sticky',
+                top: 16,
+                alignSelf: 'start',
+                maxHeight: 'calc(100vh - 32px)',
+                overflowY: 'auto',
+              }}
+            >
               <div style={{ ...dashboardCard, padding: '18px 16px' }}>
                 <div style={{ fontSize: 16, fontWeight: 700, marginBottom: 4 }}>Insights clave</div>
                 <p style={{ margin: '0 0 16px', fontSize: 12, color: ds.textMuted }}>

@@ -607,24 +607,10 @@ export default function GananciaDiariaPage() {
     setRangeEndIdx(idx);
   }, [dayKeys, ayerTargetYmd]);
 
-  const applyRangeEsteAno = useCallback(() => {
-    if (dayKeys.length === 0) return;
-    const year = new Date().getFullYear();
-    const yearStart = `${year}-01-01`;
-    const firstIdx = dayKeys.findIndex((d) => d >= yearStart);
-    setRangeStartIdx(firstIdx >= 0 ? firstIdx : 0);
-    setRangeEndIdx(dayKeys.length - 1);
-  }, [dayKeys]);
-
-  const rangeQuickPreset = useMemo((): 'ayer' | 'este_ano' | null => {
+  const rangeQuickPreset = useMemo((): 'ayer' | null => {
     if (dayKeys.length === 0) return null;
     const { start, end } = effectiveRangeIdx;
     if (ayerTargetYmd && start === end && dayKeys[start] === ayerTargetYmd) return 'ayer';
-    const year = new Date().getFullYear();
-    const yearStart = `${year}-01-01`;
-    const firstYearIdx = dayKeys.findIndex((d) => d >= yearStart);
-    const expectedFirst = firstYearIdx >= 0 ? firstYearIdx : 0;
-    if (start === expectedFirst && end === dayKeys.length - 1) return 'este_ano';
     return null;
   }, [dayKeys, effectiveRangeIdx, ayerTargetYmd]);
 
@@ -803,7 +789,6 @@ export default function GananciaDiariaPage() {
       setRangeEndIdx={setRangeEndIdx}
       ayerTargetYmd={ayerTargetYmd}
       applyRangeAyer={applyRangeAyer}
-      applyRangeEsteAno={applyRangeEsteAno}
       rangeQuickPreset={rangeQuickPreset}
       isFullRange={isFullRange}
       seriesMetaNote={seriesMetaNote}
