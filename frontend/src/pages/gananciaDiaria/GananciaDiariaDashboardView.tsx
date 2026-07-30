@@ -104,10 +104,12 @@ const tdRight: CSSProperties = { ...tdStyle, textAlign: 'right', fontVariantNume
 const DAILY_TABLE_MAX_HEIGHT = 380;
 const DAILY_STICKY_SHADOW = '4px 0 12px -4px rgba(15, 23, 42, 0.12)';
 const DAILY_COL_DAY_W = 122;
+const DAILY_COL_PCT_UNIT_ENT_W = 132;
 const DAILY_COL_GANANCIA_W = 96;
 const DAILY_COL_UNIT_W = 104;
-const DAILY_COL_GANANCIA_L = DAILY_COL_DAY_W;
-const DAILY_COL_UNIT_L = DAILY_COL_DAY_W + DAILY_COL_GANANCIA_W;
+const DAILY_COL_PCT_UNIT_ENT_L = DAILY_COL_DAY_W;
+const DAILY_COL_GANANCIA_L = DAILY_COL_DAY_W + DAILY_COL_PCT_UNIT_ENT_W;
+const DAILY_COL_UNIT_L = DAILY_COL_GANANCIA_L + DAILY_COL_GANANCIA_W;
 
 const dailyThBase: CSSProperties = {
   textAlign: 'left',
@@ -1472,12 +1474,14 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                     </div>
                   </div>
                   <div style={{ overflowX: 'auto' }}>
-                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
+                    <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1280 }}>
                       <thead>
                         <tr>
                           <th style={thStyle} />
                           <th style={thStyle}>Producto</th>
                           <th style={thRight}>Ventas despachadas</th>
+                          <th style={thRight}>Ventas entregadas</th>
+                          <th style={thRight}>Costos y gastos</th>
                           <th style={thRight}>Pedidos</th>
                           <th style={thRight}>Gasto publicitario</th>
                           <th style={thRight}>ROAS</th>
@@ -1502,6 +1506,8 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                               : row.utilidadUnitaria < 0
                                 ? { ...tdRight, color: '#dc2626', fontWeight: 700 }
                                 : { ...tdRight, color: '#059669', fontWeight: 700 };
+                          const costosYGastos =
+                            row.costoProductoEntregado + row.gastoAdmin + row.costoFlete;
                           return (
                             <tr
                               key={row.key}
@@ -1552,6 +1558,8 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                                 <MiniDelta value={row.ventasGrowthPct} />
                                 <Sparkline values={row.ventasSeries} />
                               </td>
+                              <td style={tdRight}>{fmt(row.ventasTotales)}</td>
+                              <td style={tdRight}>{fmt(costosYGastos)}</td>
                               <td style={tdRight}>{row.pedidos}</td>
                               <td style={tdRight}>
                                 <div>{fmt(row.gastoPublicitario)}</div>
@@ -1640,7 +1648,18 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                     <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 1100 }}>
                       <thead>
                         <tr>
-                          <th style={dailyStickyTh(0, DAILY_COL_DAY_W, 13, dailyThBase, false)}>Día</th>
+                          <th style={dailyStickyTh(0, DAILY_COL_DAY_W, 14, dailyThBase, false)}>Día</th>
+                          <th
+                            style={dailyStickyTh(
+                              DAILY_COL_PCT_UNIT_ENT_L,
+                              DAILY_COL_PCT_UNIT_ENT_W,
+                              13,
+                              dailyThRight,
+                              false,
+                            )}
+                          >
+                            % Utilidad Unitaria (Entregados)
+                          </th>
                           <th
                             style={dailyStickyTh(
                               DAILY_COL_GANANCIA_L,
@@ -1701,7 +1720,19 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                             utilidadRow != null && pedidosRow > 0
                               ? Math.round((utilidadRow / pedidosRow) * 100) / 100
                               : null;
+                          const pctUtilUnitEntregados =
+                            utilidadRow != null && ventasEntregadasRow > 0
+                              ? Math.round((utilidadRow / ventasEntregadasRow) * 10000) / 100
+                              : null;
                           const dayEstado = classifyDayEstado(utilidadRow, ventasEntregadasRow, goalPct);
+                          const pctUtilUnitEntStyle: CSSProperties =
+                            pctUtilUnitEntregados == null
+                              ? dailyTdRight
+                              : pctUtilUnitEntregados < 0
+                                ? { ...dailyTdRight, color: '#dc2626', fontWeight: 700 }
+                                : pctUtilUnitEntregados > 0
+                                  ? { ...dailyTdRight, color: '#059669', fontWeight: 700 }
+                                  : dailyTdRight;
                           const utilidadUnitStyle: CSSProperties =
                             utilidadUnitRow == null
                               ? dailyTdRight
@@ -1731,10 +1762,22 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                               >
                                 <span style={{ fontWeight: 600, whiteSpace: 'nowrap' }}>{formatTableDate(row.date)}</span>
                               </td>
-                              <td style={dailyStickyTd(DAILY_COL_GANANCIA_L, DAILY_COL_GANANCIA_W, 4, utilidadStyle, rowBg, false)}>
+                              <td
+                                style={dailyStickyTd(
+                                  DAILY_COL_PCT_UNIT_ENT_L,
+                                  DAILY_COL_PCT_UNIT_ENT_W,
+                                  4,
+                                  pctUtilUnitEntStyle,
+                                  rowBg,
+                                  false,
+                                )}
+                              >
+                                {pctUtilUnitEntregados != null ? `${pctUtilUnitEntregados.toFixed(1)}%` : '—'}
+                              </td>
+                              <td style={dailyStickyTd(DAILY_COL_GANANCIA_L, DAILY_COL_GANANCIA_W, 5, utilidadStyle, rowBg, false)}>
                                 {utilidadRow != null ? fmt(utilidadRow) : '—'}
                               </td>
-                              <td style={dailyStickyTd(DAILY_COL_UNIT_L, DAILY_COL_UNIT_W, 5, utilidadUnitStyle, rowBg, true)}>
+                              <td style={dailyStickyTd(DAILY_COL_UNIT_L, DAILY_COL_UNIT_W, 6, utilidadUnitStyle, rowBg, true)}>
                                 {utilidadUnitRow != null ? fmt(utilidadUnitRow) : '—'}
                               </td>
                               <td style={dailyTdRight}>{fmt(row.ventas_despachadas_total)}</td>
@@ -1768,9 +1811,23 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                           </td>
                           <td
                             style={dailyStickyTd(
+                              DAILY_COL_PCT_UNIT_ENT_L,
+                              DAILY_COL_PCT_UNIT_ENT_W,
+                              4,
+                              { ...dailyTdRight, fontWeight: 700 },
+                              ds.bgSubtle,
+                              false,
+                            )}
+                          >
+                            {totals.utilidadNeta != null && totals.ventasEntregadas > 0
+                              ? `${((totals.utilidadNeta / totals.ventasEntregadas) * 100).toFixed(1)}%`
+                              : '—'}
+                          </td>
+                          <td
+                            style={dailyStickyTd(
                               DAILY_COL_GANANCIA_L,
                               DAILY_COL_GANANCIA_W,
-                              4,
+                              5,
                               { ...dailyTdRight, fontWeight: 700 },
                               ds.bgSubtle,
                               false,
@@ -1782,7 +1839,7 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                             style={dailyStickyTd(
                               DAILY_COL_UNIT_L,
                               DAILY_COL_UNIT_W,
-                              5,
+                              6,
                               { ...dailyTdRight, fontWeight: 700 },
                               ds.bgSubtle,
                               true,
