@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+﻿import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArcElement,
   BarElement,
@@ -8,13 +8,12 @@ import {
   LinearScale,
   Tooltip,
   type ChartData,
+  type ChartOptions,
 } from 'chart.js';
-import { Bar, Doughnut } from 'react-chartjs-2';
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
-import { IconChevronDown, IconUpload } from '@tabler/icons-react';
-import { PageHeader } from '../design-system/PageHeader';
-import { ds } from '../design-system/ds';
+import ReporteDropiDashboardView, { ReporteDropiEmptyState } from './reporteDropi/ReporteDropiDashboardView';
+import { colorForCarrierIndex, colorForStatus, marginBarColor } from './reporteDropi/reporteDropiUi';
 import {
   aggregateDropiOrders,
   computeDropiReportKpis,
@@ -26,7 +25,7 @@ import {
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
-/** Paleta reporte Dropi (gráficos, badges, barras) */
+/** Paleta reporte Dropi (graficos) */
 const C = {
   estadoEntregado: '#1D9E75',
   estadoCancelado: '#B4B2A9',
@@ -100,43 +99,10 @@ const PENDIENTE_ESTATUS = new Set([
   'DESPACHADA',
 ]);
 
-function colorForStatus(s: string): string {
-  if (s === 'ENTREGADO') return C.estadoEntregado;
-  if (s === 'CANCELADO') return C.estadoCancelado;
-  if (s === 'DEVOLUCION') return C.estadoDevuelto;
-  if (PENDIENTE_ESTATUS.has(s)) return C.estadoPendiente;
-  return C.estadoOtros;
-}
-
-function colorForCarrierIndex(i: number): string {
-  if (i === 0) return C.carrier1;
-  if (i === 1) return C.carrier2;
-  if (i === 2) return C.carrier3;
-  return C.carrierRest;
-}
-
-function marginBarColor(pct: number): string {
-  if (pct >= 22) return C.margenHigh;
-  if (pct >= 15) return C.margenMid;
-  return C.margenLow;
-}
-
 function effBarColor(pct: number): string {
   if (pct >= 80) return C.efectividadHigh;
   if (pct >= 60) return C.efectividadMid;
   return C.efectividadLow;
-}
-
-function effBadgeStyle(pct: number): { bg: string; color: string } {
-  if (pct >= 80) return { bg: C.badgeGreenBg, color: C.badgeGreenText };
-  if (pct >= 60) return { bg: C.badgeAmberBg, color: C.badgeAmberText };
-  return { bg: C.badgeCoralBg, color: C.badgeCoralText };
-}
-
-function devolucionBadgeStyle(pct: number): { bg: string; color: string } {
-  if (pct >= 25) return { bg: C.badgeCoralBg, color: C.badgeCoralText };
-  if (pct >= 15) return { bg: C.badgeAmberBg, color: C.badgeAmberText };
-  return { bg: C.badgeGreenBg, color: C.badgeGreenText };
 }
 
 type ReturnStatsRow = {
@@ -173,81 +139,6 @@ function aggregateReturnStats(rows: DropiRow[], labelFn: (r: DropiRow) => string
       };
     })
     .sort((a, b) => b.devPct - a.devPct || b.devueltos - a.devueltos || a.label.localeCompare(b.label, 'es'));
-}
-
-function marginBadgeStyle(pct: number): { bg: string; color: string } {
-  if (pct >= 22) return { bg: C.badgeGreenBg, color: C.badgeGreenText };
-  if (pct >= 15) return { bg: C.badgeAmberBg, color: C.badgeAmberText };
-  return { bg: C.badgeCoralBg, color: C.badgeCoralText };
-}
-
-function Badge({ children, bg, color }: { children: ReactNode; bg: string; color: string }) {
-  return (
-    <span
-      style={{
-        display: 'inline-block',
-        padding: '2px 8px',
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 700,
-        background: bg,
-        color,
-      }}
-    >
-      {children}
-    </span>
-  );
-}
-
-function MiniBar({ pct, color }: { pct: number; color: string }) {
-  const w = Math.min(100, Math.max(0, pct));
-  return (
-    <div
-      style={{
-        height: 6,
-        borderRadius: 4,
-        background: `${C.estadoOtros}33`,
-        minWidth: 72,
-        overflow: 'hidden',
-      }}
-    >
-      <div style={{ width: `${w}%`, height: '100%', borderRadius: 4, background: color }} />
-    </div>
-  );
-}
-
-function tableWrapStyle(): CSSProperties {
-  return {
-    border: `0.5px solid ${ds.borderCard}`,
-    borderRadius: 14,
-    overflow: 'auto',
-    background: ds.bgCard,
-  };
-}
-
-function thStyle(): CSSProperties {
-  return {
-    textAlign: 'left' as const,
-    padding: '10px 12px',
-    fontSize: 11,
-    fontWeight: 700,
-    color: ds.textMuted,
-    textTransform: 'uppercase' as const,
-    letterSpacing: '0.02em',
-    borderBottom: `0.5px solid ${ds.borderCard}`,
-    background: ds.bgSubtle,
-    whiteSpace: 'nowrap' as const,
-  };
-}
-
-function tdStyle(): CSSProperties {
-  return {
-    padding: '8px 12px',
-    fontSize: 12,
-    color: ds.textPrimary,
-    borderBottom: `0.5px solid ${ds.borderRow}`,
-    verticalAlign: 'middle',
-  };
 }
 
 type KpiPack = ReturnType<typeof computeDropiReportKpis>;
@@ -424,7 +315,7 @@ export default function ReporteDropiPage() {
     const orders = ordersWithGuia(aggregateDropiOrders(filteredRows));
     const m = new Map<string, number>();
     for (const o of orders) {
-      const k = o.estatusNorm || '—';
+      const k = o.estatusNorm || 'â€”';
       m.set(k, (m.get(k) ?? 0) + 1);
     }
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
@@ -508,8 +399,52 @@ export default function ReporteDropiPage() {
     };
   }, [carrierCounts, doughnutCardBorder]);
 
+  const productFleteDelivered = useMemo(() => {
+    const rowsByProduct = new Map<string, DropiRow[]>();
+    for (const r of filteredRows) {
+      if (r.estatusNorm !== 'ENTREGADO') continue;
+      if (!rowsByProduct.has(r.producto)) rowsByProduct.set(r.producto, []);
+      rowsByProduct.get(r.producto)!.push(r);
+    }
+    return Array.from(rowsByProduct.entries())
+      .map(([producto, groupRows]) => {
+        const orders = ordersWithGuia(aggregateDropiOrders(groupRows));
+        const pedidosEnt = orders.length;
+        const costoTotalFlete = orders.reduce((s, o) => s + o.precioFlete, 0);
+        const fleteProm = pedidosEnt > 0 ? costoTotalFlete / pedidosEnt : 0;
+        return { producto, pedidosEnt, costoTotalFlete, fleteProm };
+      })
+      .sort((a, b) => b.costoTotalFlete - a.costoTotalFlete);
+  }, [filteredRows]);
+
+  const productEffectivenessView = useMemo(() => {
+    const margenByProduct = new Map(productPnl.rows.map((r) => [r.producto, r.margenBruto]));
+    return productEffectiveness.map((r) => ({
+      ...r,
+      margenPct: margenByProduct.get(r.producto) ?? null,
+    }));
+  }, [productEffectiveness, productPnl.rows]);
+
+  const cityReturnStatsView = useMemo(
+    () =>
+      cityReturnStats.map((r) => ({
+        ...r,
+        effPct: r.conGuia > 0 ? (r.entregados / r.conGuia) * 100 : 0,
+      })),
+    [cityReturnStats],
+  );
+
+  const carrierReturnStatsView = useMemo(
+    () =>
+      carrierReturnStats.map((r) => ({
+        ...r,
+        effPct: r.conGuia > 0 ? (r.entregados / r.conGuia) * 100 : 0,
+      })),
+    [carrierReturnStats],
+  );
+
   const barProductGanancia: ChartData<'bar'> = useMemo(() => {
-    const slice = productPnl.rows.slice(0, 7);
+    const slice = productPnl.rows.slice(0, 10);
     const labels = slice.map((r) => r.producto);
     const data = slice.map((r) => r.gananciaBruta);
     const backgroundColor = slice.map((r) => marginBarColor(r.margenBruto));
@@ -527,7 +462,7 @@ export default function ReporteDropiPage() {
     };
   }, [productPnl.rows]);
 
-  const chartOpts = useMemo(
+  const chartOpts: ChartOptions<'doughnut'> = useMemo(
     () => ({
       responsive: true,
       maintainAspectRatio: false as const,
@@ -537,7 +472,7 @@ export default function ReporteDropiPage() {
     [],
   );
 
-  const barHorizOpts = useMemo(
+  const barHorizOpts: ChartOptions<'bar'> = useMemo(
     () => ({
       indexAxis: 'y' as const,
       responsive: true,
@@ -572,7 +507,7 @@ export default function ReporteDropiPage() {
         setProductMenuOpen(false);
         setProductSearch('');
       } catch {
-        setError('No se pudo leer el Excel. Revisa que sea el export estándar de Dropi.');
+        setError('No se pudo leer el Excel. Revisa que sea el export estÃ¡ndar de Dropi.');
       }
     };
     reader.readAsArrayBuffer(f);
@@ -610,8 +545,6 @@ export default function ReporteDropiPage() {
   );
 
 
-  const selectAllProducts = useCallback(() => setSelectedProducts([]), []);
-
   const downloadPdf = useCallback(async () => {
     const el = exportRef.current;
     if (!el || filteredRows.length === 0) return;
@@ -645,87 +578,6 @@ export default function ReporteDropiPage() {
 
   const hasData = rawRows.length > 0;
 
-  const efectividadTotalPct = kpi.efectividad;
-
-  const kpiItems: Array<{
-    label: string;
-    value: string;
-    sub: string;
-    highlight?: boolean;
-    valueColor?: string;
-  }> = [
-    { label: 'Total pedidos', value: String(kpi.totalPedidos), sub: 'Guías distintas (NÚMERO GUIA)' },
-    {
-      label: 'Con guía',
-      value: String(kpi.conGuia),
-      sub: formatPct(kpi.totalPedidos > 0 ? (kpi.conGuia / kpi.totalPedidos) * 100 : 0) + ' del total',
-    },
-    {
-      label: 'Efectividad total',
-      value: formatPct(efectividadTotalPct),
-      sub: 'entregados / pedidos con guía',
-      highlight: true,
-      valueColor: C.kpiEfectividadBorder,
-    },
-    {
-      label: 'Entregados',
-      value: String(kpi.entregados),
-      sub: formatPct(kpi.conGuia > 0 ? (kpi.entregados / kpi.conGuia) * 100 : 0) + ' sobre con guía',
-    },
-    {
-      label: 'Devueltos',
-      value: String(kpi.devueltos),
-      sub: formatPct(kpi.conGuia > 0 ? (kpi.devueltos / kpi.conGuia) * 100 : 0) + ' sobre con guía',
-    },
-    {
-      label: 'Pendientes',
-      value: String(kpi.pendientes),
-      sub: formatPct(kpi.conGuia > 0 ? (kpi.pendientes / kpi.conGuia) * 100 : 0) + ' sobre con guía',
-    },
-    {
-      label: 'Cancelados',
-      value: String(kpi.cancelados),
-      sub: formatPct(kpi.totalPedidos > 0 ? (kpi.cancelados / kpi.totalPedidos) * 100 : 0) + ' del total',
-    },
-    { label: 'Total ventas', value: formatCOP(kpi.totalVentas), sub: 'COP' },
-    { label: 'Ganancia neta', value: formatCOP(kpi.gananciaNeta), sub: `Margen ${formatPct(kpi.margenPct)}` },
-  ];
-
-  const kpiGrid = (
-    <div
-      style={{
-        display: 'grid',
-        gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-        gap: 12,
-      }}
-    >
-      {kpiItems.map((c) => (
-        <div
-          key={c.label}
-          style={{
-            background: ds.bgCard,
-            border: c.highlight ? `1.5px solid ${C.kpiEfectividadBorder}` : `0.5px solid ${ds.borderCard}`,
-            borderRadius: 14,
-            padding: '14px 16px',
-          }}
-        >
-          <div style={{ fontSize: 11, color: ds.textMuted, fontWeight: 600, marginBottom: 6 }}>{c.label}</div>
-          <div
-            style={{
-              fontSize: 20,
-              fontWeight: 800,
-              color: c.valueColor ?? ds.textPrimary,
-              lineHeight: 1.2,
-            }}
-          >
-            {c.value}
-          </div>
-          <div style={{ fontSize: 11, color: ds.textHint, marginTop: 6 }}>{c.sub}</div>
-        </div>
-      ))}
-    </div>
-  );
-
   const productFilterSummary =
     selectedProducts.length === 0
       ? 'Todos los productos'
@@ -733,786 +585,81 @@ export default function ReporteDropiPage() {
         ? selectedProducts[0]
         : `${selectedProducts.length} productos`;
 
-  const filtersPanel = (
-    <div
-      style={{
-        display: 'flex',
-        flexWrap: 'wrap',
-        gap: 14,
-        alignItems: 'flex-end',
-        padding: 16,
-        border: `0.5px solid ${ds.borderCard}`,
-        borderRadius: 14,
-        background: ds.bgCard,
-        marginBottom: 16,
-      }}
-    >
-      <button
-        type="button"
-        onClick={() => fileRef.current?.click()}
-        style={{
-          padding: '10px 18px',
-          borderRadius: 10,
-          border: 'none',
-          background: ds.brand,
-          color: '#fff',
-          fontWeight: 700,
-          fontSize: 13,
-          cursor: 'pointer',
-        }}
-      >
-        Cargar archivo
-      </button>
-      {fileName ? (
-        <span style={{ fontSize: 12, color: ds.textSecondary }}>
-          <strong>{fileName}</strong> · {rawRows.length} filas
-        </span>
-      ) : null}
-      <div
-        ref={productMenuRef}
-        style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 220, flex: '1 1 200px', position: 'relative' }}
-      >
-        <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Productos</label>
-        <button
-          type="button"
-        onClick={() => {
-          setProductMenuOpen((o) => !o);
-        }}
-        aria-expanded={productMenuOpen}
-        aria-haspopup="true"
-          style={{
-            ...inputStyle(),
-            width: '100%',
-            boxSizing: 'border-box',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: 8,
-            cursor: 'pointer',
-            textAlign: 'left',
-          }}
-        >
-          <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flex: 1, minWidth: 0 }}>
-            {productFilterSummary}
-          </span>
-          <IconChevronDown
-            size={18}
-            stroke={1.5}
-            style={{
-              flexShrink: 0,
-              color: ds.textMuted,
-              transform: productMenuOpen ? 'rotate(180deg)' : undefined,
-              transition: 'transform 0.15s ease',
-            }}
-          />
-        </button>
-        {productMenuOpen ? (
-          <div
-            style={{
-              position: 'absolute',
-              left: 0,
-              right: 0,
-              top: '100%',
-              marginTop: 4,
-              background: ds.bgCard,
-              border: `1px solid ${ds.borderCard}`,
-              borderRadius: 10,
-              boxShadow: '0 10px 28px rgba(0,0,0,0.14)',
-              zIndex: 60,
-              display: 'flex',
-              flexDirection: 'column',
-              maxHeight: 320,
-            }}
-          >
-            <div style={{ padding: 8, borderBottom: `0.5px solid ${ds.borderCard}` }}>
-              <input
-                type="search"
-                placeholder="Buscar producto…"
-                value={productSearch}
-                onChange={(e) => setProductSearch(e.target.value)}
-                style={{ ...inputStyle(), width: '100%', boxSizing: 'border-box' }}
-                autoFocus
-              />
-            </div>
-            <div style={{ overflowY: 'auto', maxHeight: 220, padding: '4px 6px' }}>
-              {filteredProductOptions.length === 0 ? (
-                <div style={{ padding: 12, fontSize: 12, color: ds.textMuted }}>Sin coincidencias</div>
-              ) : (
-                filteredProductOptions.map((p) => (
-                  <label
-                    key={p}
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 8,
-                      padding: '7px 8px',
-                      borderRadius: 8,
-                      cursor: 'pointer',
-                      fontSize: 12,
-                      color: ds.textPrimary,
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={selectedProducts.includes(p)}
-                      onChange={() => {
-                        setSelectedProducts((prev) =>
-                          prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p],
-                        );
-                      }}
-                    />
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{p}</span>
-                  </label>
-                ))
-              )}
-            </div>
-            <div
-              style={{
-                display: 'flex',
-                flexWrap: 'wrap',
-                gap: 8,
-                padding: 8,
-                borderTop: `0.5px solid ${ds.borderCard}`,
-              }}
-            >
-              <button
-                type="button"
-                onClick={() => setSelectedProducts([...productOptions])}
-                style={{
-                  fontSize: 11,
-                  background: ds.bgSubtle,
-                  border: `0.5px solid ${ds.borderCard}`,
-                  borderRadius: 8,
-                  padding: '6px 10px',
-                  cursor: 'pointer',
-                  color: ds.textPrimary,
-                  fontWeight: 600,
-                }}
-              >
-                Marcar todos
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  selectAllProducts();
-                  setProductSearch('');
-                }}
-                style={{
-                  fontSize: 11,
-                  background: 'none',
-                  border: `0.5px solid ${ds.borderCard}`,
-                  borderRadius: 8,
-                  padding: '6px 10px',
-                  cursor: 'pointer',
-                  color: ds.brand,
-                  fontWeight: 600,
-                }}
-              >
-                Limpiar selección
-              </button>
-            </div>
-          </div>
-        ) : null}
-      </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'flex-end' }}>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Desde (FECHA pedido)</label>
-          <input type="date" value={dateStart} onChange={(e) => setDateStart(e.target.value)} style={inputStyle()} />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Hasta</label>
-          <input type="date" value={dateEnd} onChange={(e) => setDateEnd(e.target.value)} style={inputStyle()} />
-        </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 160 }}>
-          <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Transportadora</label>
-          <select value={carrier} onChange={(e) => setCarrier(e.target.value)} style={selectStyle()}>
-            <option value="">Todas</option>
-            {carrierOptions.map((c) => (
-              <option key={c} value={c}>
-                {c}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-      <button
-        type="button"
-        disabled={!hasData || pdfLoading}
-        onClick={() => void downloadPdf()}
-        style={{
-          padding: '10px 18px',
-          borderRadius: 10,
-          border: `0.5px solid ${ds.borderCard}`,
-          background: hasData ? ds.bgSubtle : ds.bgSubtle,
-          color: ds.textPrimary,
-          fontWeight: 700,
-          fontSize: 13,
-          cursor: hasData && !pdfLoading ? 'pointer' : 'not-allowed',
-          opacity: hasData ? 1 : 0.5,
-        }}
-      >
-        {pdfLoading ? 'Generando PDF…' : 'Descargar PDF'}
-      </button>
-    </div>
-  );
-
   if (!hasData) {
     return (
-      <div style={{ maxWidth: 980 }}>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-          style={{ display: 'none' }}
-          onChange={onFile}
-        />
-        <PageHeader title="Reporte Dropi" subtitle="Analiza exportaciones .xlsx sin subirlas al servidor." />
-        {error ? (
-          <div
-            style={{
-              marginBottom: 14,
-              padding: 12,
-              borderRadius: 10,
-              background: ds.dangerBg,
-              color: ds.dangerText,
-              fontSize: 13,
-            }}
-          >
-            {error}
-          </div>
-        ) : null}
-        <div
-          onDragOver={onDropZoneDragOver}
-          onDragLeave={onDropZoneDragLeave}
-          onDrop={onDropZoneDrop}
-          style={{
-            border: isDragActive ? `1.5px dashed ${ds.brand}` : `0.5px solid ${ds.borderCard}`,
-            borderRadius: 14,
-            background: isDragActive ? ds.bgSubtle : ds.bgCard,
-            padding: '48px 32px',
-            textAlign: 'center',
-            transition: 'all 0.15s ease',
-          }}
-        >
-          <div style={{ display: 'flex', justifyContent: 'center', marginBottom: 16, color: C.carrier2 }}>
-            <IconUpload size={56} stroke={1.25} />
-          </div>
-          <div style={{ fontSize: 18, fontWeight: 700, color: ds.textPrimary, marginBottom: 8 }}>Carga tu reporte de Dropi para comenzar</div>
-          <div style={{ fontSize: 13, color: ds.textSecondary, maxWidth: 420, margin: '0 auto 24px', lineHeight: 1.5 }}>
-            Arrastra y suelta aquí tu archivo o descárgalo desde Dropi: Mis órdenes → Exportar → .xlsx
-          </div>
-          <button
-            type="button"
-            onClick={() => fileRef.current?.click()}
-            style={{
-              padding: '12px 28px',
-              borderRadius: 10,
-              border: 'none',
-              background: ds.brand,
-              color: '#fff',
-              fontWeight: 700,
-              fontSize: 14,
-              cursor: 'pointer',
-            }}
-          >
-            Cargar archivo
-          </button>
-        </div>
-      </div>
+      <ReporteDropiEmptyState
+        error={error}
+        isDragActive={isDragActive}
+        fileRef={fileRef}
+        onFileInput={onFile}
+        onDragOver={onDropZoneDragOver}
+        onDragLeave={onDropZoneDragLeave}
+        onDrop={onDropZoneDrop}
+        onPickFile={() => fileRef.current?.click()}
+      />
     );
   }
 
   return (
-    <div
-      style={{ maxWidth: 1100 }}
+    <ReporteDropiDashboardView
+      exportRef={exportRef}
+      fileRef={fileRef}
+      productMenuRef={productMenuRef}
+      fileName={fileName}
+      rawRowCount={rawRows.length}
+      error={error}
+      isDragActive={isDragActive}
+      pdfLoading={pdfLoading}
+      productMenuOpen={productMenuOpen}
+      productSearch={productSearch}
+      productFilterSummary={productFilterSummary}
+      selectedProducts={selectedProducts}
+      productOptions={productOptions}
+      filteredProductOptions={filteredProductOptions}
+      dateStart={dateStart}
+      dateEnd={dateEnd}
+      carrier={carrier}
+      carrierOptions={carrierOptions}
+      cityReportCarrier={cityReportCarrier}
+      cityReportCarrierOptions={cityReportCarrierOptions}
+      kpi={kpi}
+      formatCOP={formatCOP}
+      formatPct={formatPct}
+      productEffectiveness={productEffectivenessView}
+      productFleteDelivered={productFleteDelivered}
+      cityReturnStats={cityReturnStatsView}
+      carrierReturnStats={carrierReturnStatsView}
+      productPnlRows={productPnl.rows}
+      productPnlTotals={{ producto: 'TOTAL', ...productPnl.totals }}
+      estadoResultadosEntregados={estadoResultadosEntregados}
+      statusCounts={statusCounts}
+      carrierCounts={carrierCounts}
+      donutEstados={donutEstados}
+      donutCarrier={donutCarrier}
+      barProductGanancia={barProductGanancia}
+      chartOpts={chartOpts}
+      barHorizOpts={barHorizOpts}
+      doughnutCardBorder={doughnutCardBorder}
+      onFileInput={onFile}
       onDragOver={onDropZoneDragOver}
       onDragLeave={onDropZoneDragLeave}
       onDrop={onDropZoneDrop}
-    >
-      <input
-        ref={fileRef}
-        type="file"
-        accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        style={{ display: 'none' }}
-        onChange={onFile}
-      />
-      <PageHeader title="Reporte Dropi" subtitle="Procesamiento local: el archivo no se envía al servidor." />
-      {isDragActive ? (
-        <div
-          style={{
-            marginBottom: 14,
-            padding: 14,
-            borderRadius: 10,
-            border: `1.5px dashed ${ds.brand}`,
-            background: ds.bgSubtle,
-            color: ds.brand,
-            fontSize: 13,
-            fontWeight: 700,
-            textAlign: 'center',
-          }}
-        >
-          Suelta el archivo .xlsx para reemplazar el reporte actual
-        </div>
-      ) : null}
-      {error ? (
-        <div style={{ marginBottom: 14, padding: 12, borderRadius: 10, background: ds.warningBg, color: ds.warningText, fontSize: 13 }}>{error}</div>
-      ) : null}
-      {filtersPanel}
-      <div
-        ref={exportRef}
-        style={{
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 20,
-          background: ds.bgApp,
-          padding: 8,
-          borderRadius: 8,
-        }}
-      >
-        <section>
-          <h3 style={{ fontSize: 14, fontWeight: 700, color: ds.textPrimary, margin: '0 0 12px' }}>KPIs principales</h3>
-          {kpiGrid}
-        </section>
-        <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 16 }}>
-          <div>
-            <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 8px' }}>Distribución por estado</h3>
-            <div style={{ height: 260, position: 'relative' }}>
-              <Doughnut data={donutEstados} options={chartOpts} />
-            </div>
-            <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, fontSize: 12, color: ds.textSecondary }}>
-              {statusCounts.map(([s, n]) => (
-                <li key={s} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                  <span style={{ width: 10, height: 10, borderRadius: 2, background: colorForStatus(s) }} />
-                  {s}: <strong>{n}</strong>
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div>
-            <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 8px' }}>Pedidos por transportadora</h3>
-            <div style={{ height: 260, position: 'relative' }}>
-              <Doughnut data={donutCarrier} options={chartOpts} />
-            </div>
-            <ul style={{ listStyle: 'none', margin: '10px 0 0', padding: 0, fontSize: 12, color: ds.textSecondary }}>
-              {carrierCounts.slice(0, 12).map(([s, n], i) => {
-                const col = colorForCarrierIndex(i);
-                return (
-                  <li key={s} style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-                    <span style={{ width: 10, height: 10, borderRadius: 2, background: col }} />
-                    {s}: <strong>{n}</strong>
-                  </li>
-                );
-              })}
-            </ul>
-          </div>
-        </section>
-        <section>
-          <div
-            style={{
-              display: 'flex',
-              flexWrap: 'wrap',
-              alignItems: 'flex-end',
-              justifyContent: 'space-between',
-              gap: 12,
-              marginBottom: 10,
-            }}
-          >
-            <div>
-              <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 4px' }}>% devoluciones por ciudad</h3>
-              <p style={{ fontSize: 12, color: ds.textSecondary, margin: 0, lineHeight: 1.45 }}>
-                Devueltos sobre pedidos con guía, agrupado por ciudad.
-              </p>
-            </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 200 }}>
-              <label style={{ fontSize: 11, fontWeight: 600, color: ds.textMuted }}>Filtrar por transportadora</label>
-              <select
-                value={cityReportCarrier}
-                onChange={(e) => setCityReportCarrier(e.target.value)}
-                style={selectStyle()}
-              >
-                <option value="">Todas las transportadoras</option>
-                {cityReportCarrierOptions.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div style={tableWrapStyle()}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {['Ciudad', 'Pedidos', 'Con guía', 'Devueltos', 'Entregados', '% devoluciones', ''].map((h) => (
-                    <th key={h || 'bar'} style={thStyle()}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {cityReturnStats.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} style={{ ...tdStyle(), color: ds.textMuted, textAlign: 'center' }}>
-                      Sin datos para el filtro seleccionado.
-                    </td>
-                  </tr>
-                ) : (
-                  cityReturnStats.map((r) => {
-                    const st = devolucionBadgeStyle(r.devPct);
-                    return (
-                      <tr key={r.label}>
-                        <td style={tdStyle()}>{r.label}</td>
-                        <td style={tdStyle()}>{r.pedidos}</td>
-                        <td style={tdStyle()}>{r.conGuia}</td>
-                        <td style={tdStyle()}>
-                          <Badge bg={C.badgeCoralBg} color={C.badgeCoralText}>
-                            {r.devueltos}
-                          </Badge>
-                        </td>
-                        <td style={tdStyle()}>
-                          <Badge bg={C.badgeGreenBg} color={C.badgeGreenText}>
-                            {r.entregados}
-                          </Badge>
-                        </td>
-                        <td style={tdStyle()}>
-                          <Badge bg={st.bg} color={st.color}>
-                            {formatPct(r.devPct)}
-                          </Badge>
-                        </td>
-                        <td style={tdStyle()} width={100}>
-                          <MiniBar pct={Math.min(100, r.devPct)} color={C.estadoDevuelto} />
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section>
-          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 4px' }}>% devoluciones por transportadora</h3>
-          <p style={{ fontSize: 12, color: ds.textSecondary, margin: '0 0 10px', lineHeight: 1.45 }}>
-            Devueltos sobre pedidos con guía, agrupado por transportadora.
-          </p>
-          <div style={tableWrapStyle()}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {['Transportadora', 'Pedidos', 'Con guía', 'Devueltos', 'Entregados', '% devoluciones', ''].map((h) => (
-                    <th key={h || 'bar'} style={thStyle()}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {carrierReturnStats.length === 0 ? (
-                  <tr>
-                    <td colSpan={7} style={{ ...tdStyle(), color: ds.textMuted, textAlign: 'center' }}>
-                      Sin datos para el filtro seleccionado.
-                    </td>
-                  </tr>
-                ) : (
-                  carrierReturnStats.map((r) => {
-                    const st = devolucionBadgeStyle(r.devPct);
-                    return (
-                      <tr key={r.label}>
-                        <td style={tdStyle()}>{r.label}</td>
-                        <td style={tdStyle()}>{r.pedidos}</td>
-                        <td style={tdStyle()}>{r.conGuia}</td>
-                        <td style={tdStyle()}>
-                          <Badge bg={C.badgeCoralBg} color={C.badgeCoralText}>
-                            {r.devueltos}
-                          </Badge>
-                        </td>
-                        <td style={tdStyle()}>
-                          <Badge bg={C.badgeGreenBg} color={C.badgeGreenText}>
-                            {r.entregados}
-                          </Badge>
-                        </td>
-                        <td style={tdStyle()}>
-                          <Badge bg={st.bg} color={st.color}>
-                            {formatPct(r.devPct)}
-                          </Badge>
-                        </td>
-                        <td style={tdStyle()} width={100}>
-                          <MiniBar pct={Math.min(100, r.devPct)} color={C.estadoDevuelto} />
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section>
-          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Efectividad por producto</h3>
-          <div style={tableWrapStyle()}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {['Producto', 'Pedidos', 'Entregados', 'Devueltos', 'Pendientes', 'Efectividad', 'Ganancia', ''].map((h) => (
-                    <th key={h || 'bar'} style={thStyle()}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {productEffectiveness.map((r) => {
-                  const st = effBadgeStyle(r.eff);
-                  return (
-                    <tr key={r.producto}>
-                      <td style={tdStyle()}>{r.producto}</td>
-                      <td style={tdStyle()}>{r.pedidos}</td>
-                      <td style={tdStyle()}>
-                        <Badge bg={C.badgeGreenBg} color={C.badgeGreenText}>
-                          {r.ent}
-                        </Badge>
-                      </td>
-                      <td style={tdStyle()}>
-                        <Badge bg={C.badgeCoralBg} color={C.badgeCoralText}>
-                          {r.dev}
-                        </Badge>
-                      </td>
-                      <td style={tdStyle()}>
-                        <Badge bg={C.badgeAmberBg} color={C.badgeAmberText}>
-                          {r.pend}
-                        </Badge>
-                      </td>
-                      <td style={tdStyle()}>
-                        <Badge bg={st.bg} color={st.color}>
-                          {formatPct(r.eff)}
-                        </Badge>
-                      </td>
-                      <td style={tdStyle()}>{formatCOP(r.gan)}</td>
-                      <td style={tdStyle()} width={100}>
-                        <MiniBar pct={r.eff} color={effBarColor(r.eff)} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section>
-          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Flete por producto</h3>
-          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 10, marginBottom: 12 }}>
-            <span style={pillStyle()}>
-              Flete prom. general: <strong>{formatCOP(kpi.fletePromGeneral)}</strong>
-            </span>
-            <span style={pillStyle()}>
-              Flete dev. prom.: <strong>{formatCOP(kpi.fleteDevPromGeneral)}</strong>
-            </span>
-            <span style={pillStyle()}>
-              Ticket prom.: <strong>{formatCOP(kpi.ticketProm)}</strong>
-            </span>
-          </div>
-          <div style={tableWrapStyle()}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {['Producto', 'Pedidos', 'Ticket prom.', 'Flete prom. envío', 'Flete prom. devol.', 'Flete / ticket', 'Impacto'].map((h) => (
-                    <th key={h} style={thStyle()}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {productFlete.map((r) => {
-                  const st = r.ftPct <= 15 ? effBadgeStyle(85) : r.ftPct <= 25 ? effBadgeStyle(70) : effBadgeStyle(55);
-                  return (
-                    <tr key={r.producto}>
-                      <td style={tdStyle()}>{r.producto}</td>
-                      <td style={tdStyle()}>{r.n}</td>
-                      <td style={tdStyle()}>{formatCOP(r.ticketProm)}</td>
-                      <td style={tdStyle()}>{formatCOP(r.fleteProm)}</td>
-                      <td style={tdStyle()}>{formatCOP(r.devProm)}</td>
-                      <td style={tdStyle()}>
-                        <Badge bg={st.bg} color={st.color}>
-                          {formatPct(r.ftPct)}
-                        </Badge>
-                      </td>
-                      <td style={tdStyle()}>
-                        <MiniBar pct={Math.min(100, r.ftPct * 2)} color={C.carrier1} />
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section>
-          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Estado de resultados (entregados)</h3>
-          <p style={{ fontSize: 12, color: ds.textSecondary, margin: '0 0 12px', lineHeight: 1.5 }}>
-            Solo pedidos con estatus ENTREGADO. Ganancia bruta = ventas − costo producto − costo flete − costo flete devolución.
-          </p>
-          <div style={tableWrapStyle()}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {[
-                    'Ventas entregados',
-                    'Costo producto entregados',
-                    'Costo de flete',
-                    'Costo flete devolución',
-                    'Ganancia bruta',
-                    'Margen bruto',
-                  ].map((h) => (
-                    <th key={h} style={thStyle()}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                <tr>
-                  <td style={{ ...tdStyle(), fontWeight: 700 }}>{formatCOP(estadoResultadosEntregados.ventas)}</td>
-                  <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>
-                    -{formatCOP(estadoResultadosEntregados.costoProducto)}
-                  </td>
-                  <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>
-                    -{formatCOP(estadoResultadosEntregados.costoFlete)}
-                  </td>
-                  <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>
-                    -{formatCOP(estadoResultadosEntregados.costoFleteDevolucion)}
-                  </td>
-                  <td style={{ ...tdStyle(), color: C.gainText, fontWeight: 800 }}>
-                    {formatCOP(estadoResultadosEntregados.gananciaBruta)}
-                  </td>
-                  <td style={tdStyle()}>
-                    <Badge
-                      bg={marginBadgeStyle(estadoResultadosEntregados.margenBruto).bg}
-                      color={marginBadgeStyle(estadoResultadosEntregados.margenBruto).color}
-                    >
-                      {formatPct(estadoResultadosEntregados.margenBruto)}
-                    </Badge>
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section>
-          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Estado de resultados por producto (entregados)</h3>
-          <div style={tableWrapStyle()}>
-            <table style={{ width: '100%', borderCollapse: 'collapse' }}>
-              <thead>
-                <tr>
-                  {[
-                    'Producto',
-                    'Ventas entregados',
-                    'Costo producto',
-                    'Costo flete',
-                    'Flete devolución',
-                    'Ganancia bruta',
-                    'Margen bruto',
-                    'Rentabilidad',
-                  ].map((h) => (
-                    <th key={h} style={thStyle()}>
-                      {h}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {productPnl.rows.map((r) => {
-                  const st = marginBadgeStyle(r.margenBruto);
-                  return (
-                    <tr key={r.producto}>
-                      <td style={tdStyle()}>{r.producto}</td>
-                      <td style={tdStyle()}>{formatCOP(r.ventas)}</td>
-                      <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>-{formatCOP(r.cp)}</td>
-                      <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>-{formatCOP(r.cf)}</td>
-                      <td style={{ ...tdStyle(), color: C.costText, fontWeight: 600 }}>-{formatCOP(r.fd)}</td>
-                      <td style={{ ...tdStyle(), color: C.gainText, fontWeight: 700 }}>{formatCOP(r.gananciaBruta)}</td>
-                      <td style={tdStyle()}>
-                        <Badge bg={st.bg} color={st.color}>
-                          {formatPct(r.margenBruto)}
-                        </Badge>
-                      </td>
-                      <td style={tdStyle()}>
-                        <MiniBar pct={Math.min(100, Math.max(0, r.margenBruto))} color={marginBarColor(r.margenBruto)} />
-                      </td>
-                    </tr>
-                  );
-                })}
-                <tr
-                  style={{
-                    background: 'var(--color-background-secondary)',
-                    fontWeight: 800,
-                  }}
-                >
-                  <td style={{ ...tdStyle(), fontWeight: 800 }}>TOTAL GENERAL</td>
-                  <td style={tdStyle()}>{formatCOP(productPnl.totals.ventas)}</td>
-                  <td style={{ ...tdStyle(), color: C.costText }}>-{formatCOP(productPnl.totals.cp)}</td>
-                  <td style={{ ...tdStyle(), color: C.costText }}>-{formatCOP(productPnl.totals.cf)}</td>
-                  <td style={{ ...tdStyle(), color: C.costText }}>-{formatCOP(productPnl.totals.fd)}</td>
-                  <td style={{ ...tdStyle(), color: C.gainText }}>{formatCOP(productPnl.totals.gananciaBruta)}</td>
-                  <td style={tdStyle()}>
-                    <Badge
-                      bg={marginBadgeStyle(productPnl.totals.margenBruto).bg}
-                      color={marginBadgeStyle(productPnl.totals.margenBruto).color}
-                    >
-                      {formatPct(productPnl.totals.margenBruto)}
-                    </Badge>
-                  </td>
-                  <td style={tdStyle()}>
-                    <MiniBar
-                      pct={Math.min(100, Math.max(0, productPnl.totals.margenBruto))}
-                      color={marginBarColor(productPnl.totals.margenBruto)}
-                    />
-                  </td>
-                </tr>
-              </tbody>
-            </table>
-          </div>
-        </section>
-        <section>
-          <h3 style={{ fontSize: 14, fontWeight: 700, margin: '0 0 10px' }}>Ganancia bruta por producto (color = margen bruto %)</h3>
-          <div style={{ height: 280, position: 'relative', ...tableWrapStyle(), padding: 12 }}>
-            <Bar data={barProductGanancia} options={barHorizOpts} />
-          </div>
-        </section>
-      </div>
-    </div>
+      onPickFile={() => fileRef.current?.click()}
+      onDownloadPdf={() => void downloadPdf()}
+      onToggleProductMenu={() => setProductMenuOpen((o) => !o)}
+      onProductSearch={setProductSearch}
+      onToggleProduct={(p) =>
+        setSelectedProducts((prev) => (prev.includes(p) ? prev.filter((x) => x !== p) : [...prev, p]))
+      }
+      onSelectAllProducts={() => setSelectedProducts([...productOptions])}
+      onClearProducts={() => {
+        setSelectedProducts([]);
+        setProductSearch('');
+      }}
+      onDateStart={setDateStart}
+      onDateEnd={setDateEnd}
+      onCarrier={setCarrier}
+      onCityReportCarrier={setCityReportCarrier}
+    />
   );
-}
-
-function inputStyle(): CSSProperties {
-  return {
-    padding: '8px 10px',
-    borderRadius: 8,
-    border: `1px solid ${ds.borderCard}`,
-    fontSize: 13,
-    background: ds.bgCard,
-    color: ds.textPrimary,
-  };
-}
-
-function selectStyle(): CSSProperties {
-  return {
-    ...inputStyle(),
-    width: '100%',
-  };
-}
-
-function pillStyle(): CSSProperties {
-  return {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: 6,
-    padding: '8px 14px',
-    borderRadius: 999,
-    fontSize: 12,
-    background: C.badgeBlueBg,
-    color: C.badgeBlueText,
-    border: `0.5px solid ${C.carrier1}44`,
-  };
 }
