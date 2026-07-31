@@ -414,13 +414,85 @@ function normalizeEntity(entity, level, adAccountId, adAccountName) {
   };
 }
 
-/**
- * @param {string} actId
- * @param {string} accessToken
- * @param {'campaigns'|'adsets'|'ads'} level
- * @param {string} datePreset
- */
-async function fetchInsightsForAdAccount(actId, accessToken, level, datePreset, apiOptions = {}) {
+function normalizeInsightLevelRow(ins, level, adAccountId, adAccountName) {
+  const impressions = parseNum(ins.impressions);
+  const clicks = parseNum(ins.clicks);
+  const spend = parseNum(ins.spend);
+  const purchases = purchaseCountFromActions(ins.actions);
+  const revenue = purchaseValueFromActionValues(ins.action_values);
+  const roas = spend > 0 && revenue > 0 ? revenue / spend : 0;
+  const cpa = purchases > 0 ? spend / purchases : 0;
+  let entityId = '';
+  let name = '(sin nombre)';
+  if (level === 'campaigns') {
+    entityId = String(ins.campaign_id || '');
+    name = String(ins.campaign_name || name);
+  } else if (level === 'adsets') {
+    entityId = String(ins.adset_id || '');
+    name = String(ins.adset_name || name);
+  } else {
+    entityId = String(ins.ad_id || '');
+    name = String(ins.ad_name || name);
+  }
+  return {
+    adAccountId,
+    adAccountName,
+    id: entityId,
+    name,
+    status: '',
+    campaignId: ins.campaign_id ? String(ins.campaign_id) : '',
+    adsetId: ins.adset_id ? String(ins.adset_id) : '',
+    impressions,
+    clicks,
+    spend,
+    cpm: parseNum(ins.cpm),
+    cpc: parseNum(ins.cpc),
+    ctr: parseNum(ins.ctr),
+    reach: parseNum(ins.reach),
+    purchases,
+    revenue,
+    roas,
+    cpa,
+    level,
+  };
+}
+
+/** Insights agregados del período vía /insights?level=…&date_preset= (como Ads Manager). */
+async function fetchInsightsByLevelPresetForAdAccount(actId, accessToken, level, datePreset, apiOptions = {}) {
+  const v = getGraphVersion();
+  const id = normalizeActId(actId);
+  if (!id) {
+    return { ok: false, rows: [], error: 'ID de cuenta publicitaria no válido' };
+  }
+  const levelMap = { campaigns: 'campaign', adsets: 'adset', ads: 'ad' };
+  const insightLevel = levelMap[level];
+  if (!insightLevel) {
+    return { ok: false, rows: [], error: 'Nivel de insights no válido' };
+  }
+  const idFields =
+    level === 'campaigns'
+      ? 'campaign_id,campaign_name'
+      : level === 'adsets'
+        ? 'adset_id,adset_name,campaign_id,campaign_name'
+        : 'ad_id,ad_name,adset_id,campaign_id,campaign_name';
+  const fields = `${idFields},${INSIGHT_FIELDS}`;
+  const base = `https://graph.facebook.com/${v}/${id}/insights?level=${insightLevel}&date_preset=${encodeURIComponent(datePreset)}&fields=${encodeURIComponent(fields)}&limit=500&access_token=${encodeURIComponent(accessToken)}`;
+  const r = await fetchAllGraphPages(base, { ...apiOptions, accessToken });
+  if (!r.ok) {
+    const fb = r.data && r.data.error;
+    return {
+      ok: false,
+      rows: [],
+      error: (fb && fb.message) || 'Error al leer insights del período',
+      fb,
+    };
+  }
+  const acctName = await fetchAccountName(id, accessToken, apiOptions);
+  const rows = r.items.map((ins) => normalizeInsightLevelRow(ins, level, id, acctName));
+  return { ok: true, rows, error: null, fb: null };
+}
+
+async function fetchInsightsForAdAccountLegacyNested(actId, accessToken, level, datePreset, apiOptions = {}) {
   const v = getGraphVersion();
   const id = normalizeActId(actId);
   if (!id) {
@@ -441,6 +513,18 @@ async function fetchInsightsForAdAccount(actId, accessToken, level, datePreset, 
   const acctName = await fetchAccountName(id, accessToken, apiOptions);
   const rows = r.items.map((entity) => normalizeEntity(entity, level, id, acctName));
   return { ok: true, rows, error: null, fb: null };
+}
+
+/**
+ * @param {string} actId
+ * @param {string} accessToken
+ * @param {'campaigns'|'adsets'|'ads'} level
+ * @param {string} datePreset
+ */
+async function fetchInsightsForAdAccount(actId, accessToken, level, datePreset, apiOptions = {}) {
+  const primary = await fetchInsightsByLevelPresetForAdAccount(actId, accessToken, level, datePreset, apiOptions);
+  if (primary.ok) return primary;
+  return fetchInsightsForAdAccountLegacyNested(actId, accessToken, level, datePreset, apiOptions);
 }
 
 /** Catálogo completo de campañas (sin filtrar por gasto del período). */

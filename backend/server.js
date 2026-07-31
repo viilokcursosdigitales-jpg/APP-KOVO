@@ -1593,6 +1593,19 @@ async function fetchLiveMetaInsightsPayload(organizationId, row, level, period, 
       }
       allRows.push(...r.rows);
     }
+
+    if (fetchCatalog && Array.isArray(catalogRes.rows) && catalogRes.rows.length && allRows.length) {
+      const catalogById = new Map(catalogRes.rows.map((c) => [String(c.id), c]));
+      for (const insightRow of allRows) {
+        const cat = catalogById.get(String(insightRow.id));
+        if (!cat) continue;
+        if (cat.status) insightRow.status = cat.status;
+        if (cat.name && (!insightRow.name || insightRow.name === '(sin nombre)')) {
+          insightRow.name = cat.name;
+        }
+      }
+    }
+
     const totals = allRows.reduce(
       (acc, x) => ({
         impressions: acc.impressions + x.impressions,
@@ -4538,11 +4551,9 @@ app.get('/api/meta/insights', verifyToken, scopeToOrganization, async (req, res)
       readCache: readCachedJsonResponse,
       writeCache: writeCachedJsonResponse,
       getSnapshot: () => {
-        if (!snapResult.ok) return null;
-        return {
-          payload: insightsPayloadFromSnapshot(snapResult, level, period, datePreset, ctx.actIds),
-          fetchedAt: snapResult.fetchedAt,
-        };
+        // El respaldo diario solo tiene totales de cuenta; no incluye filas por campaña/conjunto/anuncio.
+        // Evita mostrar tabla vacía o métricas de un solo día mientras llega el live refresh.
+        return null;
       },
       fetchLive: async () => {
         if (!ctx.hasToken) {
