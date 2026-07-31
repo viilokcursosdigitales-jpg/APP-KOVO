@@ -12,8 +12,8 @@ import { KpiCard } from '../design-system/KpiCard';
 import { PageHeader } from '../design-system/PageHeader';
 import { ds } from '../design-system/ds';
 import {
+  aggregateDropiOrders,
   computeDropiGuiaMetrics,
-  dropiOtrosCostosRow,
   dropiRowHasGuia,
   formatDropiCOP,
   readDropiExcel,
@@ -30,28 +30,38 @@ type ProductRow = {
 };
 
 function aggregateByProduct(rows: DropiRow[]): ProductRow[] {
-  const map = new Map<string, ProductRow>();
+  const rowsByProduct = new Map<string, DropiRow[]>();
   for (const r of rows) {
     if (!dropiRowHasGuia(r)) continue;
-    const key = r.producto;
-    if (!map.has(key)) {
-      map.set(key, {
-        producto: key,
-        pedidos: 0,
-        venta: 0,
-        costoProducto: 0,
-        costoFlete: 0,
-        otrosCostos: 0,
-      });
-    }
-    const acc = map.get(key)!;
-    acc.pedidos++;
-    acc.venta += r.totalOrden;
-    acc.costoProducto += r.costoProducto;
-    acc.costoFlete += r.precioFlete;
-    acc.otrosCostos += dropiOtrosCostosRow(r);
+    if (!rowsByProduct.has(r.producto)) rowsByProduct.set(r.producto, []);
+    rowsByProduct.get(r.producto)!.push(r);
   }
-  return Array.from(map.values()).sort((a, b) => b.venta - a.venta || a.producto.localeCompare(b.producto, 'es'));
+  return Array.from(rowsByProduct.entries())
+    .map(([producto, groupRows]) => {
+      const orders = aggregateDropiOrders(groupRows);
+      let venta = 0;
+      let costoProducto = 0;
+      let costoFlete = 0;
+      let otrosCostos = 0;
+      for (const o of orders) {
+        venta += o.totalOrden;
+        costoProducto += o.costoProducto;
+        costoFlete += o.precioFlete;
+        const known = o.costoProducto + o.precioFlete + o.costoDevolucionFlete;
+        const residual = o.totalOrden - o.ganancia - known;
+        otrosCostos +=
+          Math.abs(residual) < 0.01 ? o.costoDevolucionFlete : o.costoDevolucionFlete + residual;
+      }
+      return {
+        producto,
+        pedidos: orders.length,
+        venta,
+        costoProducto,
+        costoFlete,
+        otrosCostos,
+      };
+    })
+    .sort((a, b) => b.venta - a.venta || a.producto.localeCompare(b.producto, 'es'));
 }
 
 export default function Reporte2DropiPage() {

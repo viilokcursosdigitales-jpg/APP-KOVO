@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
-import * as XLSX from 'xlsx';
 import {
   ArcElement,
   BarElement,
@@ -16,6 +15,13 @@ import { jsPDF } from 'jspdf';
 import { IconChevronDown, IconUpload } from '@tabler/icons-react';
 import { PageHeader } from '../design-system/PageHeader';
 import { ds } from '../design-system/ds';
+import {
+  aggregateDropiOrders,
+  computeDropiReportKpis,
+  dropiStatusExcludedFromGuiaYVentas,
+  readDropiExcel,
+  type DropiRow,
+} from '../utils/dropiExcel';
 
 ChartJS.register(ArcElement, Tooltip, Legend, CategoryScale, LinearScale, BarElement);
 
@@ -48,139 +54,6 @@ const C = {
   gainText: '#0F6E56',
   kpiEfectividadBorder: '#0F6E56',
 } as const;
-
-const COL = {
-  fechaReporte: 0,
-  fechaPedido: 3,
-  numeroGuia: 9,
-  estatus: 10,
-  departamento: 12,
-  ciudad: 13,
-  transportadora: 16,
-  totalOrden: 17,
-  ganancia: 18,
-  precioFlete: 19,
-  costoDevolucionFlete: 20,
-  costoProducto: 24,
-  producto: 28,
-  cantidad: 30,
-} as const;
-
-type DropiRow = {
-  fechaReporte: Date | null;
-  fechaPedido: Date | null;
-  numeroGuia: string;
-  estatusNorm: string;
-  departamento: string;
-  ciudad: string;
-  transportadora: string;
-  totalOrden: number;
-  ganancia: number;
-  precioFlete: number;
-  costoDevolucionFlete: number;
-  costoProducto: number;
-  producto: string;
-  cantidad: number;
-};
-
-function cell(r: unknown[], i: number): unknown {
-  return i < r.length ? r[i] : undefined;
-}
-
-function normStatus(raw: unknown): string {
-  const s = String(raw ?? '')
-    .trim()
-    .toUpperCase()
-    .normalize('NFD')
-    .replace(/\p{M}/gu, '');
-  return s;
-}
-
-function parseNumber(v: unknown): number {
-  if (v == null || v === '') return 0;
-  if (typeof v === 'number' && Number.isFinite(v)) return v;
-  if (typeof v === 'string') {
-    const t = v.trim().replace(/[$\s]/g, '');
-    if (!t) return 0;
-    if (t.includes(',') && t.includes('.')) {
-      const lastDot = t.lastIndexOf('.');
-      const lastComma = t.lastIndexOf(',');
-      if (lastComma > lastDot) {
-        return parseFloat(t.replace(/\./g, '').replace(',', '.')) || 0;
-      }
-      return parseFloat(t.replace(/,/g, '')) || 0;
-    }
-    if (t.includes(',')) return parseFloat(t.replace(/\./g, '').replace(',', '.')) || 0;
-    return parseFloat(t.replace(/,/g, '.')) || 0;
-  }
-  return 0;
-}
-
-function parseDate(v: unknown): Date | null {
-  if (v == null || v === '') return null;
-  if (v instanceof Date && !Number.isNaN(v.getTime())) return v;
-  if (typeof v === 'number' && Number.isFinite(v)) {
-    try {
-      const d = XLSX.SSF.parse_date_code(v);
-      if (d) return new Date(Date.UTC(d.y, d.m - 1, d.d));
-    } catch {
-      /* ignore */
-    }
-  }
-  if (typeof v === 'string') {
-    const d = new Date(v);
-    if (!Number.isNaN(d.getTime())) return d;
-  }
-  return null;
-}
-
-function strCell(v: unknown): string {
-  return String(v ?? '').trim();
-}
-
-function parseRow(arr: unknown[]): DropiRow | null {
-  const producto = strCell(cell(arr, COL.producto));
-  const guia = strCell(cell(arr, COL.numeroGuia));
-  const total = parseNumber(cell(arr, COL.totalOrden));
-  const fechaP = parseDate(cell(arr, COL.fechaPedido));
-  if (!producto && !guia && total === 0 && !fechaP) return null;
-  return {
-    fechaReporte: parseDate(cell(arr, COL.fechaReporte)),
-    fechaPedido: fechaP,
-    numeroGuia: guia,
-    estatusNorm: normStatus(cell(arr, COL.estatus)),
-    departamento: strCell(cell(arr, COL.departamento)),
-    ciudad: strCell(cell(arr, COL.ciudad)),
-    transportadora: strCell(cell(arr, COL.transportadora)),
-    totalOrden: total,
-    ganancia: parseNumber(cell(arr, COL.ganancia)),
-    precioFlete: parseNumber(cell(arr, COL.precioFlete)),
-    costoDevolucionFlete: parseNumber(cell(arr, COL.costoDevolucionFlete)),
-    costoProducto: parseNumber(cell(arr, COL.costoProducto)),
-    producto: producto || 'Sin producto',
-    cantidad: parseNumber(cell(arr, COL.cantidad)),
-  };
-}
-
-function readDropiExcel(buf: ArrayBuffer): DropiRow[] {
-  const wb = XLSX.read(buf, { type: 'array', cellDates: true });
-  const name = wb.SheetNames[0];
-  if (!name) return [];
-  const sheet = wb.Sheets[name];
-  const matrix = XLSX.utils.sheet_to_json(sheet, {
-    header: 1,
-    defval: '',
-    raw: true,
-  }) as unknown[][];
-  const out: DropiRow[] = [];
-  for (let i = 1; i < matrix.length; i++) {
-    const row = matrix[i];
-    if (!Array.isArray(row)) continue;
-    const parsed = parseRow(row);
-    if (parsed) out.push(parsed);
-  }
-  return out;
-}
 
 function startOfDay(d: Date): Date {
   const x = new Date(d);
@@ -275,25 +148,31 @@ type ReturnStatsRow = {
 };
 
 function aggregateReturnStats(rows: DropiRow[], labelFn: (r: DropiRow) => string): ReturnStatsRow[] {
-  const map = new Map<string, { pedidos: number; conGuia: number; dev: number; ent: number }>();
+  const rowsByLabel = new Map<string, DropiRow[]>();
   for (const r of rows) {
     const label = labelFn(r).trim() || 'Sin dato';
-    if (!map.has(label)) map.set(label, { pedidos: 0, conGuia: 0, dev: 0, ent: 0 });
-    const acc = map.get(label)!;
-    acc.pedidos++;
-    if (r.numeroGuia) acc.conGuia++;
-    if (r.estatusNorm === 'DEVOLUCION') acc.dev++;
-    if (r.estatusNorm === 'ENTREGADO') acc.ent++;
+    if (!rowsByLabel.has(label)) rowsByLabel.set(label, []);
+    rowsByLabel.get(label)!.push(r);
   }
-  return Array.from(map.entries())
-    .map(([label, v]) => ({
-      label,
-      pedidos: v.pedidos,
-      conGuia: v.conGuia,
-      devueltos: v.dev,
-      entregados: v.ent,
-      devPct: v.conGuia > 0 ? (v.dev / v.conGuia) * 100 : 0,
-    }))
+  return Array.from(rowsByLabel.entries())
+    .map(([label, groupRows]) => {
+      const orders = aggregateDropiOrders(groupRows);
+      const pedidos = orders.length;
+      const conGuiaOrders = orders.filter(
+        (o) => o.numeroGuia && !dropiStatusExcludedFromGuiaYVentas(o.estatusNorm),
+      );
+      const conGuia = conGuiaOrders.length;
+      const dev = orders.filter((o) => o.estatusNorm === 'DEVOLUCION').length;
+      const ent = orders.filter((o) => o.estatusNorm === 'ENTREGADO').length;
+      return {
+        label,
+        pedidos,
+        conGuia,
+        devueltos: dev,
+        entregados: ent,
+        devPct: conGuia > 0 ? (dev / conGuia) * 100 : 0,
+      };
+    })
     .sort((a, b) => b.devPct - a.devPct || b.devueltos - a.devueltos || a.label.localeCompare(b.label, 'es'));
 }
 
@@ -372,63 +251,10 @@ function tdStyle(): CSSProperties {
   };
 }
 
-type KpiPack = {
-  totalPedidos: number;
-  conGuia: number;
-  entregados: number;
-  devueltos: number;
-  pendientes: number;
-  cancelados: number;
-  efectividad: number;
-  totalVentas: number;
-  gananciaNeta: number;
-  margenPct: number;
-  fletePromGeneral: number;
-  fleteDevPromGeneral: number;
-  ticketProm: number;
-};
+type KpiPack = ReturnType<typeof computeDropiReportKpis>;
 
 function computeKpis(rows: DropiRow[]): KpiPack {
-  const n = rows.length;
-  let conGuia = 0;
-  let entregados = 0;
-  let devueltos = 0;
-  let cancelados = 0;
-  let sumVentas = 0;
-  let sumGanancia = 0;
-  let sumFlete = 0;
-  let sumDevFlete = 0;
-  for (const r of rows) {
-    if (r.numeroGuia) conGuia++;
-    if (r.estatusNorm === 'ENTREGADO') entregados++;
-    if (r.estatusNorm === 'DEVOLUCION') devueltos++;
-    if (r.estatusNorm === 'CANCELADO') cancelados++;
-    sumVentas += r.totalOrden;
-    sumGanancia += r.ganancia;
-    sumFlete += r.precioFlete;
-    sumDevFlete += r.costoDevolucionFlete;
-  }
-  const pendientes = Math.max(0, conGuia - entregados - devueltos);
-  const efectividad = conGuia > 0 ? (entregados / conGuia) * 100 : 0;
-  const margenPct = sumVentas > 0 ? (sumGanancia / sumVentas) * 100 : 0;
-  const fletePromGeneral = n > 0 ? sumFlete / n : 0;
-  const fleteDevPromGeneral = n > 0 ? sumDevFlete / n : 0;
-  const ticketProm = n > 0 ? sumVentas / n : 0;
-  return {
-    totalPedidos: n,
-    conGuia,
-    entregados,
-    devueltos,
-    pendientes,
-    cancelados,
-    efectividad,
-    totalVentas: sumVentas,
-    gananciaNeta: sumGanancia,
-    margenPct,
-    fletePromGeneral,
-    fleteDevPromGeneral,
-    ticketProm,
-  };
+  return computeDropiReportKpis(rows, PENDIENTE_ESTATUS);
 }
 
 export default function ReporteDropiPage() {
@@ -497,24 +323,26 @@ export default function ReporteDropiPage() {
   const kpi = useMemo(() => computeKpis(filteredRows), [filteredRows]);
 
   const productEffectiveness = useMemo(() => {
-    const map = new Map<
-      string,
-      { pedidos: number; conG: number; ent: number; dev: number; gan: number }
-    >();
+    const rowsByProduct = new Map<string, DropiRow[]>();
     for (const r of filteredRows) {
-      const k = r.producto;
-      if (!map.has(k)) map.set(k, { pedidos: 0, conG: 0, ent: 0, dev: 0, gan: 0 });
-      const a = map.get(k)!;
-      a.pedidos++;
-      if (r.numeroGuia) a.conG++;
-      if (r.estatusNorm === 'ENTREGADO') a.ent++;
-      if (r.estatusNorm === 'DEVOLUCION') a.dev++;
-      a.gan += r.ganancia;
+      if (!rowsByProduct.has(r.producto)) rowsByProduct.set(r.producto, []);
+      rowsByProduct.get(r.producto)!.push(r);
     }
-    const rows = Array.from(map.entries()).map(([producto, v]) => {
-      const pend = Math.max(0, v.conG - v.ent - v.dev);
-      const eff = v.conG > 0 ? (v.ent / v.conG) * 100 : 0;
-      return { producto, ...v, pend, eff };
+    const rows = Array.from(rowsByProduct.entries()).map(([producto, groupRows]) => {
+      const orders = aggregateDropiOrders(groupRows);
+      const pedidos = orders.length;
+      const conGuiaOrders = orders.filter(
+        (o) => o.numeroGuia && !dropiStatusExcludedFromGuiaYVentas(o.estatusNorm),
+      );
+      const conG = conGuiaOrders.length;
+      const ent = orders.filter((o) => o.estatusNorm === 'ENTREGADO').length;
+      const dev = orders.filter((o) => o.estatusNorm === 'DEVOLUCION').length;
+      const pend = conGuiaOrders.filter(
+        (o) => o.estatusNorm !== 'ENTREGADO' && o.estatusNorm !== 'DEVOLUCION',
+      ).length;
+      const gan = orders.reduce((s, o) => s + o.ganancia, 0);
+      const eff = conG > 0 ? (ent / conG) * 100 : 0;
+      return { producto, pedidos, conG, ent, dev, pend, eff, gan };
     });
     rows.sort((a, b) => b.eff - a.eff);
     return rows;
@@ -596,18 +424,20 @@ export default function ReporteDropiPage() {
   }, [filteredRows]);
 
   const statusCounts = useMemo(() => {
+    const orders = aggregateDropiOrders(filteredRows);
     const m = new Map<string, number>();
-    for (const r of filteredRows) {
-      const k = r.estatusNorm || '—';
+    for (const o of orders) {
+      const k = o.estatusNorm || '—';
       m.set(k, (m.get(k) ?? 0) + 1);
     }
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
   }, [filteredRows]);
 
   const carrierCounts = useMemo(() => {
+    const orders = aggregateDropiOrders(filteredRows);
     const m = new Map<string, number>();
-    for (const r of filteredRows) {
-      const k = r.transportadora || 'Sin transportadora';
+    for (const o of orders) {
+      const k = o.transportadora || 'Sin transportadora';
       m.set(k, (m.get(k) ?? 0) + 1);
     }
     return Array.from(m.entries()).sort((a, b) => b[1] - a[1]);
@@ -827,7 +657,7 @@ export default function ReporteDropiPage() {
     highlight?: boolean;
     valueColor?: string;
   }> = [
-    { label: 'Total pedidos', value: String(kpi.totalPedidos), sub: '100% del filtro' },
+    { label: 'Total pedidos', value: String(kpi.totalPedidos), sub: 'Pedidos únicos (ID Dropi)' },
     {
       label: 'Con guía',
       value: String(kpi.conGuia),

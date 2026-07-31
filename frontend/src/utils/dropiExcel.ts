@@ -2,6 +2,7 @@ import * as XLSX from 'xlsx';
 
 export const DROPI_COL = {
   fechaReporte: 0,
+  idPedido: 1,
   fechaPedido: 3,
   numeroGuia: 9,
   estatus: 10,
@@ -20,6 +21,7 @@ export const DROPI_COL = {
 export type DropiRow = {
   fechaReporte: Date | null;
   fechaPedido: Date | null;
+  idPedido: string;
   numeroGuia: string;
   estatusNorm: string;
   departamento: string;
@@ -32,6 +34,48 @@ export type DropiRow = {
   costoProducto: number;
   producto: string;
   cantidad: number;
+};
+
+/** Estados excluidos de con guía y total ventas (KPIs). */
+export const DROPI_EXCLUDED_FROM_GUIA_Y_VENTAS = new Set([
+  '',
+  'CANCELADO',
+  'GUIA ANULADA',
+  'PENDIENTE CONFIRMACION',
+  'PENDIENTE',
+]);
+
+export type DropiOrderAgg = {
+  key: string;
+  idPedido: string;
+  numeroGuia: string;
+  estatusNorm: string;
+  producto: string;
+  departamento: string;
+  ciudad: string;
+  transportadora: string;
+  totalOrden: number;
+  ganancia: number;
+  precioFlete: number;
+  costoDevolucionFlete: number;
+  costoProducto: number;
+  cantidad: number;
+};
+
+export type DropiReportKpiPack = {
+  totalPedidos: number;
+  conGuia: number;
+  entregados: number;
+  devueltos: number;
+  pendientes: number;
+  cancelados: number;
+  efectividad: number;
+  totalVentas: number;
+  gananciaNeta: number;
+  margenPct: number;
+  fletePromGeneral: number;
+  fleteDevPromGeneral: number;
+  ticketProm: number;
 };
 
 export type DropiGuiaMetrics = {
@@ -100,6 +144,120 @@ export function dropiRowHasGuia(r: DropiRow): boolean {
   return r.numeroGuia.trim().length > 0;
 }
 
+export function dropiStatusExcludedFromGuiaYVentas(estatusNorm: string): boolean {
+  return DROPI_EXCLUDED_FROM_GUIA_Y_VENTAS.has(estatusNorm);
+}
+
+export function dropiOrderKey(r: DropiRow): string {
+  const id = String(r.idPedido ?? '').trim();
+  if (id) return `id:${id}`;
+  const guia = r.numeroGuia.trim();
+  if (guia) return `guia:${guia}`;
+  const fp = r.fechaPedido?.getTime() ?? 0;
+  return `row:${fp}|${r.producto}|${r.totalOrden}|${r.estatusNorm}`;
+}
+
+/** Agrupa líneas del Excel en pedidos únicos (recuento distintivo por ID Dropi). */
+export function aggregateDropiOrders(rows: DropiRow[]): DropiOrderAgg[] {
+  const map = new Map<string, DropiOrderAgg>();
+  for (const r of rows) {
+    const key = dropiOrderKey(r);
+    const cur = map.get(key);
+    if (!cur) {
+      map.set(key, {
+        key,
+        idPedido: String(r.idPedido ?? '').trim(),
+        numeroGuia: r.numeroGuia.trim(),
+        estatusNorm: r.estatusNorm,
+        producto: r.producto,
+        departamento: r.departamento,
+        ciudad: r.ciudad,
+        transportadora: r.transportadora,
+        totalOrden: r.totalOrden,
+        ganancia: r.ganancia,
+        precioFlete: r.precioFlete,
+        costoDevolucionFlete: r.costoDevolucionFlete,
+        costoProducto: r.costoProducto,
+        cantidad: r.cantidad,
+      });
+      continue;
+    }
+    cur.totalOrden += r.totalOrden;
+    cur.ganancia += r.ganancia;
+    cur.precioFlete += r.precioFlete;
+    cur.costoDevolucionFlete += r.costoDevolucionFlete;
+    cur.costoProducto += r.costoProducto;
+    cur.cantidad += r.cantidad;
+    if (!cur.numeroGuia && r.numeroGuia.trim()) cur.numeroGuia = r.numeroGuia.trim();
+    if (!cur.estatusNorm && r.estatusNorm) cur.estatusNorm = r.estatusNorm;
+    if (cur.producto !== r.producto) {
+      cur.producto = cur.producto.includes(r.producto) ? cur.producto : `${cur.producto} + ${r.producto}`;
+    }
+  }
+  return [...map.values()];
+}
+
+export const DROPI_PENDIENTE_ESTATUS_DEFAULT = new Set([
+  'NOVEDAD',
+  'RECLAME EN OFICINA',
+  'INTENTO DE ENTREGA',
+  'EN REPARTO',
+  'EN REEXPEDICION',
+  'DESPACHADA',
+]);
+
+export function computeDropiReportKpis(
+  rows: DropiRow[],
+  _pendienteEstatus: ReadonlySet<string> = DROPI_PENDIENTE_ESTATUS_DEFAULT,
+): DropiReportKpiPack {
+  const orders = aggregateDropiOrders(rows);
+  const totalPedidos = orders.length;
+
+  const conGuiaOrders = orders.filter(
+    (o) => o.numeroGuia && !dropiStatusExcludedFromGuiaYVentas(o.estatusNorm),
+  );
+  const conGuia = conGuiaOrders.length;
+
+  const entregados = orders.filter((o) => o.estatusNorm === 'ENTREGADO').length;
+  const devueltos = orders.filter((o) => o.estatusNorm === 'DEVOLUCION').length;
+  const cancelados = orders.filter((o) => o.estatusNorm === 'CANCELADO').length;
+
+  const pendientes = conGuiaOrders.filter(
+    (o) => o.estatusNorm !== 'ENTREGADO' && o.estatusNorm !== 'DEVOLUCION',
+  ).length;
+
+  const entregadosConGuia = conGuiaOrders.filter((o) => o.estatusNorm === 'ENTREGADO').length;
+  const efectividad = conGuia > 0 ? (entregadosConGuia / conGuia) * 100 : 0;
+
+  const ventasOrders = orders.filter((o) => !dropiStatusExcludedFromGuiaYVentas(o.estatusNorm));
+  const totalVentas = ventasOrders.reduce((s, o) => s + o.totalOrden, 0);
+  const gananciaNeta = ventasOrders.reduce((s, o) => s + o.ganancia, 0);
+  const sumFlete = ventasOrders.reduce((s, o) => s + o.precioFlete, 0);
+  const sumDevFlete = ventasOrders.reduce((s, o) => s + o.costoDevolucionFlete, 0);
+
+  const margenPct = totalVentas > 0 ? (gananciaNeta / totalVentas) * 100 : 0;
+  const nVentas = ventasOrders.length;
+  const fletePromGeneral = nVentas > 0 ? sumFlete / nVentas : 0;
+  const fleteDevPromGeneral = nVentas > 0 ? sumDevFlete / nVentas : 0;
+  const ticketProm = nVentas > 0 ? totalVentas / nVentas : 0;
+
+  return {
+    totalPedidos,
+    conGuia,
+    entregados,
+    devueltos,
+    pendientes,
+    cancelados,
+    efectividad,
+    totalVentas,
+    gananciaNeta,
+    margenPct,
+    fletePromGeneral,
+    fleteDevPromGeneral,
+    ticketProm,
+  };
+}
+
 /** Costos distintos a producto y flete (devolución de flete + diferencia no explicada). */
 export function dropiOtrosCostosRow(r: DropiRow): number {
   const base = r.costoDevolucionFlete;
@@ -118,6 +276,7 @@ function parseRow(arr: unknown[]): DropiRow | null {
   return {
     fechaReporte: parseDate(cell(arr, DROPI_COL.fechaReporte)),
     fechaPedido: fechaP,
+    idPedido: strCell(cell(arr, DROPI_COL.idPedido)),
     numeroGuia: guia,
     estatusNorm: normStatus(cell(arr, DROPI_COL.estatus)),
     departamento: strCell(cell(arr, DROPI_COL.departamento)),
@@ -154,23 +313,24 @@ export function readDropiExcel(buf: ArrayBuffer): DropiRow[] {
 }
 
 export function computeDropiGuiaMetrics(rows: DropiRow[]): DropiGuiaMetrics {
-  let totalPedidos = 0;
+  const orders = aggregateDropiOrders(rows).filter((o) => o.numeroGuia);
   let totalVenta = 0;
   let totalCostoProducto = 0;
   let totalCostoFlete = 0;
   let totalOtrosCostos = 0;
 
-  for (const r of rows) {
-    if (!dropiRowHasGuia(r)) continue;
-    totalPedidos++;
-    totalVenta += r.totalOrden;
-    totalCostoProducto += r.costoProducto;
-    totalCostoFlete += r.precioFlete;
-    totalOtrosCostos += dropiOtrosCostosRow(r);
+  for (const o of orders) {
+    totalVenta += o.totalOrden;
+    totalCostoProducto += o.costoProducto;
+    totalCostoFlete += o.precioFlete;
+    const known = o.costoProducto + o.precioFlete + o.costoDevolucionFlete;
+    const residual = o.totalOrden - o.ganancia - known;
+    totalOtrosCostos +=
+      Math.abs(residual) < 0.01 ? o.costoDevolucionFlete : o.costoDevolucionFlete + residual;
   }
 
   return {
-    totalPedidos,
+    totalPedidos: orders.length,
     totalVenta,
     totalCostoProducto,
     totalCostoFlete,
