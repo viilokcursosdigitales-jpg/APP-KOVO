@@ -19,6 +19,7 @@ import {
   aggregateDropiOrders,
   computeDropiReportKpis,
   dropiStatusExcludedFromGuiaYVentas,
+  ordersWithGuia,
   readDropiExcel,
   type DropiRow,
 } from '../utils/dropiExcel';
@@ -156,11 +157,9 @@ function aggregateReturnStats(rows: DropiRow[], labelFn: (r: DropiRow) => string
   }
   return Array.from(rowsByLabel.entries())
     .map(([label, groupRows]) => {
-      const orders = aggregateDropiOrders(groupRows);
+      const orders = ordersWithGuia(aggregateDropiOrders(groupRows));
       const pedidos = orders.length;
-      const conGuiaOrders = orders.filter(
-        (o) => o.numeroGuia && !dropiStatusExcludedFromGuiaYVentas(o.estatusNorm),
-      );
+      const conGuiaOrders = orders.filter((o) => !dropiStatusExcludedFromGuiaYVentas(o.estatusNorm));
       const conGuia = conGuiaOrders.length;
       const dev = orders.filter((o) => o.estatusNorm === 'DEVOLUCION').length;
       const ent = orders.filter((o) => o.estatusNorm === 'ENTREGADO').length;
@@ -329,11 +328,9 @@ export default function ReporteDropiPage() {
       rowsByProduct.get(r.producto)!.push(r);
     }
     const rows = Array.from(rowsByProduct.entries()).map(([producto, groupRows]) => {
-      const orders = aggregateDropiOrders(groupRows);
+      const orders = ordersWithGuia(aggregateDropiOrders(groupRows));
       const pedidos = orders.length;
-      const conGuiaOrders = orders.filter(
-        (o) => o.numeroGuia && !dropiStatusExcludedFromGuiaYVentas(o.estatusNorm),
-      );
+      const conGuiaOrders = orders.filter((o) => !dropiStatusExcludedFromGuiaYVentas(o.estatusNorm));
       const conG = conGuiaOrders.length;
       const ent = orders.filter((o) => o.estatusNorm === 'ENTREGADO').length;
       const dev = orders.filter((o) => o.estatusNorm === 'DEVOLUCION').length;
@@ -424,7 +421,7 @@ export default function ReporteDropiPage() {
   }, [filteredRows]);
 
   const statusCounts = useMemo(() => {
-    const orders = aggregateDropiOrders(filteredRows);
+    const orders = ordersWithGuia(aggregateDropiOrders(filteredRows));
     const m = new Map<string, number>();
     for (const o of orders) {
       const k = o.estatusNorm || '—';
@@ -434,7 +431,7 @@ export default function ReporteDropiPage() {
   }, [filteredRows]);
 
   const carrierCounts = useMemo(() => {
-    const orders = aggregateDropiOrders(filteredRows);
+    const orders = ordersWithGuia(aggregateDropiOrders(filteredRows));
     const m = new Map<string, number>();
     for (const o of orders) {
       const k = o.transportadora || 'Sin transportadora';
@@ -657,7 +654,7 @@ export default function ReporteDropiPage() {
     highlight?: boolean;
     valueColor?: string;
   }> = [
-    { label: 'Total pedidos', value: String(kpi.totalPedidos), sub: 'Pedidos únicos (ID Dropi)' },
+    { label: 'Total pedidos', value: String(kpi.totalPedidos), sub: 'Guías distintas (NÚMERO GUIA)' },
     {
       label: 'Con guía',
       value: String(kpi.conGuia),
