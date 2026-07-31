@@ -6171,6 +6171,91 @@ function productLinkedSpendForDay(productSpendByDay, dateStr, productId) {
   return Number(dayMap.get(Number(productId)) || 0);
 }
 
+function trackGananciaProductLabels(productLabelByPid, contrib) {
+  if (!productLabelByPid || !(contrib instanceof Map)) return;
+  for (const row of contrib.values()) {
+    if (!row || typeof row !== 'object') continue;
+    const pid = row.product_id != null ? Number(row.product_id) : NaN;
+    const label = String(row.label || '').trim();
+    if (Number.isFinite(pid) && pid > 0 && label) productLabelByPid.set(pid, label);
+  }
+}
+
+/** Incluye gasto Meta vinculado aunque el producto no tenga ventas despachadas ese día (p. ej. hoy). */
+function buildGananciaByProductForDay(
+  innerProdRaw,
+  dateStr,
+  productSpendByDay,
+  productLabelByPid,
+  usesCampaignProductSpend,
+  lineTitleToProductIdMap,
+) {
+  const innerProd =
+    innerProdRaw && innerProdRaw.size
+      ? consolidateGananciaProductDayInner(innerProdRaw, lineTitleToProductIdMap)
+      : innerProdRaw;
+  /** @type {Record<string, object>} */
+  let by_product = {};
+  if (innerProd && innerProd.size) {
+    by_product = Object.fromEntries(
+      [...innerProd.entries()].map(([pk, v]) => {
+        const pid = v.product_id != null ? Number(v.product_id) : null;
+        let gastoProducto = 0;
+        if (usesCampaignProductSpend && pid != null && Number.isFinite(pid)) {
+          gastoProducto = productLinkedSpendForDay(productSpendByDay, dateStr, pid);
+          if (v.label) productLabelByPid.set(pid, String(v.label));
+        }
+        return [
+          pk,
+          {
+            label: v.label,
+            product_id: v.product_id,
+            ventas_despachadas_total: Math.round(v.ventas_despachadas * 100) / 100,
+            ventas_entregadas_total: Math.round(v.ventas_entregadas * 100) / 100,
+            ventas_despachadas_pedidos: v.pedidos,
+            cantidad_producto_total: Math.round(v.qty * 100) / 100,
+            costo_producto_total: Math.round(v.costo_producto * 100) / 100,
+            costo_producto_entregado_total: Math.round(v.costo_entregado * 100) / 100,
+            costo_flete_promedio_total: Math.round(v.flete * 100) / 100,
+            gasto_publicitario_total: Math.round(gastoProducto * 100) / 100,
+          },
+        ];
+      }),
+    );
+  }
+  if (usesCampaignProductSpend && productSpendByDay && productSpendByDay.size) {
+    const dayMap = productSpendByDay.get(dateStr);
+    if (dayMap) {
+      for (const [pidRaw, spendRaw] of dayMap.entries()) {
+        const pid = Number(pidRaw);
+        const spend = Number(spendRaw);
+        if (!Number.isFinite(pid) || pid <= 0 || !Number.isFinite(spend) || spend <= 0) continue;
+        const pk = `p:${pid}`;
+        const existing = by_product[pk];
+        if (existing) {
+          if (!Number(existing.gasto_publicitario_total)) {
+            existing.gasto_publicitario_total = Math.round(spend * 100) / 100;
+          }
+          continue;
+        }
+        by_product[pk] = {
+          label: productLabelByPid.get(pid) || `Producto ${pid}`,
+          product_id: pid,
+          ventas_despachadas_total: 0,
+          ventas_entregadas_total: 0,
+          ventas_despachadas_pedidos: 0,
+          cantidad_producto_total: 0,
+          costo_producto_total: 0,
+          costo_producto_entregado_total: 0,
+          costo_flete_promedio_total: 0,
+          gasto_publicitario_total: Math.round(spend * 100) / 100,
+        };
+      }
+    }
+  }
+  return by_product;
+}
+
 /** Gasto Meta un solo día (insights + listado de cuentas en paralelo). */
 async function gananciaFetchMetaSpendSingleDay(organizationId, dateStr) {
   const out = { spend: 0, metaPartialErrors: [], metaCurrency: '' };
@@ -8871,6 +8956,12 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
 
     const gananciaComparable = Boolean(sameMetaCurrency && shopC && !hasManualMismatchedCurrency);
     const sortedDesc = [...sortedAsc].reverse();
+    /** @type {Map<number, string>} */
+    const productLabelByPid = new Map();
+    for (const inner of productByDay.values()) {
+      const consolidated = consolidateGananciaProductDayInner(inner, lineTitleToProductIdMap);
+      trackGananciaProductLabels(productLabelByPid, consolidated);
+    }
     const days = [];
     for (const dateStr of sortedDesc) {
       const ventasTotal = ventasByDay.get(dateStr) || 0;
@@ -8889,37 +8980,14 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
           Math.round((ventasEntregadasTotal - gastoAds - costoProductoEntregado - costoFletePromedio) * 100) / 100;
       }
       const innerProdRaw = productByDay.get(dateStr);
-      const innerProd =
-        innerProdRaw && innerProdRaw.size
-          ? consolidateGananciaProductDayInner(innerProdRaw, lineTitleToProductIdMap)
-          : innerProdRaw;
-      let by_product = {};
-      if (innerProd && innerProd.size) {
-        by_product = Object.fromEntries(
-          [...innerProd.entries()].map(([pk, v]) => {
-            const pid = v.product_id != null ? Number(v.product_id) : null;
-            let gastoProducto = 0;
-            if (usesCampaignProductSpend && pid != null && Number.isFinite(pid)) {
-              gastoProducto = productLinkedSpendForDay(productSpendByDay, dateStr, pid);
-            }
-            return [
-              pk,
-              {
-                label: v.label,
-                product_id: v.product_id,
-                ventas_despachadas_total: Math.round(v.ventas_despachadas * 100) / 100,
-                ventas_entregadas_total: Math.round(v.ventas_entregadas * 100) / 100,
-                ventas_despachadas_pedidos: v.pedidos,
-                cantidad_producto_total: Math.round(v.qty * 100) / 100,
-                costo_producto_total: Math.round(v.costo_producto * 100) / 100,
-                costo_producto_entregado_total: Math.round(v.costo_entregado * 100) / 100,
-                costo_flete_promedio_total: Math.round(v.flete * 100) / 100,
-                gasto_publicitario_total: Math.round(gastoProducto * 100) / 100,
-              },
-            ];
-          }),
-        );
-      }
+      const by_product = buildGananciaByProductForDay(
+        innerProdRaw,
+        dateStr,
+        productSpendByDay,
+        productLabelByPid,
+        usesCampaignProductSpend,
+        lineTitleToProductIdMap,
+      );
       days.push({
         date: dateStr,
         ventas_despachadas_total: Math.round(ventasTotal * 100) / 100,
@@ -8945,6 +9013,25 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         } else {
           const x = productLabelByKey.get(pk);
           if (x && !x.product_id && v.product_id != null) x.product_id = v.product_id;
+        }
+      }
+    }
+    for (const [pid, label] of productLabelByPid.entries()) {
+      const pk = `p:${pid}`;
+      if (!productLabelByKey.has(pk)) {
+        productLabelByKey.set(pk, { key: pk, label: String(label || pk), product_id: pid });
+      }
+    }
+    for (const dayRow of days) {
+      const byp = dayRow && dayRow.by_product && typeof dayRow.by_product === 'object' ? dayRow.by_product : {};
+      for (const [pk, v] of Object.entries(byp)) {
+        if (!v || typeof v !== 'object') continue;
+        if (!productLabelByKey.has(pk)) {
+          productLabelByKey.set(pk, {
+            key: pk,
+            label: String(v.label || pk),
+            product_id: v.product_id ?? null,
+          });
         }
       }
     }

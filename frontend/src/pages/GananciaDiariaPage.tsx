@@ -164,6 +164,8 @@ function sumProductDaySlices(slices: ProductDaySlice[], productId: number): Prod
   let costoProd = 0;
   let costoProdEnt = 0;
   let costoFlete = 0;
+  let gastoAds = 0;
+  let hasLinkedGasto = false;
   let label = '';
   for (const s of slices) {
     ventasDesp += Number(s.ventas_despachadas_total || 0);
@@ -173,6 +175,11 @@ function sumProductDaySlices(slices: ProductDaySlice[], productId: number): Prod
     costoProd += Number(s.costo_producto_total || 0);
     costoProdEnt += Number(s.costo_producto_entregado_total || 0);
     costoFlete += Number(s.costo_flete_promedio_total || 0);
+    const sliceGasto = s.gasto_publicitario_total;
+    if (sliceGasto != null && Number.isFinite(Number(sliceGasto))) {
+      gastoAds += Number(sliceGasto);
+      hasLinkedGasto = true;
+    }
     if (!label && s.label) label = String(s.label);
   }
   return {
@@ -185,6 +192,7 @@ function sumProductDaySlices(slices: ProductDaySlice[], productId: number): Prod
     costo_producto_total: costoProd,
     costo_producto_entregado_total: costoProdEnt,
     costo_flete_promedio_total: costoFlete,
+    gasto_publicitario_total: hasLinkedGasto ? Math.round(gastoAds * 100) / 100 : undefined,
   };
 }
 
