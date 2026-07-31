@@ -1,5 +1,5 @@
 import type { CSSProperties, ReactNode, RefObject } from 'react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -273,6 +273,22 @@ function DailyUtilidadBarChart({
   fmt: (n: number) => string;
   formatTableDate: (iso: string) => string;
 }) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [containerWidth, setContainerWidth] = useState(0);
+
+  useEffect(() => {
+    const el = containerRef.current;
+    if (!el) return;
+    const updateWidth = () => {
+      const w = el.clientWidth;
+      if (w > 0) setContainerWidth(w);
+    };
+    updateWidth();
+    const ro = new ResizeObserver(updateWidth);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   const chartPoints = useMemo(() => {
     const sorted = [...days].sort((a, b) => a.date.localeCompare(b.date));
     return sorted
@@ -304,13 +320,16 @@ function DailyUtilidadBarChart({
   const range = maxVal - minVal || Math.max(Math.abs(maxVal), Math.abs(minVal), 1);
 
   const chartH = 180;
-  const barSlot = 28;
+  const minBarSlot = 16;
   const padL = 68;
   const padR = 12;
   const padT = 12;
   const padB = 36;
   const plotH = chartH - padT - padB;
-  const chartW = padL + padR + chartPoints.length * barSlot;
+  const minChartW = padL + padR + chartPoints.length * minBarSlot;
+  const chartW = containerWidth > 0 ? Math.max(containerWidth, minChartW) : minChartW;
+  const barSlot = (chartW - padL - padR) / chartPoints.length;
+  const needsScroll = containerWidth > 0 && minChartW > containerWidth;
 
   const valueToY = (v: number) => padT + ((maxVal - v) / range) * plotH;
   const zeroY = valueToY(0);
@@ -322,8 +341,13 @@ function DailyUtilidadBarChart({
       <div style={{ fontSize: 12, fontWeight: 600, color: ds.textSecondary, marginBottom: 8 }}>
         Utilidad neta por día
       </div>
-      <div style={{ overflowX: 'auto' }}>
-        <svg width={chartW} height={chartH} viewBox={`0 0 ${chartW} ${chartH}`} style={{ display: 'block' }}>
+      <div ref={containerRef} style={{ width: '100%', overflowX: needsScroll ? 'auto' : 'hidden' }}>
+        <svg
+          width={needsScroll ? chartW : '100%'}
+          height={chartH}
+          viewBox={`0 0 ${chartW} ${chartH}`}
+          style={{ display: 'block', minWidth: needsScroll ? chartW : undefined }}
+        >
           {yTicks.map((tick) => {
             const y = valueToY(tick);
             return (
@@ -346,8 +370,9 @@ function DailyUtilidadBarChart({
 
           {chartPoints.map((d, i) => {
             const v = d.utilidad;
-            const x = padL + i * barSlot + 5;
-            const barW = barSlot - 10;
+            const barGap = Math.min(10, barSlot * 0.25);
+            const barW = Math.max(4, barSlot - barGap);
+            const x = padL + i * barSlot + barGap / 2;
             const yVal = valueToY(v);
             const yTop = Math.min(zeroY, yVal);
             const barH = v === 0 ? 0 : Math.max(Math.abs(yVal - zeroY), 2);
