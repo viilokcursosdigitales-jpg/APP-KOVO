@@ -1,5 +1,5 @@
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode, RefObject } from 'react';
-import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowDownRight,
   ArrowUpRight,
@@ -16,7 +16,6 @@ import {
   Target,
   TrendingUp,
   Wallet,
-  X,
 } from 'lucide-react';
 import { ds } from '../../design-system/ds';
 import {
@@ -612,147 +611,100 @@ function InsightCard({
   );
 }
 
-function ComplementaryProductsModal({
-  productLabel,
-  rows,
+function complementaryCantidadPct(cantidad: number, mainPedidos: number): number | null {
+  if (mainPedidos <= 0 || cantidad <= 0) return null;
+  return Math.round((cantidad / mainPedidos) * 1000) / 10;
+}
+
+const complementaryRowBg = 'rgba(99, 102, 241, 0.04)';
+
+function ComplementaryProductTableRow({
+  comp,
+  mainPedidos,
   fmt,
-  onClose,
   productImageById,
 }: {
-  productLabel: string;
-  rows: ComplementaryProductDetail[];
+  comp: ComplementaryProductDetail;
+  mainPedidos: number;
   fmt: (n: number) => string;
-  onClose: () => void;
   productImageById: ProductImageMap;
 }) {
-  const totals = rows.reduce(
-    (acc, r) => {
-      acc.ventas += r.ventas_despachadas || 0;
-      acc.costo += r.costo_producto || 0;
-      acc.flete += r.costo_flete || 0;
-      acc.cantidad += r.cantidad || 0;
-      return acc;
-    },
-    { ventas: 0, costo: 0, flete: 0, cantidad: 0 },
-  );
+  const pctCantidad = complementaryCantidadPct(comp.cantidad || 0, mainPedidos);
+  const costosComp = (comp.costo_producto || 0) + (comp.costo_flete || 0);
+  const tdComp: CSSProperties = { ...tdStyle, background: complementaryRowBg, fontSize: 12 };
+  const tdCompRight: CSSProperties = { ...tdRight, background: complementaryRowBg, fontSize: 12 };
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="complementary-modal-title"
-      style={{
-        position: 'fixed',
-        inset: 0,
-        zIndex: 1000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: 24,
-        background: 'rgba(15, 23, 42, 0.45)',
+    <tr
+      style={{ background: complementaryRowBg }}
+      onMouseEnter={(e) => {
+        e.currentTarget.style.background = 'rgba(99, 102, 241, 0.08)';
+        e.currentTarget.querySelectorAll('td').forEach((cell) => {
+          (cell as HTMLTableCellElement).style.background = 'rgba(99, 102, 241, 0.08)';
+        });
       }}
-      onClick={onClose}
+      onMouseLeave={(e) => {
+        e.currentTarget.style.background = complementaryRowBg;
+        e.currentTarget.querySelectorAll('td').forEach((cell) => {
+          (cell as HTMLTableCellElement).style.background = complementaryRowBg;
+        });
+      }}
     >
-      <div
-        style={{
-          ...dashboardCard,
-          width: 'min(720px, 100%)',
-          maxHeight: 'min(80vh, 640px)',
-          display: 'flex',
-          flexDirection: 'column',
-          overflow: 'hidden',
-        }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div
-          style={{
-            padding: '18px 22px',
-            borderBottom: `1px solid ${ds.borderRow}`,
-            display: 'flex',
-            alignItems: 'flex-start',
-            justifyContent: 'space-between',
-            gap: 12,
-          }}
-        >
-          <div>
-            <h3 id="complementary-modal-title" style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>
-              Productos complementarios
-            </h3>
-            <p style={{ margin: '6px 0 0', fontSize: 13, color: ds.textSecondary, lineHeight: 1.45 }}>
-              Desglose incluido en <strong>{productLabel}</strong>. Los costos compartidos (flete, etc.) están
-              prorrateados según la participación de cada ítem en el pedido.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Cerrar"
+      <td style={{ ...tdComp, width: 48, paddingLeft: 20 }}>
+        <ProductThumbnail
+          label={comp.label}
+          productId={comp.product_id}
+          imageUrl={productImageUrl(productImageById, comp.product_id)}
+          size={28}
+        />
+      </td>
+      <td style={{ ...tdComp, maxWidth: 180, paddingLeft: 8 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+          <span style={{ color: ds.textMuted, fontSize: 11, lineHeight: 1 }} aria-hidden>
+            ↳
+          </span>
+          <span style={{ fontWeight: 500, color: ds.textSecondary }}>{comp.label}</span>
+          <span
             style={{
-              border: 'none',
-              background: ds.bgSubtle,
-              borderRadius: 8,
-              width: 32,
-              height: 32,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              cursor: 'pointer',
-              color: ds.textSecondary,
-              flexShrink: 0,
+              fontSize: 10,
+              fontWeight: 600,
+              padding: '2px 6px',
+              borderRadius: 6,
+              background: 'rgba(99, 102, 241, 0.1)',
+              color: '#6366f1',
+              whiteSpace: 'nowrap',
             }}
           >
-            <X size={16} />
-          </button>
+            Complementario
+          </span>
         </div>
-        <div style={{ overflow: 'auto', padding: '0 0 8px' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 560 }}>
-            <thead>
-              <tr>
-                <th style={thStyle}>Producto</th>
-                <th style={thRight}>Cantidad</th>
-                <th style={thRight}>Ventas despachadas</th>
-                <th style={thRight}>Costo producto</th>
-                <th style={thRight}>Flete prorrateado</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((r, idx) => (
-                <tr key={`${r.product_id ?? r.label}-${idx}`}>
-                  <td style={tdStyle}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-                      <ProductThumbnail
-                        label={r.label}
-                        productId={r.product_id}
-                        imageUrl={productImageUrl(productImageById, r.product_id)}
-                        size={32}
-                      />
-                      <span style={{ fontWeight: 600 }}>{r.label}</span>
-                    </div>
-                  </td>
-                  <td style={tdRight}>{r.cantidad > 0 ? r.cantidad.toLocaleString('es-CO') : '—'}</td>
-                  <td style={tdRight}>{fmt(r.ventas_despachadas || 0)}</td>
-                  <td style={tdRight}>{fmt(r.costo_producto || 0)}</td>
-                  <td style={tdRight}>{fmt(r.costo_flete || 0)}</td>
-                </tr>
-              ))}
-            </tbody>
-            {rows.length > 1 ? (
-              <tfoot>
-                <tr style={{ borderTop: `2px solid ${ds.borderRow}` }}>
-                  <td style={{ ...tdStyle, fontWeight: 700 }}>Total complementarios</td>
-                  <td style={{ ...tdRight, fontWeight: 700 }}>
-                    {totals.cantidad > 0 ? totals.cantidad.toLocaleString('es-CO') : '—'}
-                  </td>
-                  <td style={{ ...tdRight, fontWeight: 700 }}>{fmt(totals.ventas)}</td>
-                  <td style={{ ...tdRight, fontWeight: 700 }}>{fmt(totals.costo)}</td>
-                  <td style={{ ...tdRight, fontWeight: 700 }}>{fmt(totals.flete)}</td>
-                </tr>
-              </tfoot>
+      </td>
+      <td style={tdCompRight}>{fmt(comp.ventas_despachadas || 0)}</td>
+      <td style={tdCompRight}>{fmt(comp.ventas_entregadas || 0)}</td>
+      <td style={tdCompRight}>{fmt(costosComp)}</td>
+      <td style={tdCompRight}>
+        {comp.cantidad > 0 ? (
+          <>
+            <div>{comp.cantidad.toLocaleString('es-CO')}</div>
+            {pctCantidad != null ? (
+              <div style={{ fontSize: 11, color: '#6366f1', fontWeight: 600, marginTop: 2 }}>
+                {pctCantidad.toFixed(1)}% vs pedidos
+              </div>
             ) : null}
-          </table>
-        </div>
-      </div>
-    </div>
+          </>
+        ) : (
+          '—'
+        )}
+      </td>
+      <td style={tdCompRight}>—</td>
+      <td style={tdCompRight}>—</td>
+      <td style={tdCompRight}>—</td>
+      <td style={tdCompRight}>—</td>
+      <td style={tdCompRight}>—</td>
+      <td style={tdCompRight}>—</td>
+      <td style={tdComp}>—</td>
+      <td style={tdComp}>—</td>
+    </tr>
   );
 }
 
@@ -903,24 +855,11 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
 
   const fmt = (n: number) => formatMoney(n, seriesVentasCur);
 
-  const [complementaryModal, setComplementaryModal] = useState<{
-    label: string;
-    rows: ComplementaryProductDetail[];
-  } | null>(null);
-
   const complementaryByProductId = useMemo(() => {
     const raw = productComplementaryDetail;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return {};
     return raw;
   }, [productComplementaryDetail]);
-
-  const openComplementaryModal = (row: EnrichedProductRow) => {
-    const pid = row.product_id;
-    if (pid == null || !Number.isFinite(pid)) return;
-    const rows = complementaryByProductId[String(pid)];
-    if (!Array.isArray(rows) || !rows.length) return;
-    setComplementaryModal({ label: row.label, rows });
-  };
 
   const sortedRangeDays = useMemoSortedDays(daysInRange);
   const kpiSparklines = {
@@ -1534,96 +1473,101 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                           const costosYGastos =
                             row.costoProductoEntregado + row.gastoAdmin + row.costoFlete;
                           return (
-                            <tr
-                              key={row.key}
-                              style={{ transition: 'background 0.12s ease' }}
-                              onMouseEnter={(e) => {
-                                e.currentTarget.style.background = ds.bgSubtle;
-                              }}
-                              onMouseLeave={(e) => {
-                                e.currentTarget.style.background = 'transparent';
-                              }}
-                            >
-                              <td style={{ ...tdStyle, width: 48 }}>
-                                <ProductThumbnail
-                                  label={row.label}
-                                  productId={row.product_id}
-                                  imageUrl={productImageUrl(productImageById, row.product_id)}
-                                />
-                              </td>
-                              <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 180 }}>
-                                {hasComplementaries ? (
-                                  <button
-                                    type="button"
-                                    onClick={() => openComplementaryModal(row)}
-                                    title="Ver productos complementarios incluidos"
+                            <Fragment key={row.key}>
+                              <tr
+                                style={{ transition: 'background 0.12s ease' }}
+                                onMouseEnter={(e) => {
+                                  e.currentTarget.style.background = ds.bgSubtle;
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.currentTarget.style.background = 'transparent';
+                                }}
+                              >
+                                <td style={{ ...tdStyle, width: 48 }}>
+                                  <ProductThumbnail
+                                    label={row.label}
+                                    productId={row.product_id}
+                                    imageUrl={productImageUrl(productImageById, row.product_id)}
+                                  />
+                                </td>
+                                <td style={{ ...tdStyle, fontWeight: 600, maxWidth: 180 }}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+                                    <span>{row.label}</span>
+                                    {hasComplementaries ? (
+                                      <span
+                                        style={{
+                                          fontSize: 10,
+                                          fontWeight: 600,
+                                          padding: '2px 6px',
+                                          borderRadius: 6,
+                                          background: ds.bgSubtle,
+                                          color: ds.textMuted,
+                                          whiteSpace: 'nowrap',
+                                        }}
+                                      >
+                                        {complementaries.length} compl.
+                                      </span>
+                                    ) : null}
+                                  </div>
+                                </td>
+                                <td style={tdRight}>
+                                  <div>{fmt(row.ventasDespachadas)}</div>
+                                  <MiniDelta value={row.ventasGrowthPct} />
+                                  <Sparkline values={row.ventasSeries} />
+                                </td>
+                                <td style={tdRight}>{fmt(row.ventasTotales)}</td>
+                                <td style={tdRight}>{fmt(costosYGastos)}</td>
+                                <td style={tdRight}>{row.pedidos}</td>
+                                <td style={tdRight}>
+                                  <div>{fmt(row.gastoPublicitario)}</div>
+                                  <Sparkline values={row.adsSeries} color="#f59e0b" />
+                                </td>
+                                <td style={tdRight}>
+                                  <div>{formatRoas(row.roasDespachado)}</div>
+                                  <Sparkline values={row.roasSeries} color="#6366f1" />
+                                </td>
+                                <td style={tdRight}>{row.cpa != null ? fmt(row.cpa) : '—'}</td>
+                                <td style={tdRight}>
+                                  {row.utilidadPct != null ? `${row.utilidadPct.toFixed(1)}%` : '—'}
+                                </td>
+                                <td style={tdRight}>
+                                  {row.utilidad != null ? fmt(row.utilidad) : '—'}
+                                </td>
+                                <td style={utilidadUnitStyle}>
+                                  {row.utilidadUnitaria != null ? fmt(row.utilidadUnitaria) : '—'}
+                                </td>
+                                <td style={tdStyle}>
+                                  <EstadoBadge estado={row.estado} />
+                                </td>
+                                <td style={tdStyle}>
+                                  <span
                                     style={{
-                                      border: 'none',
-                                      background: 'none',
-                                      padding: 0,
-                                      margin: 0,
-                                      font: 'inherit',
+                                      display: 'inline-flex',
+                                      padding: '6px 12px',
+                                      borderRadius: 8,
+                                      border: `1px solid ${ds.borderCard}`,
+                                      background: ds.bgSubtle,
+                                      fontSize: 12,
                                       fontWeight: 600,
-                                      color: '#4f46e5',
-                                      cursor: 'pointer',
-                                      textAlign: 'left',
-                                      textDecoration: 'underline',
-                                      textDecorationColor: 'rgba(79, 70, 229, 0.35)',
-                                      textUnderlineOffset: 3,
+                                      color: ds.textSecondary,
                                     }}
                                   >
-                                    {row.label}
-                                  </button>
-                                ) : (
-                                  row.label
-                                )}
-                              </td>
-                              <td style={tdRight}>
-                                <div>{fmt(row.ventasDespachadas)}</div>
-                                <MiniDelta value={row.ventasGrowthPct} />
-                                <Sparkline values={row.ventasSeries} />
-                              </td>
-                              <td style={tdRight}>{fmt(row.ventasTotales)}</td>
-                              <td style={tdRight}>{fmt(costosYGastos)}</td>
-                              <td style={tdRight}>{row.pedidos}</td>
-                              <td style={tdRight}>
-                                <div>{fmt(row.gastoPublicitario)}</div>
-                                <Sparkline values={row.adsSeries} color="#f59e0b" />
-                              </td>
-                              <td style={tdRight}>
-                                <div>{formatRoas(row.roasDespachado)}</div>
-                                <Sparkline values={row.roasSeries} color="#6366f1" />
-                              </td>
-                              <td style={tdRight}>{row.cpa != null ? fmt(row.cpa) : '—'}</td>
-                              <td style={tdRight}>
-                                {row.utilidadPct != null ? `${row.utilidadPct.toFixed(1)}%` : '—'}
-                              </td>
-                              <td style={tdRight}>
-                                {row.utilidad != null ? fmt(row.utilidad) : '—'}
-                              </td>
-                              <td style={utilidadUnitStyle}>
-                                {row.utilidadUnitaria != null ? fmt(row.utilidadUnitaria) : '—'}
-                              </td>
-                              <td style={tdStyle}>
-                                <EstadoBadge estado={row.estado} />
-                              </td>
-                              <td style={tdStyle}>
-                                <span
-                                  style={{
-                                    display: 'inline-flex',
-                                    padding: '6px 12px',
-                                    borderRadius: 8,
-                                    border: `1px solid ${ds.borderCard}`,
-                                    background: ds.bgSubtle,
-                                    fontSize: 12,
-                                    fontWeight: 600,
-                                    color: ds.textSecondary,
-                                  }}
-                                >
-                                  {row.accionRecomendada}
-                                </span>
-                              </td>
-                            </tr>
+                                    {row.accionRecomendada}
+                                  </span>
+                                </td>
+                              </tr>
+                              {hasComplementaries
+                                ? complementaries.map((comp, idx) => (
+                                    <ComplementaryProductTableRow
+                                      key={`${row.key}-comp-${comp.product_id ?? comp.label}-${idx}`}
+                                      comp={comp}
+                                      mainPedidos={row.pedidos}
+                                      fmt={fmt}
+                                      productImageById={productImageById}
+                                    />
+                                  ))
+                                : null}
+                            </Fragment>
                           );
                         })}
                       </tbody>
@@ -1980,15 +1924,6 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
             </aside>
           </div>
         </>
-      ) : null}
-      {complementaryModal ? (
-        <ComplementaryProductsModal
-          productLabel={complementaryModal.label}
-          rows={complementaryModal.rows}
-          fmt={fmt}
-          onClose={() => setComplementaryModal(null)}
-          productImageById={productImageById}
-        />
       ) : null}
     </div>
   );
