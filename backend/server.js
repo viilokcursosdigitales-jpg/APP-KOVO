@@ -7079,24 +7079,153 @@ async function loadMetaCampaignPrimaryProductIds(organizationId) {
   return cfg.primaryProductIds;
 }
 
-/** Agrupa complementarios (explícitos o del pedido) dentro del producto principal vinculado a campaña Meta. */
-function rollupOrderContribToPrimaryProducts(contrib, linkConfig) {
-  const primaryProductIds = linkConfig?.primaryProductIds;
+function enrichContribRowProductIds(contrib, titleToProductIdMap) {
+  if (!contrib || !(contrib instanceof Map)) return contrib;
+  for (const row of contrib.values()) {
+    if (!row || typeof row !== 'object') continue;
+    let pid = row.product_id != null ? Number(row.product_id) : NaN;
+    if (!Number.isFinite(pid) || pid <= 0) {
+      const labelKey = normalizeLineItemLookupKey(row.label || '');
+      if (labelKey && titleToProductIdMap instanceof Map && titleToProductIdMap.has(labelKey)) {
+        pid = Number(titleToProductIdMap.get(labelKey));
+        if (Number.isFinite(pid) && pid > 0) row.product_id = pid;
+      }
+    }
+  }
+  return contrib;
+}
+
+function resolveComplementaryTargetPrimary(compPid, primaries, linkConfig, hintedPrimary = null) {
+  if (hintedPrimary != null && Number.isFinite(Number(hintedPrimary)) && Number(hintedPrimary) > 0) {
+    return Number(hintedPrimary);
+  }
+  const compNum = compPid != null ? Number(compPid) : NaN;
+  if (Number.isFinite(compNum) && compNum > 0) {
+    for (const [, row] of primaries) {
+      const primaryPid = Number(row.product_id);
+      if (!Number.isFinite(primaryPid) || primaryPid <= 0) continue;
+      const compSet = linkConfig?.primaryToComplementaryIds?.get(primaryPid);
+      if (compSet && compSet.has(compNum)) return primaryPid;
+    }
+    const mapped = linkConfig?.complementaryToPrimary?.get(compNum);
+    if (mapped != null && linkConfig?.primaryProductIds?.has(Number(mapped))) return Number(mapped);
+  }
+  if (primaries.length === 1) {
+    const only = Number(primaries[0][1].product_id);
+    if (Number.isFinite(only) && only > 0) return only;
+  }
+  return null;
+}
+
+function classifyOrderContribForRollup(contrib, linkConfig) {
+  const primaryProductIds = linkConfig?.primaryProductIds || new Set();
   const complementaryProductIds = linkConfig?.complementaryProductIds || new Set();
-  const complementaryToPrimary = linkConfig?.complementaryToPrimary || new Map();
+  const primaryToComplementaryIds = linkConfig?.primaryToComplementaryIds || new Map();
+
+  const primaryPidsInOrder = new Set();
+  for (const [, row] of contrib) {
+    const pid = row.product_id != null ? Number(row.product_id) : null;
+    if (pid && primaryProductIds.has(pid)) primaryPidsInOrder.add(pid);
+  }
+
+  /** @type {Map<number, number>} */
+  const assignedCompsForOrder = new Map();
+  for (const primaryPid of primaryPidsInOrder) {
+    const compSet = primaryToComplementaryIds.get(primaryPid);
+    if (!compSet) continue;
+    for (const compPid of compSet) {
+      if (!assignedCompsForOrder.has(compPid)) assignedCompsForOrder.set(compPid, primaryPid);
+    }
+  }
+
+  const primaries = [];
+  /** @type {[string, object, number | null][]} */
+  const explicitComps = [];
+  const implicitComps = [];
+
+  for (const [pk, row] of contrib) {
+    const pid = row.product_id != null ? Number(row.product_id) : null;
+    const assignedPrimary = pid ? assignedCompsForOrder.get(pid) : null;
+    const isGlobalComp = pid && complementaryProductIds.has(pid);
+
+    if (assignedPrimary != null || isGlobalComp) {
+      explicitComps.push([pk, row, assignedPrimary ?? null]);
+    } else if (pid && primaryProductIds.has(pid)) {
+      primaries.push([pk, row]);
+    } else {
+      implicitComps.push([pk, row]);
+    }
+  }
+
+  return { primaries, explicitComps, implicitComps, assignedCompsForOrder };
+}
+
+function matchLineToAssignedCompPid(row, primaryPid, linkConfig, assignedCompTitleToPid, titleToProductIdMap) {
+  const compSet =
+    primaryPid != null ? linkConfig?.primaryToComplementaryIds?.get(Number(primaryPid)) : null;
+  if (!compSet || !compSet.size) return null;
+
+  let pid = row.product_id != null ? Number(row.product_id) : NaN;
+  const labelKey = normalizeLineItemLookupKey(row.label || '');
+
+  if (Number.isFinite(pid) && pid > 0 && compSet.has(pid)) return pid;
+
+  if (labelKey && assignedCompTitleToPid instanceof Map && assignedCompTitleToPid.has(labelKey)) {
+    const matched = Number(assignedCompTitleToPid.get(labelKey));
+    if (Number.isFinite(matched) && compSet.has(matched)) return matched;
+  }
+
+  if (labelKey && titleToProductIdMap instanceof Map && titleToProductIdMap.has(labelKey)) {
+    const mapped = Number(titleToProductIdMap.get(labelKey));
+    if (Number.isFinite(mapped) && mapped > 0 && compSet.has(mapped)) return mapped;
+  }
+
+  if (Number.isFinite(pid) && pid > 0 && compSet.has(pid)) return pid;
+  return null;
+}
+
+function applyAssignedCompPidToRow(row, compPid) {
+  if (!row || compPid == null || !Number.isFinite(Number(compPid))) return;
+  row.product_id = Number(compPid);
+}
+
+/** Agrupa complementarios (explícitos o del pedido) dentro del producto principal vinculado a campaña Meta. */
+function rollupOrderContribToPrimaryProducts(
+  contrib,
+  linkConfig,
+  titleToProductIdMap,
+  assignedCompTitleToPid,
+) {
+  const primaryProductIds = linkConfig?.primaryProductIds;
   if (!contrib || !(contrib instanceof Map) || !primaryProductIds || primaryProductIds.size === 0) {
     return { contrib, complementaryAllocations: [] };
   }
 
-  const primaries = [];
-  const explicitComps = [];
-  const implicitComps = [];
-  for (const [pk, row] of contrib) {
-    const pid = row.product_id != null ? Number(row.product_id) : null;
-    if (pid && complementaryProductIds.has(pid)) explicitComps.push([pk, row]);
-    else if (pid && primaryProductIds.has(pid)) primaries.push([pk, row]);
-    else implicitComps.push([pk, row]);
+  enrichContribRowProductIds(contrib, titleToProductIdMap);
+  let { primaries, explicitComps, implicitComps, assignedCompsForOrder } = classifyOrderContribForRollup(
+    contrib,
+    linkConfig,
+  );
+
+  const implicitRemaining = [];
+  for (const [pk, row] of implicitComps) {
+    let pid = row.product_id != null ? Number(row.product_id) : NaN;
+    if (!Number.isFinite(pid) || pid <= 0) {
+      const labelKey = normalizeLineItemLookupKey(row.label || '');
+      if (labelKey && titleToProductIdMap instanceof Map && titleToProductIdMap.has(labelKey)) {
+        pid = Number(titleToProductIdMap.get(labelKey));
+        if (Number.isFinite(pid) && pid > 0) row.product_id = pid;
+      }
+    }
+    const assignedPrimary =
+      Number.isFinite(pid) && pid > 0 ? assignedCompsForOrder.get(pid) ?? null : null;
+    if (assignedPrimary != null) {
+      explicitComps.push([pk, row, assignedPrimary]);
+    } else {
+      implicitRemaining.push([pk, row]);
+    }
   }
+  implicitComps = implicitRemaining;
 
   if (!explicitComps.length && !implicitComps.length) {
     return { contrib, complementaryAllocations: [] };
@@ -7141,12 +7270,18 @@ function rollupOrderContribToPrimaryProducts(contrib, linkConfig) {
     });
   };
 
-  for (const [, comp] of explicitComps) {
+  for (const [, comp, hintedPrimary] of explicitComps) {
     const compPid = comp.product_id != null ? Number(comp.product_id) : null;
-    let targetPid = compPid ? complementaryToPrimary.get(compPid) : null;
-    if (targetPid != null && !primaryProductIds.has(Number(targetPid))) targetPid = null;
-    if (targetPid == null && primaries.length === 1) targetPid = primaries[0][1].product_id;
+    let targetPid = resolveComplementaryTargetPrimary(compPid, primaries, linkConfig, hintedPrimary);
     if (targetPid == null) continue;
+    const matchedAssigned = matchLineToAssignedCompPid(
+      comp,
+      targetPid,
+      linkConfig,
+      assignedCompTitleToPid,
+      titleToProductIdMap,
+    );
+    if (matchedAssigned != null) applyAssignedCompPidToRow(comp, matchedAssigned);
     const addPedidos = primaries.length === 0;
     rollCompIntoPrimary(comp, targetPid, 1, addPedidos);
   }
@@ -7156,7 +7291,16 @@ function rollupOrderContribToPrimaryProducts(contrib, linkConfig) {
     for (const [, row] of primaries) totalPrimaryVd += row.ventas_despachadas;
     for (const [, comp] of implicitComps) {
       if (primaries.length === 1) {
-        rollCompIntoPrimary(comp, primaries[0][1].product_id, 1, false);
+        const primaryPid = primaries[0][1].product_id;
+        const matchedAssigned = matchLineToAssignedCompPid(
+          comp,
+          primaryPid,
+          linkConfig,
+          assignedCompTitleToPid,
+          titleToProductIdMap,
+        );
+        if (matchedAssigned != null) applyAssignedCompPidToRow(comp, matchedAssigned);
+        rollCompIntoPrimary(comp, primaryPid, 1, false);
       } else if (primaries.length > 1) {
         for (const [, primaryRow] of primaries) {
           const primaryPid = primaryRow.product_id;
@@ -7213,6 +7357,50 @@ function accumulateComplementaryDetailGlobal(globalMap, primaryPid, compRow, sha
   cur.costo_flete += (Number(compRow.flete) || 0) * s;
   cur.cantidad += (Number(compRow.qty) || 0) * s;
   inner.set(compKey, cur);
+}
+
+/** Unifica claves t:título y p:id del detalle complementario para no duplicar filas en cero. */
+function normalizeComplementaryDetailGlobalKeys(globalMap, titleToProductIdMap, labelByPid) {
+  if (!globalMap || !(globalMap instanceof Map)) return;
+  for (const [primaryPid, inner] of globalMap) {
+    if (!inner || !(inner instanceof Map)) continue;
+    const merged = new Map();
+    for (const [key, row] of inner) {
+      if (!row || typeof row !== 'object') continue;
+      let pid = row.product_id != null ? Number(row.product_id) : NaN;
+      if (!Number.isFinite(pid) || pid <= 0) {
+        const labelKey = normalizeLineItemLookupKey(row.label || '');
+        if (labelKey && titleToProductIdMap instanceof Map && titleToProductIdMap.has(labelKey)) {
+          pid = Number(titleToProductIdMap.get(labelKey));
+        }
+      }
+      const mergeKey = Number.isFinite(pid) && pid > 0 ? `p:${pid}` : String(key || '__otro__');
+      const cur = merged.get(mergeKey) || {
+        label: row.label,
+        product_id: Number.isFinite(pid) && pid > 0 ? pid : row.product_id ?? null,
+        ventas_despachadas: 0,
+        ventas_entregadas: 0,
+        costo_producto: 0,
+        costo_producto_entregado: 0,
+        costo_flete: 0,
+        cantidad: 0,
+        pedidos: 0,
+      };
+      const catalogLabel =
+        Number.isFinite(pid) && pid > 0 && labelByPid instanceof Map ? labelByPid.get(pid) : null;
+      cur.label = String(catalogLabel || row.label || cur.label);
+      if (Number.isFinite(pid) && pid > 0) cur.product_id = pid;
+      cur.ventas_despachadas += Number(row.ventas_despachadas) || 0;
+      cur.ventas_entregadas += Number(row.ventas_entregadas) || 0;
+      cur.costo_producto += Number(row.costo_producto) || 0;
+      cur.costo_producto_entregado += Number(row.costo_producto_entregado) || 0;
+      cur.costo_flete += Number(row.costo_flete) || 0;
+      cur.cantidad += Number(row.cantidad) || 0;
+      cur.pedidos += Number(row.pedidos) || 0;
+      merged.set(mergeKey, cur);
+    }
+    globalMap.set(primaryPid, merged);
+  }
 }
 
 function complementaryDetailGlobalToJson(globalMap) {
@@ -8862,6 +9050,29 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
     /** @type {Map<number, Map<string, object>>} */
     const complementaryDetailGlobal = new Map();
 
+    const assignedCompTitleToPid = new Map();
+    const allAssignedCompIds = [];
+    for (const compSet of linkConfig.primaryToComplementaryIds.values()) {
+      for (const compPid of compSet) allAssignedCompIds.push(compPid);
+    }
+    if (allAssignedCompIds.length) {
+      const assignedCatalogTitles = await loadShopifyProductTitlesByIds(
+        req.organizationId,
+        allAssignedCompIds,
+      );
+      for (const [compPid, title] of assignedCatalogTitles) {
+        const key = normalizeLineItemLookupKey(title);
+        if (key && !assignedCompTitleToPid.has(key)) assignedCompTitleToPid.set(key, compPid);
+      }
+      for (const [titleKey, pid] of lineTitleToProductIdMap) {
+        for (const compSet of linkConfig.primaryToComplementaryIds.values()) {
+          if (compSet.has(Number(pid)) && !assignedCompTitleToPid.has(titleKey)) {
+            assignedCompTitleToPid.set(titleKey, Number(pid));
+          }
+        }
+      }
+    }
+
     const daySet = new Set(sortedAsc);
     const ventasByDay = new Map();
     const ventasEntregadasByDay = new Map();
@@ -8931,7 +9142,12 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       );
       const pack = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap, lf);
       if (pack) {
-        const rolled = rollupOrderContribToPrimaryProducts(pack.contrib, linkConfig);
+        const rolled = rollupOrderContribToPrimaryProducts(
+          pack.contrib,
+          linkConfig,
+          lineTitleToProductIdMap,
+          assignedCompTitleToPid,
+        );
         for (const alloc of rolled.complementaryAllocations) {
           accumulateComplementaryDetailGlobal(
             complementaryDetailGlobal,
@@ -8978,7 +9194,12 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
       );
       const packM = gananciaProductContributionsForOrder(o, manualPricingMap, lineTitleToProductIdMap, gananciaLocalFieldsForFreight(o, null));
       if (packM) {
-        const rolled = rollupOrderContribToPrimaryProducts(packM.contrib, linkConfig);
+        const rolled = rollupOrderContribToPrimaryProducts(
+          packM.contrib,
+          linkConfig,
+          lineTitleToProductIdMap,
+          assignedCompTitleToPid,
+        );
         for (const alloc of rolled.complementaryAllocations) {
           accumulateComplementaryDetailGlobal(
             complementaryDetailGlobal,
@@ -9137,6 +9358,11 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         if (title) productLabelByPid.set(pid, title);
       }
     }
+    normalizeComplementaryDetailGlobalKeys(
+      complementaryDetailGlobal,
+      lineTitleToProductIdMap,
+      productLabelByPid,
+    );
     ensureAssignedComplementaryProductsInGlobal(
       complementaryDetailGlobal,
       linkConfig.primaryToComplementaryIds,
