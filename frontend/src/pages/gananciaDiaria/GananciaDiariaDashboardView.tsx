@@ -612,8 +612,8 @@ function InsightCard({
 }
 
 function complementaryCantidadPct(cantidad: number, mainPedidos: number): number | null {
-  if (mainPedidos <= 0 || cantidad <= 0) return null;
-  return Math.round((cantidad / mainPedidos) * 1000) / 10;
+  if (mainPedidos <= 0) return null;
+  return Math.round(((cantidad || 0) / mainPedidos) * 1000) / 10;
 }
 
 const complementaryRowBg = 'rgba(99, 102, 241, 0.04)';
@@ -683,18 +683,14 @@ function ComplementaryProductTableRow({
       <td style={tdCompRight}>{fmt(comp.ventas_entregadas || 0)}</td>
       <td style={tdCompRight}>{fmt(costosComp)}</td>
       <td style={tdCompRight}>
-        {comp.cantidad > 0 ? (
-          <>
-            <div>{comp.cantidad.toLocaleString('es-CO')}</div>
-            {pctCantidad != null ? (
-              <div style={{ fontSize: 11, color: '#6366f1', fontWeight: 600, marginTop: 2 }}>
-                {pctCantidad.toFixed(1)}% vs pedidos
-              </div>
-            ) : null}
-          </>
-        ) : (
-          '—'
-        )}
+        <div>{(comp.cantidad || 0).toLocaleString('es-CO')}</div>
+        {pctCantidad != null ? (
+          <div style={{ fontSize: 11, color: '#6366f1', fontWeight: 600, marginTop: 2 }}>
+            {pctCantidad.toFixed(1)}% vs pedidos
+          </div>
+        ) : mainPedidos <= 0 ? (
+          <div style={{ fontSize: 11, color: ds.textMuted, marginTop: 2 }}>—</div>
+        ) : null}
       </td>
       <td style={tdCompRight}>—</td>
       <td style={tdCompRight}>—</td>
@@ -1557,7 +1553,9 @@ export function GananciaDiariaDashboardView(props: GananciaDiariaDashboardViewPr
                                 </td>
                               </tr>
                               {hasComplementaries
-                                ? complementaries.map((comp, idx) => (
+                                ? [...complementaries]
+                                    .sort((a, b) => (b.cantidad || 0) - (a.cantidad || 0))
+                                    .map((comp, idx) => (
                                     <ComplementaryProductTableRow
                                       key={`${row.key}-comp-${comp.product_id ?? comp.label}-${idx}`}
                                       comp={comp}

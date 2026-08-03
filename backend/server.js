@@ -7027,6 +7027,8 @@ async function loadMetaCampaignProductLinkConfig(organizationId) {
   const complementaryProductIds = new Set();
   /** @type {Map<number, number>} */
   const complementaryToPrimary = new Map();
+  /** @type {Map<number, Set<number>>} */
+  const primaryToComplementaryIds = new Map();
   try {
     const linksRows = await pool.query(
       `SELECT product_ids, complementary_product_ids FROM meta_campaign_product_links WHERE organization_id = $1`,
@@ -7036,7 +7038,13 @@ async function loadMetaCampaignProductLinkConfig(organizationId) {
       const primaries = parseJsonProductIdList(r.product_ids);
       const comps = parseJsonProductIdList(r.complementary_product_ids);
       const defaultPrimary = primaries[0] ?? null;
-      for (const p of primaries) primaryProductIds.add(p);
+      for (const p of primaries) {
+        primaryProductIds.add(p);
+        if (comps.length) {
+          if (!primaryToComplementaryIds.has(p)) primaryToComplementaryIds.set(p, new Set());
+          for (const c of comps) primaryToComplementaryIds.get(p).add(c);
+        }
+      }
       for (const c of comps) {
         if (primaryProductIds.has(c)) continue;
         complementaryProductIds.add(c);
@@ -7047,12 +7055,22 @@ async function loadMetaCampaignProductLinkConfig(organizationId) {
     }
   } catch (e) {
     if (e && e.code === '42P01') {
-      return { primaryProductIds, complementaryProductIds, complementaryToPrimary };
+      return {
+        primaryProductIds,
+        complementaryProductIds,
+        complementaryToPrimary,
+        primaryToComplementaryIds,
+      };
     }
     console.error('[ganancia-diaria] loadMetaCampaignProductLinkConfig:', e);
-    return { primaryProductIds, complementaryProductIds, complementaryToPrimary };
+    return {
+      primaryProductIds,
+      complementaryProductIds,
+      complementaryToPrimary,
+      primaryToComplementaryIds,
+    };
   }
-  return { primaryProductIds, complementaryProductIds, complementaryToPrimary };
+  return { primaryProductIds, complementaryProductIds, complementaryToPrimary, primaryToComplementaryIds };
 }
 
 /** @deprecated use loadMetaCampaignProductLinkConfig */
@@ -7210,6 +7228,67 @@ function complementaryDetailGlobalToJson(globalMap) {
       costo_flete: Math.round(r.costo_flete * 100) / 100,
       cantidad: Math.round(r.cantidad * 100) / 100,
     }));
+  }
+  return out;
+}
+
+/** Incluye complementarios asignados en campañas Meta aunque no tengan ventas en el rango. */
+function ensureAssignedComplementaryProductsInGlobal(globalMap, primaryToComplementaryIds, labelByPid) {
+  if (!primaryToComplementaryIds || !(primaryToComplementaryIds instanceof Map)) return;
+  for (const [primaryPid, compSet] of primaryToComplementaryIds) {
+    const primaryNum = Number(primaryPid);
+    if (!Number.isFinite(primaryNum) || primaryNum <= 0 || !compSet || !compSet.size) continue;
+    if (!globalMap.has(primaryNum)) globalMap.set(primaryNum, new Map());
+    const inner = globalMap.get(primaryNum);
+    for (const compPid of compSet) {
+      const compNum = Number(compPid);
+      if (!Number.isFinite(compNum) || compNum <= 0) continue;
+      const compKey = `p:${compNum}`;
+      const labelFromCatalog = labelByPid instanceof Map ? labelByPid.get(compNum) : null;
+      if (!inner.has(compKey)) {
+        inner.set(compKey, {
+          label: String(labelFromCatalog || `Producto ${compNum}`),
+          product_id: compNum,
+          ventas_despachadas: 0,
+          ventas_entregadas: 0,
+          costo_producto: 0,
+          costo_producto_entregado: 0,
+          costo_flete: 0,
+          cantidad: 0,
+          pedidos: 0,
+        });
+      } else if (labelFromCatalog) {
+        const cur = inner.get(compKey);
+        if (cur && (!cur.label || /^Producto \d+$/.test(String(cur.label)))) {
+          cur.label = String(labelFromCatalog);
+        }
+      }
+    }
+  }
+}
+
+async function loadShopifyProductTitlesByIds(organizationId, productIds) {
+  /** @type {Map<number, string>} */
+  const out = new Map();
+  const uniq = [...new Set(productIds.map((id) => Number(id)).filter((n) => Number.isFinite(n) && n > 0))];
+  if (!uniq.length) return out;
+  try {
+    const row = await getActiveShopifyConnection(pool, organizationId);
+    if (!row) return out;
+    await Promise.all(
+      uniq.map(async (pid) => {
+        try {
+          const r = await shopifyRequest(row.shop_domain, row.access_token, `products/${pid}.json`);
+          if (r.ok && r.data?.product?.title) {
+            out.set(pid, String(r.data.product.title).trim());
+          }
+        } catch {
+          /* omitir producto individual */
+        }
+      }),
+    );
+  } catch (e) {
+    console.error('[ganancia-diaria] loadShopifyProductTitlesByIds:', e);
   }
   return out;
 }
@@ -9042,6 +9121,27 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         return pid != null && Number.isFinite(pid) && primaryProductIds.has(pid);
       })
       .sort((a, b) => String(a.label).localeCompare(String(b.label), 'es', { sensitivity: 'base' }));
+
+    const assignedCompIdsNeedingLabel = [];
+    for (const compSet of linkConfig.primaryToComplementaryIds.values()) {
+      for (const compPid of compSet) {
+        if (!productLabelByPid.has(compPid)) assignedCompIdsNeedingLabel.push(compPid);
+      }
+    }
+    if (assignedCompIdsNeedingLabel.length) {
+      const shopifyTitles = await loadShopifyProductTitlesByIds(
+        req.organizationId,
+        assignedCompIdsNeedingLabel,
+      );
+      for (const [pid, title] of shopifyTitles) {
+        if (title) productLabelByPid.set(pid, title);
+      }
+    }
+    ensureAssignedComplementaryProductsInGlobal(
+      complementaryDetailGlobal,
+      linkConfig.primaryToComplementaryIds,
+      productLabelByPid,
+    );
 
     const filteredDays = hasProductFilter
       ? days.map((row) => {
