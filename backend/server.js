@@ -7273,7 +7273,13 @@ function rollupOrderContribToPrimaryProducts(
   for (const [, comp, hintedPrimary] of explicitComps) {
     const compPid = comp.product_id != null ? Number(comp.product_id) : null;
     let targetPid = resolveComplementaryTargetPrimary(compPid, primaries, linkConfig, hintedPrimary);
-    if (targetPid == null) continue;
+    if (targetPid == null) {
+      // Complementario sin principal en este pedido: conservar como producto propio.
+      const keepKey =
+        Number.isFinite(Number(compPid)) && Number(compPid) > 0 ? `p:${Number(compPid)}` : `t:${normalizeLineItemLookupKey(comp.label || '')}`;
+      if (!out.has(keepKey)) out.set(keepKey, cloneGananciaProductSlice(comp));
+      continue;
+    }
     const matchedAssigned = matchLineToAssignedCompPid(
       comp,
       targetPid,
@@ -7286,36 +7292,6 @@ function rollupOrderContribToPrimaryProducts(
     rollCompIntoPrimary(comp, targetPid, 1, addPedidos);
   }
 
-  if (implicitComps.length && (primaries.length || out.size)) {
-    let totalPrimaryVd = 0;
-    for (const [, row] of primaries) totalPrimaryVd += row.ventas_despachadas;
-    for (const [, comp] of implicitComps) {
-      if (primaries.length === 1) {
-        const primaryPid = primaries[0][1].product_id;
-        const matchedAssigned = matchLineToAssignedCompPid(
-          comp,
-          primaryPid,
-          linkConfig,
-          assignedCompTitleToPid,
-          titleToProductIdMap,
-        );
-        if (matchedAssigned != null) applyAssignedCompPidToRow(comp, matchedAssigned);
-        rollCompIntoPrimary(comp, primaryPid, 1, false);
-      } else if (primaries.length > 1) {
-        for (const [, primaryRow] of primaries) {
-          const primaryPid = primaryRow.product_id;
-          const share =
-            totalPrimaryVd > 0 ? primaryRow.ventas_despachadas / totalPrimaryVd : 1 / primaries.length;
-          rollCompIntoPrimary(comp, primaryPid, share, false);
-        }
-      }
-    }
-  }
-
-  if (!out.size) {
-    return { contrib: new Map(), complementaryAllocations };
-  }
-
   let pedidosAssigned = false;
   for (const row of out.values()) {
     if (!pedidosAssigned && row.pedidos > 0) {
@@ -7324,6 +7300,17 @@ function rollupOrderContribToPrimaryProducts(
     } else if (pedidosAssigned) {
       row.pedidos = 0;
     }
+  }
+
+  // Productos no vinculados (p. ej. SKUs nuevos) NO se absorben en el principal:
+  // deben aparecer con sus propias métricas en ganancia diaria.
+  for (const [pk, row] of implicitComps) {
+    const keepKey = pk || `t:${normalizeLineItemLookupKey(row?.label || '')}`;
+    if (!out.has(keepKey)) out.set(keepKey, cloneGananciaProductSlice(row));
+  }
+
+  if (!out.size) {
+    return { contrib, complementaryAllocations };
   }
 
   return { contrib: out, complementaryAllocations };
@@ -9335,11 +9322,13 @@ app.get('/api/ganancia-diaria/series', verifyToken, scopeToOrganization, async (
         }
       }
     }
+    const complementaryIds = linkConfig.complementaryProductIds || new Set();
     const product_options = [...productLabelByKey.values()]
       .filter((opt) => {
-        if (!primaryProductIds.size) return true;
         const pid = opt.product_id != null ? Number(opt.product_id) : null;
-        return pid != null && Number.isFinite(pid) && primaryProductIds.has(pid);
+        // Ocultar solo complementarios vinculados a campaña; el resto (incl. productos nuevos) sí se lista.
+        if (pid != null && Number.isFinite(pid) && complementaryIds.has(pid)) return false;
+        return true;
       })
       .sort((a, b) => String(a.label).localeCompare(String(b.label), 'es', { sensitivity: 'base' }));
 

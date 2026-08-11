@@ -363,9 +363,14 @@ function aggregateProductAnalysis(
     });
 }
 
+function currentMonthKeyLocal(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 export default function GananciaDiariaPage() {
   const [productImageById, setProductImageById] = useState<ProductImageMap>({});
-  const [selectedMonths, setSelectedMonths] = useState<string[]>([]);
+  const [selectedMonths, setSelectedMonths] = useState<string[]>(() => [currentMonthKeyLocal()]);
   const [selectedProductId, setSelectedProductId] = useState<string>('');
   const [seriesLoading, setSeriesLoading] = useState(true);
   const [seriesError, setSeriesError] = useState('');
